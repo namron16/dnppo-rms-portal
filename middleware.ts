@@ -5,6 +5,7 @@ import type { NextRequest } from 'next/server'
 import { updateSession } from './lib/supabase/middleware'
 import { getDefaultAdminRoute, isAllowedAdminPath } from './lib/adminRouteAccess'
 import type { SessionRole } from './lib/adminRouteAccess'
+import { supabase } from './lib/supabase'
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -42,11 +43,27 @@ export async function middleware(request: NextRequest) {
   // ── /admin/* ──────────────────────────────
 
   if (pathname.startsWith('/admin')) {
+    
     if (!isLoggedIn || !role) {
       const loginUrl = new URL('/login', request.url)
       loginUrl.searchParams.set('from', pathname)
       return NextResponse.redirect(loginUrl)
     }
+
+
+    const { data: profile } = await supabase
+    .from('profiles')
+    .select('is_active')
+    .eq('id', user!.id)    // user is non-null here since isLoggedIn is true
+    .single()
+
+  if (!profile?.is_active) {
+    // Sign the user out and redirect to login with a reason
+    await supabase.auth.signOut()
+    const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('reason', 'account_disabled')
+    return NextResponse.redirect(loginUrl)
+  }
 
     // Redirect /admin → role's default page
     if (pathname === '/admin') {

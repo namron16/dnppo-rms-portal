@@ -4,7 +4,7 @@
 
 import { useState, useCallback } from 'react'
 import Image from 'next/image'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import { getDefaultAdminRoute, type SessionRole } from '@/lib/adminRouteAccess'
 
@@ -49,6 +49,8 @@ export default function LoginPage() {
   const { sendOtp, verifyOtp, loginPassword } = useAuth()
   const router = useRouter()
 
+  const searchParams = useSearchParams()
+  const reason = searchParams.get('reason')
   const [step,     setStep]     = useState<Step>('role')
   const [roleId,   setRoleId]   = useState('')
   const [otp,      setOtp]      = useState('')
@@ -203,6 +205,12 @@ export default function LoginPage() {
         </div>
       </div>
 
+
+      {reason === 'account_disabled' && (
+          <div className="rounded-lg bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-800">
+            Your account has been disabled. Contact your system administrator.
+          </div>
+        )}
       {/* ── Right: Login Form ── */}
       <div className="w-[500px] bg-white px-12 py-10 flex flex-col relative shadow-2xl z-20">
         <div className="flex-1 flex flex-col justify-center items-center w-full">
