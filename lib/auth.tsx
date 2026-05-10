@@ -1,240 +1,240 @@
 'use client'
-// lib/auth.tsx  — Admin-Only RBAC Authentication with Presence + Audit Logging
-// 13 hardcoded admin accounts, no public registration
+// lib/auth.tsx — Supabase Auth-backed RBAC
+// No hardcoded accounts. All identity comes from Supabase Auth + profiles table.
 
 import React, {
   createContext, useContext, useState,
   useCallback, useEffect,
 } from 'react'
-import { setAdminActive, setAdminInactive } from './accessRequests'
-import { logLogin, logLogout, setCurrentLogger } from './adminLogger'
-import { getStoredProfilePrefs } from './profileStorage'
-import { subscribeToProfilePrefs } from './profileStorage'
+import { createClient } from './supabase/client'
+import { setCurrentLogger } from './adminLogger'
+import type { Session, User } from '@supabase/supabase-js'
 
 // ── Role Definitions ──────────────────────────
-export type AdminRole = 'admin' | 'DPDA' | 'DPDO' | 'P1'
-  | 'P2' | 'P3' | 'P4' | 'P5' | 'P6'
-  | 'P7' | 'P8' | 'P9' | 'P10'
+export type AdminRole =
+  | 'admin' | 'PD' | 'DPDA' | 'DPDO'
+  | 'P1' | 'P2' | 'P3' | 'P4' | 'P5'
+  | 'P6' | 'P7' | 'P8' | 'P9' | 'P10'
 
 export type RoleLevel = 'head' | 'deputy' | 'super_admin' | 'viewer'
 
 export interface AdminUser {
-  id: AdminRole
-  role: AdminRole
-  name: string
-  title: string
-  level: RoleLevel
-  initials: string
-  avatarColor: string
-  avatarUrl?: string
+  id:           string        // Supabase auth UUID
+  role:         AdminRole
+  email:        string
+  name:         string
+  title:        string
+  level:        RoleLevel
+  initials:     string
+  avatarColor:  string
+  avatarUrl?:   string
   permissions: {
-    canUpload: boolean
-    canApproveReview: boolean
-    canApproveFinal: boolean
-    canManageUsers: boolean
-    canManageVisibility: boolean
-    canViewAll: boolean
+    canUpload:            boolean
+    canApproveReview:     boolean
+    canApproveFinal:      boolean
+    canManageUsers:       boolean
+    canManageVisibility:  boolean
+    canViewAll:           boolean
   }
 }
 
-// ── 13 Hardcoded Admin Accounts ───────────────
-export const ADMIN_ACCOUNTS: AdminUser[] = [
-  {
-    id: 'admin', role: 'admin',
-    name: 'Super Admin', title: 'Super Admin',
-    level: 'super_admin', initials: 'ad', avatarColor: '#dc2626',
-    permissions: { canUpload: false, canApproveReview: false, canApproveFinal: false, canManageUsers: true, canManageVisibility: false, canViewAll: true },
-  },
-  {
-    id: 'DPDA', role: 'DPDA',
-    name: 'Deputy Director for Administration', title: 'Deputy Director for Administration',
-    level: 'deputy', initials: 'DPDA', avatarColor: '#0d9488',
-    permissions: { canUpload: false, canApproveReview: true, canApproveFinal: false, canManageUsers: false, canManageVisibility: false, canViewAll: true },
-  },
-  {
-    id: 'DPDO', role: 'DPDO',
-    name: 'Deputy Director for Operations', title: 'Deputy Director for Operations',
-    level: 'deputy', initials: 'DPDO', avatarColor: '#16a34a',
-    permissions: { canUpload: false, canApproveReview: true, canApproveFinal: false, canManageUsers: false, canManageVisibility: false, canViewAll: true },
-  },
-  
-  {
-    id: 'P1', role: 'P1',
-    name: 'Records Officer — P1', title: 'Records Officer',
-    level: 'head', initials: 'P1', avatarColor: '#7c3aed',
-    permissions: { canUpload: true, canApproveReview: false, canApproveFinal: false, canManageUsers: true, canManageVisibility: true, canViewAll: true },
-  },
-  ...(['P2','P3','P4','P5','P6','P7','P8','P9','P10'] as AdminRole[]).map((role, i) => ({
-    id: role, role,
-    name: `Admin Officer — ${role}`, title: `Admin Officer ${role}`,
-    level: 'head' as RoleLevel,
-    initials: role, avatarColor: ['#0891b2','#0d9488','#16a34a','#ca8a04','#ea580c','#e11d48','#8b5cf6','#06b6d4','#10b981'][i],
-    permissions: { canUpload: true, canApproveReview: false, canApproveFinal: true, canManageUsers: false, canManageVisibility: false, canViewAll: true },
-  })),
-]
+// ── Role → Permissions Map ────────────────────
+// Derived from role, not stored per-account.
 
-// Password map
-const PASSWORDS: Record<AdminRole, string> = {
-  admin: 'admin@ddnppo2024', DPDA: 'dpda@ddnppo2024', DPDO: 'dpdo@ddnppo2024', P1: 'p1@ddnppo2024', P2: 'p2@ddnppo2024', P3: 'p3@ddnppo2024',
-  P4: 'p4@ddnppo2024', P5: 'p5@ddnppo2024', P6: 'p6@ddnppo2024',
-  P7: 'p7@ddnppo2024', P8: 'p8@ddnppo2024', P9: 'p9@ddnppo2024',
-  P10: 'p10@ddnppo2024',
+function permissionsForRole(role: AdminRole): AdminUser['permissions'] {
+  switch (role) {
+    case 'admin':
+      return { canUpload: false, canApproveReview: false, canApproveFinal: false,
+               canManageUsers: true, canManageVisibility: false, canViewAll: true }
+    case 'PD':
+      return { canUpload: false, canApproveReview: false, canApproveFinal: true,
+               canManageUsers: false, canManageVisibility: false, canViewAll: true }
+    case 'DPDA':
+    case 'DPDO':
+      return { canUpload: false, canApproveReview: true, canApproveFinal: false,
+               canManageUsers: false, canManageVisibility: false, canViewAll: true }
+    case 'P1':
+      return { canUpload: true, canApproveReview: false, canApproveFinal: false,
+               canManageUsers: true, canManageVisibility: true, canViewAll: true }
+    default:
+      // P2–P10
+      return { canUpload: true, canApproveReview: false, canApproveFinal: true,
+               canManageUsers: false, canManageVisibility: false, canViewAll: true }
+  }
 }
 
-// ── RBAC Helpers ──────────────────────────────
-export function canUserViewDocument(user: AdminUser, visibleToRoles: AdminRole[]): boolean {
-  if (user.permissions.canViewAll) return true
-  return visibleToRoles.includes(user.role)
+function levelForRole(role: AdminRole): RoleLevel {
+  if (role === 'admin') return 'super_admin'
+  if (role === 'DPDA' || role === 'DPDO') return 'deputy'
+  if (role === 'PD' || role === 'P1') return 'head'
+  return 'viewer'
+}
+
+// ── Build AdminUser from Supabase data ────────
+
+interface ProfileRow {
+  role:         string
+  display_name: string | null
+  title:        string | null
+  initials:     string | null
+  avatar_color: string | null
+  avatar_url:   string | null
+}
+
+function buildAdminUser(user: User, profile: ProfileRow): AdminUser {
+  const role = profile.role as AdminRole
+  return {
+    id:          user.id,
+    role,
+    email:       user.email ?? '',
+    name:        profile.display_name ?? role,
+    title:       profile.title        ?? role,
+    level:       levelForRole(role),
+    initials:    profile.initials     ?? role.slice(0, 2).toUpperCase(),
+    avatarColor: profile.avatar_color ?? '#6b7280',
+    avatarUrl:   profile.avatar_url   ?? undefined,
+    permissions: permissionsForRole(role),
+  }
 }
 
 // ── Auth Context ──────────────────────────────
+
+export type OtpStep = 'email' | 'otp' | 'password' | 'done'
+
 interface AuthContextValue {
-  user: AdminUser | null
-  login: (roleId: string, password: string) => boolean
-  logout: () => void
+  user:      AdminUser | null
+  session:   Session | null
   isLoading: boolean
+
+  // Two-step login
+  sendOtp:       (email: string) => Promise<{ error: string | null }>
+  verifyOtp:     (email: string, token: string) => Promise<{ error: string | null }>
+  loginPassword: (email: string, password: string) => Promise<{ error: string | null }>
+  logout:        () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
-function setCookie(name: string, value: string, days = 1) {
-  const expires = new Date(Date.now() + days * 864e5).toUTCString()
-  document.cookie = `${name}=${value}; expires=${expires}; path=/; SameSite=Lax`
-}
-function deleteCookie(name: string) {
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax`
-}
-function getCookie(name: string): string | null {
-  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))
-  return match ? decodeURIComponent(match[1]) : null
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AdminUser | null>(null)
-  const [isLoading, setLoading] = useState(true)
+  const supabase = createClient()
 
-  async function applyStoredProfilePrefs(account: AdminUser): Promise<AdminUser> {
-    const prefs = await getStoredProfilePrefs(account.role)
-    return {
-      ...account,
-      name: prefs.displayName ?? account.name,
-      avatarUrl: prefs.avatarUrl ?? account.avatarUrl,
+  const [user,      setUser]      = useState<AdminUser | null>(null)
+  const [session,   setSession]   = useState<Session | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  // ── Load profile from DB ──────────────────
+
+  async function loadProfile(authUser: User): Promise<AdminUser | null> {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('role, display_name, title, initials, avatar_color, avatar_url')
+      .eq('id', authUser.id)
+      .single()
+
+    if (error || !data) {
+      console.error('loadProfile error:', error?.message)
+      return null
     }
+
+    return buildAdminUser(authUser, data as ProfileRow)
   }
 
+  // ── Session Listener ──────────────────────
+
   useEffect(() => {
-    let active = true
-    void (async () => {
-      const roleId = getCookie('rms_session')
-      if (roleId) {
-        const found = ADMIN_ACCOUNTS.find(a => a.id === roleId)
-        if (found) {
-          const nextUser = await applyStoredProfilePrefs(found)
-          if (!active) return
-          setUser(nextUser)
-          setCurrentLogger(found.id)
-          setAdminActive(found.id).catch(() => {})
-        } else {
-          deleteCookie('rms_session')
-          deleteCookie('rms_role')
-        }
+    // Initial session check
+    supabase.auth.getSession().then(async ({ data: { session: s } }) => {
+      if (s?.user) {
+        const adminUser = await loadProfile(s.user)
+        setUser(adminUser)
+        setSession(s)
+        if (adminUser) setCurrentLogger(adminUser.role as AdminRole)
       }
-
-      if (active) setLoading(false)
-    })()
-
-    return () => { active = false }
-  }, [])
-
-  useEffect(() => {
-    if (!user) return
-
-    return subscribeToProfilePrefs(user.role, prefs => {
-      setUser(prev => {
-        if (!prev || prev.role !== user.role) return prev
-        return {
-          ...prev,
-          name: prefs.displayName ?? prev.name,
-          avatarUrl: prefs.avatarUrl ?? prev.avatarUrl,
-        }
-      })
+      setIsLoading(false)
     })
-  }, [user?.role])
 
-  useEffect(() => {
-    if (!user) return
-
-    const refreshFromStore = async () => {
-      const prefs = await getStoredProfilePrefs(user.role)
-      setUser(prev => {
-        if (!prev || prev.role !== user.role) return prev
-        const nextName = prefs.displayName ?? prev.name
-        const nextAvatar = prefs.avatarUrl ?? prev.avatarUrl
-        if (nextName === prev.name && nextAvatar === prev.avatarUrl) return prev
-        return {
-          ...prev,
-          name: nextName,
-          avatarUrl: nextAvatar,
+    // Listen for auth state changes (login, logout, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, s) => {
+        if (s?.user) {
+          const adminUser = await loadProfile(s.user)
+          setUser(adminUser)
+          setSession(s)
+          if (adminUser) setCurrentLogger(adminUser.role as AdminRole)
+        } else {
+          setUser(null)
+          setSession(null)
+          setCurrentLogger(null)
         }
-      })
-    }
-
-    const intervalId = window.setInterval(() => {
-      void refreshFromStore()
-    }, 15000)
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void refreshFromStore()
+        setIsLoading(false)
       }
-    }
+    )
 
-    document.addEventListener('visibilitychange', onVisibilityChange)
-
-    return () => {
-      window.clearInterval(intervalId)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-    }
-  }, [user?.role])
-
-  // Mark inactive when tab/window closes. Do not log logout here because
-  // browser refresh also triggers unload and would create false logout logs.
-  useEffect(() => {
-    if (!user) return
-    const handleUnload = () => {
-      setAdminInactive(user.id).catch(() => {})
-    }
-    window.addEventListener('beforeunload', handleUnload)
-    return () => window.removeEventListener('beforeunload', handleUnload)
-  }, [user])
-
-  const login = useCallback((roleId: string, password: string): boolean => {
-    const account = ADMIN_ACCOUNTS.find(a => a.id === roleId)
-    if (!account) return false
-    const expected = PASSWORDS[account.role]
-    if (password !== expected) return false
-    void applyStoredProfilePrefs(account).then(setUser)
-    setCookie('rms_session', account.id)
-    setCookie('rms_role', account.role)
-    setCurrentLogger(account.id)
-    setAdminActive(account.id).catch(() => {})
-    logLogin(account.id)
-    return true
+    return () => subscription.unsubscribe()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const logout = useCallback(() => {
-    if (user) {
-      logLogout(user.id)
-      setAdminInactive(user.id).catch(() => {})
-    }
+  // ── Step 1: Send OTP ──────────────────────
+
+  const sendOtp = useCallback(async (email: string) => {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,  // reject unknown emails
+      },
+    })
+    return { error: error?.message ?? null }
+  }, [supabase])
+
+  // ── Step 2: Verify OTP ────────────────────
+  // This creates a short-lived session. We do NOT set the user here;
+  // we wait for the password step to establish a full password session.
+
+  const verifyOtp = useCallback(async (email: string, token: string) => {
+    const { error } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'email',
+    })
+    return { error: error?.message ?? null }
+  }, [supabase])
+
+  // ── Step 3: Password Login ────────────────
+
+  const loginPassword = useCallback(async (email: string, password: string) => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+
+    if (error) return { error: error.message }
+    if (!data.user) return { error: 'No user returned.' }
+
+    const adminUser = await loadProfile(data.user)
+    if (!adminUser) return { error: 'Account profile not found. Contact your administrator.' }
+
+    setUser(adminUser)
+    setSession(data.session)
+    setCurrentLogger(adminUser.role as AdminRole)
+
+    return { error: null }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase])
+
+  // ── Logout ────────────────────────────────
+
+  const logout = useCallback(async () => {
     setCurrentLogger(null)
-    deleteCookie('rms_session')
-    deleteCookie('rms_role')
-    setTimeout(() => setUser(null), 50)
-  }, [user])
+    await supabase.auth.signOut()
+    setUser(null)
+    setSession(null)
+  }, [supabase])
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isLoading }}>
+    <AuthContext.Provider value={{
+      user, session, isLoading,
+      sendOtp, verifyOtp, loginPassword, logout,
+    }}>
       {children}
     </AuthContext.Provider>
   )
@@ -244,6 +244,11 @@ export function useAuth() {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>')
   return ctx
+}
+
+export function canUserViewDocument(user: AdminUser, visibleToRoles: AdminRole[]): boolean {
+  if (user.permissions.canViewAll) return true
+  return visibleToRoles.includes(user.role)
 }
 
 export function isAdminRole(user: AdminUser | null): boolean {
