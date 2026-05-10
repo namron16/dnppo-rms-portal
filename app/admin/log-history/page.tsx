@@ -134,7 +134,7 @@ function StatsBar({ logs }: { logs: AdminLog[] }) {
 // ── Main Page ──────────────────────────────────
 export default function LogHistoryPage() {
   const { toast }   = useToast()
-  const supabase    = createClient()
+  const supabase = useMemo(() => createClient(), [])
 
   const [logs,     setLogs]     = useState<AdminLog[]>([])
   const [loading,  setLoading]  = useState(true)
