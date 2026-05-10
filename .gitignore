@@ -24,3 +24,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.tsnode_modules
+
+#seed scripts
+/scripts/seed-admins.ts
