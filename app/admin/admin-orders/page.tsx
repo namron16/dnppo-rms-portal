@@ -27,10 +27,11 @@ import {
 } from '@/lib/data'
 import { supabase }             from '@/lib/supabase'
 import { statusBadgeClass }     from '@/lib/utils'
-import { logAction, logDeleteDocument, logRenameAttachment, logViewDocument }      from '@/lib/adminLogger'
+import { logAction, logDeleteDocument, logRenameAttachment, logViewDocument } from '@/lib/adminLogger'
 import { useAuth } from '@/lib/auth'
 import type { AdminRole } from '@/lib/auth'
 import { useRealtimeSpecialOrders } from '@/hooks/useRealtimeSpecialOrders'
+import { useDriveUpload } from '@/hooks/useGDriveTool'
 import type { SpecialOrder }    from '@/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -133,16 +134,13 @@ function getExtensionFromUrl(fileUrl: string) {
 
 function getSuggestedFileName(baseName: string, fileUrl: string) {
   if (/\.[a-z0-9]+$/i.test(baseName)) return baseName
-
   const ext = getExtensionFromUrl(fileUrl)
   return ext ? `${baseName}.${ext}` : baseName
 }
 
 async function saveFileFromUrl(fileUrl: string, suggestedName: string): Promise<boolean> {
   const response = await fetch(fileUrl)
-  if (!response.ok) {
-    throw new Error(`Failed to fetch file: ${response.status}`)
-  }
+  if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`)
 
   const blob = await response.blob()
   const picker = window as Window & {
@@ -196,13 +194,9 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
     }
 
     const timeout = window.setTimeout(() => {
-      finish(() => {
-        cleanup()
-        reject(new Error('Print timed out.'))
-      })
+      finish(() => { cleanup(); reject(new Error('Print timed out.')) })
     }, 15000)
 
-    // First fetch the file as blob to create same-origin URL
     fetch(fileUrl)
       .then(response => {
         if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`)
@@ -215,13 +209,9 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
         iframe.onload = () => {
           const target = iframe.contentWindow
           if (!target) {
-            finish(() => {
-              cleanup()
-              reject(new Error('Unable to load printable content.'))
-            })
+            finish(() => { cleanup(); reject(new Error('Unable to load printable content.')) })
             return
           }
-
           window.setTimeout(() => {
             finish(() => {
               try {
@@ -238,10 +228,7 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
         }
 
         iframe.onerror = () => {
-          finish(() => {
-            cleanup()
-            reject(new Error('Could not load file for printing.'))
-          })
+          finish(() => { cleanup(); reject(new Error('Could not load file for printing.')) })
         }
 
         document.body.appendChild(iframe)
@@ -270,8 +257,8 @@ function InlineFileViewerModal({
   async function handleDownload() {
     try {
       setIsDownloading(true)
-      const saved = await saveFileFromUrl(fileUrl, getSuggestedFileName(fileName, fileUrl))
-      toast.success(saved ? `Downloaded "${fileName}" successfully.` : `Downloaded "${fileName}" successfully.`)
+      await saveFileFromUrl(fileUrl, getSuggestedFileName(fileName, fileUrl))
+      toast.success(`Downloaded "${fileName}" successfully.`)
     } catch (error) {
       console.error('download error:', error)
       toast.error('Could not download the file.')
@@ -279,6 +266,7 @@ function InlineFileViewerModal({
       setIsDownloading(false)
     }
   }
+
   return (
     <Modal open={open} onClose={onClose} title={`Viewing: ${fileName}`} width="max-w-5xl">
       <div className="flex flex-col" style={{ maxHeight: '85vh' }}>
@@ -390,11 +378,11 @@ function EditSpecialOrderModal({
         </div>
 
         <div>
-          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Status</label>
+          <label className="block text-[11px] font-semibold uppercase tracking-widests text-slate-500 mb-1.5">Status</label>
           <select
             className="w-full px-3 py-2.5 border-[1.5px] border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition"
             value={form.status}
-              onChange={e => setForm(prev => ({ ...prev, status: e.target.value as 'ACTIVE' | 'ARCHIVED' }))}
+            onChange={e => setForm(prev => ({ ...prev, status: e.target.value as 'ACTIVE' | 'ARCHIVED' }))}
           >
             <option value="ACTIVE">ACTIVE</option>
             <option value="ARCHIVED">ARCHIVED</option>
@@ -408,9 +396,9 @@ function EditSpecialOrderModal({
             onClick={() => onSave({
               ...order,
               reference: form.reference.trim(),
-              subject: form.subject.trim(),
-              date: form.date,
-              status: form.status,
+              subject:   form.subject.trim(),
+              date:      form.date,
+              status:    form.status,
             })}
             disabled={!form.reference.trim() || !form.subject.trim() || !form.date}
           >
@@ -540,7 +528,7 @@ function AttachmentsTablePanel({
   }
 
   const drillAtt = isDrillDown ? (currentEntry as { kind: 'attachment'; att: SOAttachment }).att : null
-  const drillFi = drillAtt ? fileInfo(drillAtt.file_name) : null
+  const drillFi  = drillAtt ? fileInfo(drillAtt.file_name) : null
 
   return (
     <div className="animate-fade-up h-full flex flex-col">
@@ -574,11 +562,11 @@ function AttachmentsTablePanel({
       <div className="flex items-start justify-between mb-4 gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xl flex-shrink-0">{isDrillDown ? (drillFi?.icon ?? <FileText size={20} />) : '📋'}</span>
+            <span className="text-xl flex-shrink-0">{isDrillDown ? (drillFi?.icon ?? '📄') : '📋'}</span>
             <h2 className="text-lg font-extrabold text-slate-800 leading-tight truncate">{currentLabel}</h2>
             {isDrillDown && (
               <span className="flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
-                <Paperclip size={12} /> Nested File
+                Nested File
               </span>
             )}
           </div>
@@ -587,12 +575,9 @@ function AttachmentsTablePanel({
               <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">{drillFi?.label}</span>
               <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">{drillAtt.file_size}</span>
               <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
-                📅 {new Date(drillAtt.uploaded_at).toLocaleString('en-PH', { 
-                  year: 'numeric', 
-                  month: 'short', 
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
+                📅 {new Date(drillAtt.uploaded_at).toLocaleString('en-PH', {
+                  year: 'numeric', month: 'short', day: 'numeric',
+                  hour: '2-digit', minute: '2-digit',
                 })}
               </span>
             </div>
@@ -600,7 +585,12 @@ function AttachmentsTablePanel({
           {!isDrillDown && currentOrder && (
             <div className="flex items-center gap-2 flex-wrap mt-1">
               {currentOrder.created_at && (
-                <span className="text-xs text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full font-medium">📅 {new Date(currentOrder.created_at).toLocaleString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                <span className="text-xs text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full font-medium">
+                  📅 {new Date(currentOrder.created_at).toLocaleString('en-PH', {
+                    year: 'numeric', month: 'short', day: 'numeric',
+                    hour: '2-digit', minute: '2-digit',
+                  })}
+                </span>
               )}
               <Badge className={statusBadgeClass(currentOrder.status)}>{currentOrder.status}</Badge>
             </div>
@@ -609,48 +599,29 @@ function AttachmentsTablePanel({
 
         {!isDrillDown && (
           <div className="flex gap-2 flex-shrink-0">
-            {canEditOrder && (
-              <Button variant="primary" size="sm" onClick={onForwardOrder}>🔀 Forward</Button>
-            )}
-            {canEditOrder && (
-              <Button variant="outline" size="sm" onClick={onEditOrder}>✏ Edit</Button>
-            )}
-            {canEditOrder && (
-              <Button variant="danger" size="sm" onClick={onArchiveOrder}>🗄️ Archive</Button>
-            )}
-            {canEditOrder && (
-              <Button variant="danger" size="sm" onClick={onDeleteOrder}>🗑️ Delete</Button>
-            )}
+            {canEditOrder && <Button variant="primary"  size="sm" onClick={onForwardOrder}>🔀 Forward</Button>}
+            {canEditOrder && <Button variant="outline"  size="sm" onClick={onEditOrder}>✏ Edit</Button>}
+            {canEditOrder && <Button variant="danger"   size="sm" onClick={onArchiveOrder}>🗄️ Archive</Button>}
+            {canEditOrder && <Button variant="danger"   size="sm" onClick={onDeleteOrder}>🗑️ Delete</Button>}
           </div>
         )}
 
         {isDrillDown && drillAtt && (
           <div className="flex gap-1.5 flex-shrink-0">
-            <button
-              onClick={() => onViewFile(drillAtt.file_url, drillAtt.file_name)}
-              className="text-xs px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg font-semibold hover:bg-blue-100 transition"
-            >
+            <button onClick={() => onViewFile(drillAtt.file_url, drillAtt.file_name)}
+              className="text-xs px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg font-semibold hover:bg-blue-100 transition">
               👁 View File
             </button>
-            <button
-              type="button"
-              onClick={() => onDownloadFile(drillAtt.file_url, drillAtt.file_name)}
-              className="text-xs px-2.5 py-1.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-lg font-semibold hover:bg-slate-200 transition"
-            >
+            <button type="button" onClick={() => onDownloadFile(drillAtt.file_url, drillAtt.file_name)}
+              className="text-xs px-2.5 py-1.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-lg font-semibold hover:bg-slate-200 transition">
               ⬇ Download
             </button>
-            <button
-              type="button"
-              onClick={() => onPrintFile(drillAtt.file_url, drillAtt.file_name, drillAtt.special_order_id)}
-              className="text-xs px-2.5 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-lg font-semibold hover:bg-green-100 transition"
-            >
+            <button type="button" onClick={() => onPrintFile(drillAtt.file_url, drillAtt.file_name, drillAtt.special_order_id)}
+              className="text-xs px-2.5 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-lg font-semibold hover:bg-green-100 transition">
               🖨️ Print
             </button>
-            <button
-              onClick={() => onArchiveAttachment(drillAtt)}
-              disabled={!canEditOrder}
-              className="text-xs px-2.5 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg font-semibold hover:bg-amber-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
+            <button onClick={() => onArchiveAttachment(drillAtt)} disabled={!canEditOrder}
+              className="text-xs px-2.5 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg font-semibold hover:bg-amber-100 transition disabled:opacity-50 disabled:cursor-not-allowed">
               🗄️ Archive
             </button>
           </div>
@@ -666,24 +637,16 @@ function AttachmentsTablePanel({
             <p className="text-xs text-blue-600 truncate">{currentOrder.reference} – {currentOrder.subject}</p>
           </div>
           <div className="flex gap-1.5 flex-shrink-0">
-            <button
-              type="button"
-              onClick={() => onDownloadFile(currentOrder.fileUrl!, currentOrder.reference)}
-              className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition"
-            >
+            <button type="button" onClick={() => onDownloadFile(currentOrder.fileUrl!, currentOrder.reference)}
+              className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition">
               ⬇ Download
             </button>
-            <button
-              type="button"
-              onClick={() => onPrintFile(currentOrder.fileUrl!, currentOrder.reference, currentOrder.id)}
-              className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition"
-            >
+            <button type="button" onClick={() => onPrintFile(currentOrder.fileUrl!, currentOrder.reference, currentOrder.id)}
+              className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition">
               🖨️ Print
             </button>
-            <button
-              onClick={() => onViewFile(currentOrder.fileUrl!, currentOrder.reference)}
-              className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition"
-            >
+            <button onClick={() => onViewFile(currentOrder.fileUrl!, currentOrder.reference)}
+              className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition">
               👁 View
             </button>
           </div>
@@ -696,17 +659,12 @@ function AttachmentsTablePanel({
         {/* Toolbar */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50 flex-shrink-0">
           <div className="flex items-center gap-3">
-            <span className="text-xs font-bold uppercase tracking-widest text-slate-500">
-              {isDrillDown ? 'Attachments' : 'Attachments'}
-            </span>
-
+            <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Attachments</span>
             <div className="flex items-center rounded-lg border border-slate-300 overflow-hidden bg-white shadow-sm">
               <button
                 onClick={() => setShowArchived(false)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-all ${
-                  !showArchived
-                    ? 'bg-blue-600 text-white shadow-inner'
-                    : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+                  !showArchived ? 'bg-blue-600 text-white shadow-inner' : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-800'
                 }`}
               >
                 <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold ${
@@ -720,9 +678,7 @@ function AttachmentsTablePanel({
               <button
                 onClick={() => setShowArchived(true)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-all ${
-                  showArchived
-                    ? 'bg-amber-500 text-white shadow-inner'
-                    : 'bg-white text-slate-600 hover:bg-amber-50 hover:text-amber-700'
+                  showArchived ? 'bg-amber-500 text-white shadow-inner' : 'bg-white text-slate-600 hover:bg-amber-50 hover:text-amber-700'
                 }`}
               >
                 <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold ${
@@ -769,7 +725,7 @@ function AttachmentsTablePanel({
         {displayed.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center py-14 px-6">
             <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center text-2xl mb-3">
-              {showArchived ? '🗄️' : isDrillDown ? <Paperclip size={16} /> : <FileText size={16} />}
+              {showArchived ? '🗄️' : '📎'}
             </div>
             <p className="text-sm font-semibold text-slate-600 mb-1">
               {showArchived ? 'No archived attachments' : `No ${isDrillDown ? 'child ' : ''}attachments yet`}
@@ -777,13 +733,9 @@ function AttachmentsTablePanel({
             <p className="text-xs text-slate-400 mb-4 max-w-xs">
               {showArchived
                 ? 'Files you archive will appear here and can be restored.'
-                : isDrillDown
-                  ? (canEditOrder
-                      ? 'Click + Attach file to add child files under this attachment.'
-                      : 'P2-P10 accounts are view-only for attachments.')
-                  : (canEditOrder
-                      ? 'Click + Attach file above to upload supporting documents.'
-                      : 'P2-P10 accounts are view-only for attachments.')}
+                : canEditOrder
+                  ? 'Click + Attach file to upload supporting documents.'
+                  : 'View-only access — no attachments yet.'}
             </p>
             {!showArchived && canEditOrder && (
               <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
@@ -807,7 +759,7 @@ function AttachmentsTablePanel({
               </thead>
               <tbody>
                 {displayed.map(att => {
-                  const fi = fileInfo(att.file_name)
+                  const fi       = fileInfo(att.file_name)
                   const children = childCount(att.id)
                   const isEditing = editingId === att.id
                   return (
@@ -884,12 +836,9 @@ function AttachmentsTablePanel({
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-500">{att.file_size}</td>
                       <td className="px-4 py-3 text-xs text-slate-500">
-                        {new Date(att.uploaded_at).toLocaleString('en-PH', { 
-                          year: 'numeric', 
-                          month: 'short', 
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
+                        {new Date(att.uploaded_at).toLocaleString('en-PH', {
+                          year: 'numeric', month: 'short', day: 'numeric',
+                          hour: '2-digit', minute: '2-digit',
                         })}
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-500">{att.uploaded_by}</td>
@@ -909,47 +858,33 @@ function AttachmentsTablePanel({
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           {!att.archived ? (
                             <>
-                              <button
-                                onClick={() => onViewFile(att.file_url, att.file_name)}
-                                className="text-[10px] font-semibold px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition"
-                              >
+                              <button onClick={() => onViewFile(att.file_url, att.file_name)}
+                                className="text-[10px] font-semibold px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition">
                                 👁 View
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => onDownloadFile(att.file_url, att.file_name)}
-                                className="text-[10px] font-semibold px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition"
-                              >
+                              <button type="button" onClick={() => onDownloadFile(att.file_url, att.file_name)}
+                                className="text-[10px] font-semibold px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition">
                                 ⬇
                               </button>
-                              <button
-                                onClick={() => onDrillDown(att)}
+                              <button onClick={() => onDrillDown(att)}
                                 className="text-[10px] font-semibold px-2 py-1 bg-violet-50 text-violet-700 border border-violet-200 rounded hover:bg-violet-100 transition"
-                                title="Open & explore this file's attachments"
-                              >
+                                title="Open & explore this file's attachments">
                                 📂 Open
                               </button>
                               <button
                                 onClick={() => { setEditingId(att.id); setEditingName(att.file_name) }}
                                 disabled={!canEditOrder}
-                                className="text-[10px] font-semibold px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition"
-                              >
+                                className="text-[10px] font-semibold px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition">
                                 ✏️
                               </button>
-                              <button
-                                onClick={() => onArchiveAttachment(att)}
-                                disabled={!canEditOrder}
-                                className="text-[10px] font-semibold px-2 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 transition"
-                              >
+                              <button onClick={() => onArchiveAttachment(att)} disabled={!canEditOrder}
+                                className="text-[10px] font-semibold px-2 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 transition">
                                 🗄️
                               </button>
                             </>
                           ) : (
-                            <button
-                              onClick={() => onRestoreAttachment(att)}
-                              disabled={!canEditOrder}
-                              className="text-[10px] font-semibold px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition"
-                            >
+                            <button onClick={() => onRestoreAttachment(att)} disabled={!canEditOrder}
+                              className="text-[10px] font-semibold px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition">
                               ↩ Restore
                             </button>
                           )}
@@ -1021,8 +956,11 @@ function OrderListNode({
 // ══════════════════════════════════════════════════════════════════════════
 export default function AdminOrdersPage() {
   const { toast } = useToast()
-  const { user } = useAuth()
+  const { user }  = useAuth()
   const canEditOrder = user ? !['DPDA', 'DPDO'].includes(user.role) : false
+
+  // ── Drive upload hook ──────────────────────────────────────────────────
+  const { uploadToDrive } = useDriveUpload()
 
   const [orders,         setOrders]         = useState<SOWithUrl[]>([])
   const [query,          setQuery]          = useState('')
@@ -1035,9 +973,8 @@ export default function AdminOrdersPage() {
 
   useRealtimeSpecialOrders({ setOrders, setAttachmentsMap, user })
 
-  const [navStack, setNavStack] = useState<NavEntry[]>([])
-
-  const [viewerFile, setViewerFile] = useState<{ url: string; name: string } | null>(null)
+  const [navStack,    setNavStack]    = useState<NavEntry[]>([])
+  const [viewerFile,  setViewerFile]  = useState<{ url: string; name: string } | null>(null)
 
   const archiveAttDisc = useDisclosure<SOAttachment>()
   const newSOModal     = useModal()
@@ -1057,7 +994,7 @@ export default function AdminOrdersPage() {
     }
   }, [currentEntry, attachmentsMap])
 
-  // Load orders + attachments
+  // ── Load orders + attachments ──────────────────────────────────────────
   useEffect(() => {
     async function loadAll() {
       try {
@@ -1085,7 +1022,6 @@ export default function AdminOrdersPage() {
             const map = new Map<string, SOAttachment[]>()
             for (const row of (allAtts ?? [])) {
               const att = normaliseAttachment(row)
-              // key: parent_attachment_id if nested, else special_order_id (for top-level)
               const key = att.parent_attachment_id ?? att.special_order_id
               const list = map.get(key) ?? []
               list.push(att)
@@ -1122,22 +1058,24 @@ export default function AdminOrdersPage() {
     setNavStack(prev => prev.slice(0, index + 1))
   }
 
+  // ── MIGRATED: Drive Pool upload ────────────────────────────────────────
   async function handleUpload(parentOrderId: string, parentAttId: string | null, files: FileList) {
     setUploadingId(parentAttId ?? parentOrderId)
     let count = 0
+
     for (const file of Array.from(files)) {
-      const folder   = parentAttId
-        ? `special-orders/${parentOrderId}/nested/${parentAttId}`
-        : `special-orders/${parentOrderId}`
-      const fileName = `${folder}/${Date.now()}-${file.name.replace(/\s+/g, '_')}`
+      // Upload to Google Drive instead of supabase.storage
+      const fileUrl = await uploadToDrive(file, 'special_orders', {
+        uploadedBy: user?.role ?? 'Admin',
+        entityId:   parentOrderId,
+        entityType: 'special_order',
+      })
 
-      const { data: storageData, error: storageError } = await supabase.storage
-        .from('documents')
-        .upload(fileName, file, { cacheControl: '3600', upsert: false })
+      if (!fileUrl) {
+        toast.error(`Failed to upload "${file.name}".`)
+        continue
+      }
 
-      if (storageError) { toast.error(`Failed to upload "${file.name}".`); continue }
-
-      const { data: urlData } = supabase.storage.from('documents').getPublicUrl(storageData.path)
       const ext = file.name.split('.').pop()?.toUpperCase() ?? 'FILE'
 
       const newAtt = await dbAddAttachment({
@@ -1145,12 +1083,12 @@ export default function AdminOrdersPage() {
         special_order_id:     parentOrderId,
         parent_attachment_id: parentAttId,
         file_name:            file.name,
-        file_url:             urlData.publicUrl,
+        file_url:             fileUrl,
         file_size:            file.size < 1024 * 1024
                                 ? `${(file.size / 1024).toFixed(1)} KB`
                                 : `${(file.size / 1024 / 1024).toFixed(1)} MB`,
         file_type:            ext,
-        uploaded_by:          'Admin',
+        uploaded_by:          user?.role ?? 'Admin',
         archived:             false,
       })
 
@@ -1164,6 +1102,7 @@ export default function AdminOrdersPage() {
         count++
       }
     }
+
     if (count > 0) toast.success(`${count} file${count > 1 ? 's' : ''} attached.`)
     setUploadingId(null)
   }
@@ -1198,7 +1137,6 @@ export default function AdminOrdersPage() {
   async function handleDeleteOrder() {
     const so = deleteDisc.payload
     if (!so) return
-
     await deleteSpecialOrder(so.id)
     await logDeleteDocument(`${so.reference} - ${so.subject}`, 'special order', user?.role as AdminRole)
     setOrders(prev => prev.filter(o => o.id !== so.id))
@@ -1214,9 +1152,7 @@ export default function AdminOrdersPage() {
     await updateSpecialOrder(updatedOrder)
     await logAction('edit_document', `Edited special order "${updatedOrder.reference} - ${updatedOrder.subject}"`, user?.role as AdminRole)
     setOrders(prev => prev.map(order => order.id === updatedOrder.id ? updatedOrder : order))
-    if (selectedOrder?.id === updatedOrder.id) {
-      setSelectedOrder(updatedOrder)
-    }
+    if (selectedOrder?.id === updatedOrder.id) setSelectedOrder(updatedOrder)
     setNavStack(prev => prev.map(entry => (
       entry.kind === 'order' && entry.order.id === updatedOrder.id
         ? { kind: 'order', order: updatedOrder }
@@ -1232,10 +1168,7 @@ export default function AdminOrdersPage() {
     setArchivingAtt(true)
     try {
       const ok = await dbArchiveAttachment(att.id)
-      if (!ok) {
-        toast.error('Could not archive attachment — the database update failed.')
-        return
-      }
+      if (!ok) { toast.error('Could not archive attachment — the database update failed.'); return }
       const mapKey = att.parent_attachment_id ?? att.special_order_id
       setAttachmentsMap(prev => {
         const next = new Map(prev)
@@ -1245,7 +1178,6 @@ export default function AdminOrdersPage() {
       })
       toast.success(`"${att.file_name}" archived.`)
       archiveAttDisc.close()
-      // If we're currently viewing the archived attachment, pop back
       if (currentEntry?.kind === 'attachment' && currentEntry.att.id === att.id) {
         setNavStack(prev => prev.slice(0, -1))
       }
@@ -1271,10 +1203,8 @@ export default function AdminOrdersPage() {
     const trimmed = newName.trim()
     if (!trimmed) { toast.error('File name cannot be empty.'); return false }
     if (trimmed === att.file_name) return true
-
     const ok = await dbRenameAttachment(att.id, trimmed)
     if (!ok) { toast.error('Failed to rename attachment.'); return false }
-
     await logRenameAttachment(att.file_name, trimmed, user?.role)
     const mapKey = att.parent_attachment_id ?? att.special_order_id
     setAttachmentsMap(prev => {
@@ -1289,22 +1219,17 @@ export default function AdminOrdersPage() {
 
   const handleDownloadFile = useCallback(async (fileUrl: string, fileName: string) => {
     try {
-      const saved = await saveFileFromUrl(fileUrl, getSuggestedFileName(fileName, fileUrl))
-      toast.success(saved ? `Downloaded "${fileName}" successfully.` : `Downloaded "${fileName}" successfully.`)
+      await saveFileFromUrl(fileUrl, getSuggestedFileName(fileName, fileUrl))
+      toast.success(`Downloaded "${fileName}" successfully.`)
     } catch (error) {
       console.error('download error:', error)
       toast.error('Could not download the file.')
     }
   }, [toast])
 
-  const handlePrintFile = useCallback(async (
-    fileUrl: string,
-    fileName: string,
-    sourceDocumentId?: string,
-  ) => {
+  const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, sourceDocumentId?: string) => {
     try {
       await printFileFromUrl(fileUrl)
-
       toast.success(`Opened print preview for "${fileName}".`)
     } catch (error) {
       console.error('print error:', error)
@@ -1312,7 +1237,6 @@ export default function AdminOrdersPage() {
     }
   }, [toast])
 
-  // Filtered list for left panel
   const filteredOrders = useMemo(() => {
     const q = query.trim().toLowerCase()
     return orders.filter(o =>
@@ -1331,7 +1255,6 @@ export default function AdminOrdersPage() {
       <PageHeader title="Admin Orders" />
 
       <div className="p-6 flex flex-col gap-5 flex-1" style={{ height: 'calc(100vh - 56px)' }}>
-
         <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-hidden flex flex-col flex-1 min-h-0">
 
           {/* Toolbar */}
@@ -1345,11 +1268,9 @@ export default function AdminOrdersPage() {
               <option value="ACTIVE">Active</option>
               <option value="PENDING">Pending</option>
             </ToolbarSelect>
-             
-              <Button variant="primary" size="sm" className="ml-auto" onClick={newSOModal.open}>
-                + New SO
-              </Button>
-          
+            <Button variant="primary" size="sm" className="ml-auto" onClick={newSOModal.open}>
+              + New SO
+            </Button>
           </div>
 
           {/* Split view */}
@@ -1370,11 +1291,7 @@ export default function AdminOrdersPage() {
                     <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
                   </div>
                 ) : filteredOrders.length === 0 ? (
-                  <EmptyState 
-                    icon="📋" 
-                    title="No orders found" 
-                    description="Create your first order." 
-                  />
+                  <EmptyState icon="📋" title="No orders found" description="Create your first order." />
                 ) : (
                   filteredOrders.map(order => (
                     <OrderListNode
@@ -1421,9 +1338,6 @@ export default function AdminOrdersPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {/* Order header for P1 */}
-                 
-
                   <AttachmentsTablePanel
                     navStack={navStack}
                     currentEntry={currentEntry}
@@ -1467,11 +1381,11 @@ export default function AdminOrdersPage() {
           open={forwardModalOpen}
           onClose={() => setForwardModalOpen(false)}
           document={{
-            id: selectedOrder.id,
-            title: selectedOrder.subject,
-            type: 'Special Order',
-            fileUrl: selectedOrder.fileUrl,
-            documentType: 'admin_order'
+            id:           selectedOrder.id,
+            title:        selectedOrder.subject,
+            type:         'Special Order',
+            fileUrl:      selectedOrder.fileUrl,
+            documentType: 'admin_order',
           }}
           documentData={selectedOrder}
           attachmentsMap={attachmentsMap}

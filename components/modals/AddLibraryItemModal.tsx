@@ -1,5 +1,5 @@
 'use client'
-// components/modals/AddLibraryItemModal.tsx (v2 — Drive Pool upload)
+// components/modals/AddLibraryItemModal.tsx (v3 — Drive Pool upload + DB persist)
 
 import { useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -8,10 +8,27 @@ import { useToast } from '@/components/ui/Toast'
 import { AddLibraryItemSchema, zodErrors } from '@/lib/validations'
 import { useDriveUpload } from '@/hooks/useGDriveTool'
 import { useAuth } from '@/lib/auth'
+import { addLibraryItem } from '@/lib/data'
+import type { LibraryCategory } from '@/types'
 
-interface Props { open: boolean; onClose: () => void }
+type LibraryItemWithUrl = {
+  id: string
+  title: string
+  category: LibraryCategory
+  size: string
+  dateAdded: string
+  fileUrl?: string
+  description?: string
+  created_at?: string
+}
 
-export function AddLibraryItemModal({ open, onClose }: Props) {
+interface Props {
+  open: boolean
+  onClose: () => void
+  onAdd?: (item: LibraryItemWithUrl) => void
+}
+
+export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
   const { toast } = useToast()
   const { user }  = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -19,10 +36,14 @@ export function AddLibraryItemModal({ open, onClose }: Props) {
   // ── Drive Pool hook ──────────────────────────────────────────────────────
   const { uploadToDrive, uploading, error: uploadError } = useDriveUpload()
 
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const [file, setFile]     = useState<File | null>(null)
+  const [errors,   setErrors]   = useState<Record<string, string>>({})
+  const [file,     setFile]     = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
-  const [form, setForm]     = useState({ title: '', category: 'MANUAL', description: '' })
+  const [form, setForm] = useState({
+    title:       '',
+    category:    'MANUAL' as LibraryCategory,
+    description: '',
+  })
 
   const field = (key: string, value: string) => {
     setForm(p => ({ ...p, [key]: value }))
@@ -65,9 +86,11 @@ export function AddLibraryItemModal({ open, onClose }: Props) {
     setErrors({})
 
     try {
-      const itemId = `lib-${Date.now()}`
+      const itemId  = `lib-${Date.now()}`
+      const today   = new Date().toISOString().split('T')[0]
+      const now     = new Date().toISOString()
 
-      // ── Drive Pool upload (replaces supabase.storage) ─────────────────
+      // ── 1. Upload file to Google Drive ───────────────────────────────
       const fileUrl = await uploadToDrive(file!, 'library_items', {
         uploadedBy: user?.role ?? 'unknown',
         entityId:   itemId,
@@ -79,7 +102,26 @@ export function AddLibraryItemModal({ open, onClose }: Props) {
         return
       }
 
+      const fileSize = file!.size < 1024 * 1024
+        ? `${(file!.size / 1024).toFixed(1)} KB`
+        : `${(file!.size / 1024 / 1024).toFixed(1)} MB`
+
+      // ── 2. Persist metadata to Supabase ─────────────────────────────
+      const newItem: LibraryItemWithUrl = {
+        id:          itemId,
+        title:       result.data.title.trim(),
+        category:    result.data.category as LibraryCategory,
+        size:        fileSize,
+        dateAdded:   today,
+        fileUrl,
+        description: form.description.trim() || undefined,
+        created_at:  now,
+      }
+
+      await addLibraryItem(newItem)
+
       toast.success(`"${result.data.title}" added to the Library.`)
+      onAdd?.(newItem)
       resetAndClose()
     } catch (err) {
       console.error(err)
@@ -88,8 +130,8 @@ export function AddLibraryItemModal({ open, onClose }: Props) {
   }
 
   const hasMissingRequired =
-    !form.title.trim() ||
-    !form.category.trim() ||
+    !form.title.trim()       ||
+    !form.category.trim()    ||
     !form.description.trim() ||
     !file
 
@@ -106,8 +148,13 @@ export function AddLibraryItemModal({ open, onClose }: Props) {
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
             Title <span className="text-red-500">*</span>
           </label>
-          <input className={cls('title')} placeholder="e.g. PNP Anti-Corruption Manual 2024"
-            value={form.title} onChange={e => field('title', e.target.value)} disabled={uploading} />
+          <input
+            className={cls('title')}
+            placeholder="e.g. PNP Anti-Corruption Manual 2024"
+            value={form.title}
+            onChange={e => field('title', e.target.value)}
+            disabled={uploading}
+          />
           {errors.title && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.title}</p>}
         </div>
 
@@ -115,10 +162,15 @@ export function AddLibraryItemModal({ open, onClose }: Props) {
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
             Category <span className="text-red-500">*</span>
           </label>
-          <select className={cls('category')} value={form.category} onChange={e => field('category', e.target.value)} disabled={uploading}>
-            <option value="MANUAL">MANUAL</option>
-            <option value="GUIDELINE">GUIDELINE</option>
-            <option value="TEMPLATE">TEMPLATE</option>
+          <select
+            className={cls('category')}
+            value={form.category}
+            onChange={e => field('category', e.target.value)}
+            disabled={uploading}
+          >
+            <option value="MANUAL">Manual</option>
+            <option value="GUIDELINE">Guideline</option>
+            <option value="TEMPLATE">Template</option>
           </select>
           {errors.category && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.category}</p>}
         </div>
@@ -127,10 +179,14 @@ export function AddLibraryItemModal({ open, onClose }: Props) {
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
             Description <span className="text-red-500">*</span>
           </label>
-          <textarea rows={3} className={`${cls('description')} resize-none`}
+          <textarea
+            rows={3}
+            className={`${cls('description')} resize-none`}
             placeholder="Brief description of this library item…"
-            value={form.description} onChange={e => field('description', e.target.value)}
-            disabled={uploading} />
+            value={form.description}
+            onChange={e => field('description', e.target.value)}
+            disabled={uploading}
+          />
           {errors.description && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.description}</p>}
         </div>
 
@@ -155,14 +211,20 @@ export function AddLibraryItemModal({ open, onClose }: Props) {
               <button
                 onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
                 className="text-slate-400 hover:text-red-500 font-bold text-sm ml-3 flex-shrink-0"
-              >✕</button>
+              >
+                ✕
+              </button>
             )}
           </div>
         ) : (
           <div
-            onDragOver={e => { e.preventDefault(); setDragging(true) }}
+            onDragOver={e  => { e.preventDefault(); setDragging(true) }}
             onDragLeave={() => setDragging(false)}
-            onDrop={e => { e.preventDefault(); setDragging(false); handleFileChange(e.dataTransfer.files?.[0] ?? null) }}
+            onDrop={e => {
+              e.preventDefault()
+              setDragging(false)
+              handleFileChange(e.dataTransfer.files?.[0] ?? null)
+            }}
             onClick={() => !uploading && fileInputRef.current?.click()}
             className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition ${
               errors.file
@@ -173,8 +235,8 @@ export function AddLibraryItemModal({ open, onClose }: Props) {
             } ${uploading ? 'pointer-events-none opacity-50' : ''}`}
           >
             <div className="text-2xl mb-1.5">📗</div>
-            <p className="text-sm font-medium text-slate-600 mb-0.5">Upload file</p>
-            <p className="text-xs text-slate-400">PDF, Jpeg, PNG — max 50 MB</p>
+            <p className="text-sm font-medium text-slate-600 mb-0.5">Click to browse or drag &amp; drop</p>
+            <p className="text-xs text-slate-400">PDF, JPG, PNG — max 50 MB</p>
           </div>
         )}
 

@@ -1,301 +1,363 @@
 // lib/data201.ts
-import { supabase } from './supabase'
-import type { Personnel201, Doc201Item, Doc201Status } from '@/types'
+// Personnel 201 file data helpers.
+// File uploads now route through /api/personnel/documents (Google Drive Pool).
+// All supabase.from() table operations are unchanged.
 
-const ARCHIVE_AFTER_YEARS = 15
+import { supabase } from '@/lib/supabase'
+import type { Personnel201, Doc201Item, Doc201Status, Doc201Category } from '@/types'
 
-function isSeparatedAndExpired(dateOfSeparation?: string | null): boolean {
-  if (!dateOfSeparation) return false
-  const separated = new Date(dateOfSeparation)
-  const threshold = new Date(separated)
-  threshold.setFullYear(threshold.getFullYear() + ARCHIVE_AFTER_YEARS)
-  return new Date() >= threshold
-}
-
-// ── Types for createPersonnel201 input ────────
-interface CreatePersonnel201Input {
-  name: string
-  rank: string
-  serialNo: string
-  unit: string
-  initials: string
-  avatarColor: string
-  status?: string
-  inactiveReason?: string
-  separatedReason?: string
-  dateOfSeparation?: string
-}
-
-/**
- * Scans personnel records passed in and persists Archived status
- * for records older than ARCHIVE_AFTER_YEARS.
- *
- * Accepts the raw DB rows already fetched by the caller to avoid
- * a second round-trip. Returns the set of IDs that were archived.
- */
-export async function archiveExpiredPersonnel201Records(
-  records: Array<{
-    id: string
-    status?: string | null
-    date_of_separation?: string | null
-  }>
-): Promise<Set<string>> {
-  // Find records that should be auto-archived
-  const expiredIds = records
-    .filter(
-      (r) =>
-        r.status === 'Separated from Service' &&
-        isSeparatedAndExpired(r.date_of_separation ?? undefined)
-    )
-    .map((r) => r.id)
-
-  if (expiredIds.length === 0) return new Set()
-
-  const today = new Date().toISOString().split('T')[0]
-
-  const { error } = await supabase
-    .from('personnel_201')
-    .update({ status: 'Archived', last_updated: today, archived: true })
-    .in('id', expiredIds)
-
-  if (error) {
-    console.warn('archiveExpiredPersonnel201Records warning:', error.message)
-    return new Set()
-  }
-
-  return new Set(expiredIds)
-}
-
-// ── Checklist template ────────────────────────
-function blankChecklist(): Omit<Doc201Item, 'id'>[] {
-  return [
-    { category: 'PERSONAL_DATA',  label: 'Updated PDS (DPRM Form)',                          sublabel: 'With latest 2x2 ID in Type A GOA Uniform',      status: 'MISSING', dateUpdated: '' },
-    { category: 'CIVIL_DOCUMENTS',label: 'Birth Certificate',                                 sublabel: 'PSA copy',                                       status: 'MISSING', dateUpdated: '' },
-    { category: 'CIVIL_DOCUMENTS',label: 'Marriage Contract',                                 sublabel: 'PSA copy (if applicable)',                        status: 'MISSING', dateUpdated: '' },
-    { category: 'CIVIL_DOCUMENTS',label: 'Birth Certificates of all Children',                sublabel: 'PSA copy',                                       status: 'MISSING', dateUpdated: '' },
-    { category: 'ACADEMIC',       label: 'College Diploma',                                                                                               status: 'MISSING', dateUpdated: '' },
-    { category: 'ACADEMIC',       label: 'Transcript of Records and CAV',                     sublabel: 'School Records or CAV',                          status: 'MISSING', dateUpdated: '' },
-    { category: 'TRAINING',       label: 'Mandatory Training Documents',                      sublabel: 'Diploma, Final Order of Merits, Declaration of Graduates', status: 'MISSING', dateUpdated: '' },
-    { category: 'TRAINING',       label: 'Specialized Training / Seminars Attended',          sublabel: 'Certificate of Graduation/Attendance',           status: 'MISSING', dateUpdated: '' },
-    { category: 'ELIGIBILITY',    label: 'Eligibilities',                                     sublabel: 'Highest/Appropriate — attested copies',          status: 'MISSING', dateUpdated: '' },
-    { category: 'SPECIAL_ORDERS', label: 'Attested Appointment / Special Orders',             sublabel: 'Temp/Perm — attested and approved',              status: 'MISSING', dateUpdated: '' },
-    { category: 'ASSIGNMENTS',    label: 'Order of Assignment, Designation / Detail',                                                                     status: 'MISSING', dateUpdated: '' },
-    { category: 'ASSIGNMENTS',    label: 'Service Records',                                   sublabel: 'Indicate Longevity and RCA Orders',              status: 'MISSING', dateUpdated: '' },
-    { category: 'PROMOTIONS',     label: 'Promotion / Demotion Orders',                       sublabel: 'Include Absorption Order and Appointments',      status: 'MISSING', dateUpdated: '' },
-    { category: 'AWARDS',         label: 'Awards, Decorations and Commendations',                                                                         status: 'MISSING', dateUpdated: '' },
-    { category: 'FIREARMS',       label: 'Firearms Records',                                  sublabel: 'Property Accountability Receipt (P.A.R)',        status: 'MISSING', dateUpdated: '' },
-    { category: 'MEDICAL',        label: 'Latest Medical Records',                                                                                        status: 'MISSING', dateUpdated: '' },
-    { category: 'CASES',          label: 'Cases / Offenses',                                  sublabel: 'All administrative and criminal cases',          status: 'MISSING', dateUpdated: '' },
-    { category: 'LEAVE',          label: 'Leave Records',                                                                                                 status: 'MISSING', dateUpdated: '' },
-    { category: 'PAY_RECORDS',    label: 'RCA / Longevity Pay Orders',                        sublabel: 'All pay orders',                                 status: 'MISSING', dateUpdated: '' },
-    { category: 'PAY_RECORDS',    label: 'Latest Per FM Previous Unit',                                                                                   status: 'MISSING', dateUpdated: '' },
-    { category: 'FINANCIAL',      label: 'Statement of Assets, Liabilities & Net Worth',      sublabel: 'SALN — latest copy',                            status: 'MISSING', dateUpdated: '' },
-    { category: 'TAXATION',       label: 'Individual Income Tax Return (ITR)',                 sublabel: 'Latest filed ITR',                               status: 'MISSING', dateUpdated: '' },
-    { category: 'TAXATION',       label: 'Photocopy of Tax Identification Card (TIN)',                                                                    status: 'MISSING', dateUpdated: '' },
-    { category: 'IDENTIFICATION', label: '1 PC Latest 2x2 ID Picture',                        sublabel: 'GOA Type A Uniform',                            status: 'MISSING', dateUpdated: '' },
-  ]
-}
-
-// ── Category labels ───────────────────────────
-export const CATEGORY_LABELS: Record<string, string> = {
-  PERSONAL_DATA:  'Personal Data Sheet',
+// ── Category display labels ────────────────────────────────────────────────
+export const CATEGORY_LABELS: Record<Doc201Category, string> = {
+  PERSONAL_DATA:  'Personal Data',
   CIVIL_DOCUMENTS:'Civil Documents',
-  ACADEMIC:       'Academic Records',
-  ELIGIBILITY:    'Eligibilities',
-  ASSIGNMENTS:    'Assignment & Service Records',
-  SPECIAL_ORDERS: 'Appointment / Special Orders',
-  TRAINING:       'Training & Seminars',
-  AWARDS:         'Awards & Commendations',
-  PROMOTIONS:     'Promotions & Demotions',
-  FIREARMS:       'Firearms Records',
-  MEDICAL:        'Medical Records',
-  CASES:          'Cases & Offenses',
-  LEAVE:          'Leave Records',
+  ACADEMIC:       'Academic',
+  TRAINING:       'Training',
+  ELIGIBILITY:    'Eligibility',
+  SPECIAL_ORDERS: 'Special Orders',
+  ASSIGNMENTS:    'Assignments',
+  PROMOTIONS:     'Promotions',
+  AWARDS:         'Awards',
+  FIREARMS:       'Firearms',
+  MEDICAL:        'Medical',
+  CASES:          'Cases',
+  LEAVE:          'Leave',
   PAY_RECORDS:    'Pay Records',
-  FINANCIAL:      'Financial Disclosures',
-  TAXATION:       'Tax Documents',
+  FINANCIAL:      'Financial',
+  TAXATION:       'Taxation',
   IDENTIFICATION: 'Identification',
 }
 
-// ── CRUD Functions ────────────────────────────
-
-/**
- * Create a new Personnel 201 record with blank checklist documents.
- * Now accepts status, inactiveReason, separatedReason, dateOfSeparation.
- */
+// ── Create a new personnel 201 record ─────────────────────────────────────
 export async function createPersonnel201(
-  input: CreatePersonnel201Input
-): Promise<Personnel201 | null> {
-  const today = new Date().toISOString().split('T')[0]
-  const id    = `p201-${Date.now()}`
-
-  const checklist = blankChecklist()
-  const documents: Doc201Item[] = checklist.map((d, i) => ({
-    ...d,
-    id: `${id}-doc-${i + 1}`,
-  }))
-
-  const effectiveStatus = input.status ?? 'In Service'
-
-  const newRecord: Personnel201 & {
+  input: Partial<Personnel201> & {
+    name: string
+    rank: string
+    initials: string
+    avatarColor: string
+    status?: string
     inactiveReason?: string
     separatedReason?: string
     dateOfSeparation?: string
-  } = {
-    id,
-    name:            input.name,
-    rank:            input.rank,
-    serialNo:        input.serialNo,
-    unit:            input.unit,
-    initials:        input.initials,
-    avatarColor:     input.avatarColor,
-    dateCreated:     today,
-    lastUpdated:     today,
-    status:          effectiveStatus,
-    inactiveReason:  input.inactiveReason,
-    separatedReason: input.separatedReason,
-    dateOfSeparation: input.dateOfSeparation,
-    documents,
+  }
+): Promise<Personnel201 | null> {
+  const today = new Date().toISOString().split('T')[0]
+  const now   = new Date().toISOString()
+
+  const row = {
+    name:               input.name,
+    rank:               input.rank,
+    serial_no:          input.serialNo         ?? '',
+    unit:               input.unit             ?? '',
+    date_created:       today,
+    last_updated:       today,
+    initials:           input.initials,
+    avatar_color:       input.avatarColor,
+    status:             input.status           ?? 'In Service',
+    inactive_reason:    input.inactiveReason   ?? null,
+    separated_reason:   input.separatedReason  ?? null,
+    date_of_separation: input.dateOfSeparation ?? null,
+    contact_no:         input.contactNo        ?? null,
+    address:            input.address          ?? null,
+    photo_url:          input.photoUrl         ?? null,
+    tin:                input.tin              ?? null,
+    pag_ibig_no:        input.pagIbigNo        ?? null,
+    phil_health_no:     input.philHealthNo     ?? null,
+    firearm_serial_no:  input.firearmSerialNo  ?? null,
+    created_at:         now,
   }
 
-  try {
-    // Build the DB row — only include reason/date columns when relevant
-    const dbRow: Record<string, unknown> = {
-      id:           newRecord.id,
-      name:         newRecord.name,
-      rank:         newRecord.rank,
-      serial_no:    newRecord.serialNo,
-      unit:         newRecord.unit,
-      initials:     newRecord.initials,
-      avatar_color: newRecord.avatarColor,
-      date_created: newRecord.dateCreated,
-      last_updated: newRecord.lastUpdated,
-      status:       effectiveStatus,
-      // Reason fields — null when not applicable
-      inactive_reason:    effectiveStatus === 'Inactive'               ? (input.inactiveReason  ?? null) : null,
-      separated_reason:   effectiveStatus === 'Separated from Service' ? (input.separatedReason ?? null) : null,
-      date_of_separation: effectiveStatus === 'Separated from Service' ? (input.dateOfSeparation ?? today) : null,
-      archived:           false,
-    }
+  const { data, error } = await supabase
+    .from('personnel_201')
+    .insert(row)
+    .select()
+    .single()
 
-    const { error: personnelError } = await supabase
-      .from('personnel_201')
-      .insert(dbRow)
-
-    if (personnelError) {
-      console.warn('Supabase insert personnel warning:', personnelError.message)
-      // Return in-memory record even if DB fails
-      return newRecord
-    }
-
-    // Insert all 24 blank checklist documents
-    const docsToInsert = documents.map(d => ({
-      id:           d.id,
-      personnel_id: newRecord.id,
-      category:     d.category,
-      label:        d.label,
-      sublabel:     d.sublabel ?? null,
-      status:       d.status,
-      date_updated: null,
-      filed_by:     null,
-      file_size:    null,
-      file_url:     null,
-      remarks:      null,
-    }))
-
-    const { error: docsError } = await supabase
-      .from('personnel_201_docs')
-      .insert(docsToInsert)
-
-    if (docsError) {
-      console.warn('Supabase insert docs warning:', docsError.message)
-    }
-  } catch (e) {
-    console.warn('Supabase unavailable, using local data:', e)
+  if (error) {
+    console.error('createPersonnel201 error:', error.message)
+    return null
   }
 
-  return newRecord
+  return {
+    id:               data.id,
+    name:             data.name,
+    rank:             data.rank,
+    serialNo:         data.serial_no      ?? '',
+    unit:             data.unit           ?? '',
+    dateCreated:      data.date_created   ?? '',
+    lastUpdated:      data.last_updated   ?? '',
+    initials:         data.initials       ?? '',
+    avatarColor:      data.avatar_color   ?? '#3b63b8',
+    photoUrl:         data.photo_url      ?? undefined,
+    address:          data.address        ?? undefined,
+    contactNo:        data.contact_no     ?? undefined,
+    status:           data.status         ?? 'In Service',
+    inactiveReason:   data.inactive_reason   ?? undefined,
+    separatedReason:  data.separated_reason  ?? undefined,
+    dateOfSeparation: data.date_of_separation ?? undefined,
+    firearmSerialNo:  data.firearm_serial_no  ?? undefined,
+    pagIbigNo:        data.pag_ibig_no        ?? undefined,
+    philHealthNo:     data.phil_health_no     ?? undefined,
+    tin:              data.tin                ?? undefined,
+    documents:        [],
+  } as Personnel201
 }
 
-/**
- * Update a single Doc201Item's status in Supabase.
- */
+// ── Update a doc201 item status ────────────────────────────────────────────
 export async function updateDoc201Status(
   docId: string,
   status: Doc201Status,
-  filedBy: string
-): Promise<void> {
+  fileUrl?: string,
+  fileSize?: string,
+  filedBy?: string
+): Promise<boolean> {
   const today = new Date().toISOString().split('T')[0]
-  try {
-    const { error } = await supabase
-      .from('personnel_201_docs')
-      .update({ status, filed_by: filedBy, date_updated: today })
-      .eq('id', docId)
-    if (error) console.warn('updateDoc201Status warning:', error.message)
-  } catch (e) {
-    console.warn('Supabase unavailable:', e)
+
+  const updates: Record<string, any> = {
+    status,
+    date_updated: today,
+    filed_by:     filedBy ?? 'Admin',
   }
+
+  if (fileUrl)  updates.file_url  = fileUrl
+  if (fileSize) updates.file_size = fileSize
+
+  const { error } = await supabase
+    .from('personnel_201_docs')
+    .update(updates)
+    .eq('id', docId)
+
+  if (error) {
+    console.error('updateDoc201Status error:', error.message)
+    return false
+  }
+
+  return true
 }
 
-/**
- * Upload a file for a Doc201Item to Supabase Storage.
- * Returns the public URL on success, or null on failure.
- */
+// ── MIGRATED: Upload a 201 document file ───────────────────────────────────
+// Previously used supabase.storage.from('documents').upload(...)
+// Now routes through /api/personnel/documents which calls the Drive Pool gateway.
+//
+// Returns the Google Drive webViewLink (public HTTPS URL) on success, null on failure.
+// The returned URL is stored in personnel_201_docs.file_url — no schema change needed.
 export async function uploadDoc201File(
   docId: string,
   file: File,
-  filedBy: string
+  uploadedBy: string
 ): Promise<string | null> {
   try {
-    const fileName = `201-docs/${docId}-${Date.now()}-${file.name.replace(/\s+/g, '_')}`
-    const { data: storageData, error: storageError } = await supabase.storage
-      .from('documents')
-      .upload(fileName, file, { cacheControl: '3600', upsert: false })
+    const formData = new FormData()
+    formData.append('file',       file)
+    formData.append('docId',      docId)
+    formData.append('uploadedBy', uploadedBy)
 
-    if (storageError) {
-      console.warn('uploadDoc201File storage error:', storageError.message)
+    const res = await fetch('/api/personnel/documents', {
+      method: 'POST',
+      body:   formData,
+    })
+
+    const json = await res.json()
+
+    if (!res.ok || !json.data) {
+      console.error('uploadDoc201File error:', json.error ?? `HTTP ${res.status}`)
       return null
     }
 
-    const { data: urlData } = supabase.storage
-      .from('documents')
-      .getPublicUrl(storageData.path)
-
-    const today    = new Date().toISOString().split('T')[0]
-    const fileSize = (file.size / 1024 / 1024).toFixed(1) + ' MB'
-
-    const { error: updateError } = await supabase
-      .from('personnel_201_docs')
-      .update({
-        status:       'COMPLETE',
-        filed_by:     filedBy,
-        date_updated: today,
-        file_url:     urlData.publicUrl,
-        file_size:    fileSize,
-      })
-      .eq('id', docId)
-
-    if (updateError) console.warn('uploadDoc201File update error:', updateError.message)
-
-    return urlData.publicUrl
-  } catch (e) {
-    console.warn('uploadDoc201File error:', e)
+    // API returns { data: { fileUrl, downloadUrl, gdriveFileId, poolAccountId, recordId, sizeBytes } }
+    return json.data.fileUrl ?? null
+  } catch (err) {
+    console.error('uploadDoc201File exception:', err)
     return null
   }
 }
 
-/**
- * Delete a Personnel 201 record from Supabase.
- */
-export async function deletePersonnel201(id: string): Promise<void> {
-  try {
-    await supabase.from('personnel_201_docs').delete().eq('personnel_id', id)
-    const { error } = await supabase.from('personnel_201').delete().eq('id', id)
-    if (error) console.warn('deletePersonnel201 warning:', error.message)
-  } catch (e) {
-    console.warn('Supabase unavailable:', e)
+// ── Auto-archive expired separated personnel records ───────────────────────
+// Called on page load to mark records as Archived if the 15-year retention
+// period has elapsed. Returns a Set of IDs that were newly archived.
+export async function archiveExpiredPersonnel201Records(
+  records: Array<{ id: string; status: string; date_of_separation?: string | null }>
+): Promise<Set<string>> {
+  const ARCHIVE_AFTER_YEARS = 15
+  const archivedIds = new Set<string>()
+
+  const expired = records.filter(r => {
+    if (r.status !== 'Separated from Service') return false
+    if (!r.date_of_separation) return false
+    const separated = new Date(r.date_of_separation)
+    const threshold = new Date(separated)
+    threshold.setFullYear(threshold.getFullYear() + ARCHIVE_AFTER_YEARS)
+    return new Date() >= threshold
+  })
+
+  if (expired.length === 0) return archivedIds
+
+  const today = new Date().toISOString().split('T')[0]
+  const ids   = expired.map(r => r.id)
+
+  const { error } = await supabase
+    .from('personnel_201')
+    .update({ status: 'Archived', last_updated: today })
+    .in('id', ids)
+
+  if (error) {
+    console.error('archiveExpiredPersonnel201Records error:', error.message)
+    return archivedIds
   }
+
+  ids.forEach(id => archivedIds.add(id))
+  return archivedIds
 }
 
-// Keep PERSONNEL_201 export as empty array (no more dummy data)
-export const PERSONNEL_201: Personnel201[] = []
+// ── Get all personnel 201 records (lightweight) ────────────────────────────
+export async function getAllPersonnel201(): Promise<Array<{
+  id: string
+  name: string
+  rank: string
+  status: string
+}>> {
+  const { data, error } = await supabase
+    .from('personnel_201')
+    .select('id, name, rank, status')
+    .order('name', { ascending: true })
+
+  if (error) {
+    console.error('getAllPersonnel201 error:', error.message)
+    return []
+  }
+
+  return data ?? []
+}
+
+// ── Get a single personnel 201 record by ID ────────────────────────────────
+export async function getPersonnel201ById(id: string): Promise<Personnel201 | null> {
+  const { data, error } = await supabase
+    .from('personnel_201')
+    .select('*')
+    .eq('id', id)
+    .single()
+
+  if (error) {
+    console.error('getPersonnel201ById error:', error.message)
+    return null
+  }
+
+  const { data: docs, error: docsError } = await supabase
+    .from('personnel_201_docs')
+    .select('*')
+    .eq('personnel_id', id)
+    .order('created_at', { ascending: true })
+
+  if (docsError) {
+    console.error('getPersonnel201ById docs error:', docsError.message)
+  }
+
+  const documents: Doc201Item[] = (docs ?? []).map((d: any) => ({
+    id:          d.id,
+    category:    d.category,
+    label:       d.label,
+    sublabel:    d.sublabel  ?? undefined,
+    status:      d.status,
+    dateUpdated: d.date_updated ?? '',
+    filedBy:     d.filed_by  ?? undefined,
+    fileSize:    d.file_size ?? undefined,
+    fileUrl:     d.file_url  ?? undefined,
+    remarks:     d.remarks   ?? undefined,
+  }))
+
+  return {
+    id:               data.id,
+    name:             data.name,
+    rank:             data.rank,
+    serialNo:         data.serial_no           ?? '',
+    unit:             data.unit                ?? '',
+    dateCreated:      data.date_created        ?? '',
+    lastUpdated:      data.last_updated        ?? '',
+    initials:         data.initials            ?? '',
+    avatarColor:      data.avatar_color        ?? '#3b63b8',
+    photoUrl:         data.photo_url           ?? undefined,
+    address:          data.address             ?? undefined,
+    contactNo:        data.contact_no          ?? undefined,
+    status:           data.status              ?? 'In Service',
+    inactiveReason:   data.inactive_reason     ?? undefined,
+    separatedReason:  data.separated_reason    ?? undefined,
+    dateOfSeparation: data.date_of_separation  ?? undefined,
+    firearmSerialNo:  data.firearm_serial_no   ?? undefined,
+    pagIbigNo:        data.pag_ibig_no         ?? undefined,
+    philHealthNo:     data.phil_health_no      ?? undefined,
+    tin:              data.tin                 ?? undefined,
+    documents,
+  } as Personnel201
+}
+
+// ── Delete a personnel 201 record ──────────────────────────────────────────
+export async function deletePersonnel201(id: string): Promise<boolean> {
+  // Delete associated docs first
+  await supabase
+    .from('personnel_201_docs')
+    .delete()
+    .eq('personnel_id', id)
+
+  const { error } = await supabase
+    .from('personnel_201')
+    .delete()
+    .eq('id', id)
+
+  if (error) {
+    console.error('deletePersonnel201 error:', error.message)
+    return false
+  }
+
+  return true
+}
+
+// ── Update a personnel 201 profile ─────────────────────────────────────────
+export async function updatePersonnel201Profile(
+  id: string,
+  updates: Partial<{
+    name:             string
+    rank:             string
+    unit:             string
+    status:           string
+    contactNo:        string
+    address:          string
+    photoUrl:         string
+    tin:              string
+    pagIbigNo:        string
+    philHealthNo:     string
+    firearmSerialNo:  string
+    inactiveReason:   string
+    separatedReason:  string
+    dateOfSeparation: string
+  }>
+): Promise<boolean> {
+  const today = new Date().toISOString().split('T')[0]
+
+  const row: Record<string, any> = { last_updated: today }
+
+  if (updates.name            !== undefined) row.name              = updates.name
+  if (updates.rank            !== undefined) row.rank              = updates.rank
+  if (updates.unit            !== undefined) row.unit              = updates.unit
+  if (updates.status          !== undefined) row.status            = updates.status
+  if (updates.contactNo       !== undefined) row.contact_no        = updates.contactNo
+  if (updates.address         !== undefined) row.address           = updates.address
+  if (updates.photoUrl        !== undefined) row.photo_url         = updates.photoUrl
+  if (updates.tin             !== undefined) row.tin               = updates.tin
+  if (updates.pagIbigNo       !== undefined) row.pag_ibig_no       = updates.pagIbigNo
+  if (updates.philHealthNo    !== undefined) row.phil_health_no    = updates.philHealthNo
+  if (updates.firearmSerialNo !== undefined) row.firearm_serial_no = updates.firearmSerialNo
+  if (updates.inactiveReason  !== undefined) row.inactive_reason   = updates.inactiveReason ?? null
+  if (updates.separatedReason !== undefined) row.separated_reason  = updates.separatedReason ?? null
+  if (updates.dateOfSeparation !== undefined) row.date_of_separation = updates.dateOfSeparation ?? null
+
+  const { error } = await supabase
+    .from('personnel_201')
+    .update(row)
+    .eq('id', id)
+
+  if (error) {
+    console.error('updatePersonnel201Profile error:', error.message)
+    return false
+  }
+
+  return true
+}

@@ -1,7 +1,7 @@
 'use client'
-// app/admin/e-library/page.tsx
+// app/admin/e-library/page.tsx (v3 — Drive Pool upload, Option A)
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { PageHeader }            from '@/components/ui/PageHeader'
 import { Badge }                 from '@/components/ui/Badge'
 import { Button }                from '@/components/ui/Button'
@@ -10,6 +10,7 @@ import { EmptyState }            from '@/components/ui/EmptyState'
 import { ConfirmDialog }         from '@/components/ui/ConfirmDialog'
 import { ToolbarSelect }         from '@/components/ui/Toolbar'
 import { Modal }                 from '@/components/ui/Modal'
+import { AddLibraryItemModal }   from '@/components/modals/AddLibraryItemModal'
 import { useSearch, useModal, useDisclosure } from '@/hooks'
 import { useRealtimeLibraryItems } from '@/hooks/useRealtimeCollections'
 import { useToast }              from '@/components/ui/Toast'
@@ -17,14 +18,12 @@ import { Paperclip, Eye, PencilLine, Trash2, Download } from 'lucide-react'
 import { logDeleteDocument, logEditLibraryItem, logViewDocument } from '@/lib/adminLogger'
 import {
   getLibraryItems,
-  addLibraryItem,
   updateLibraryItem,
   deleteLibraryItem,
   addArchivedDoc,
   archiveLibraryItem,
   getArchivedDocs,
 } from '@/lib/data'
-import { supabase }              from '@/lib/supabase'
 import { libraryBadgeClass }     from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
 import type { AdminRole } from '@/lib/auth'
@@ -35,256 +34,6 @@ import { isDocumentUnrestricted } from '@/lib/rbac'
 import type { LibraryItem, LibraryCategory } from '@/types'
 
 type LibraryItemWithUrl = LibraryItem & { fileUrl?: string; description?: string }
-
-// ── Add Library Item Modal ────────────────────
-function AddLibraryItemModal({
-  open,
-  onClose,
-  onAdd,
-}: {
-  open: boolean
-  onClose: () => void
-  onAdd: (item: LibraryItemWithUrl) => void
-}) {
-  const { toast }    = useToast()
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [file, setFile]           = useState<File | null>(null)
-  const [linkUrl, setLinkUrl]     = useState('')
-  const [dragging, setDragging]   = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [errors, setErrors]       = useState<Record<string, string>>({})
-  const [form, setForm] = useState({
-    title:       '',
-    category:    'MANUAL' as LibraryCategory,
-    description: '',
-  })
-
-  function field<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
-    setForm(prev => ({ ...prev, [key]: value }))
-    setErrors(prev => ({ ...prev, [key]: '' }))
-  }
-
-  function handleFileChange(nextFile: File | null) {
-    if (!nextFile) return
-    setFile(nextFile)
-    setLinkUrl('')
-    setErrors(prev => ({ ...prev, file: '' }))
-  }
-
-  function resetAndClose() {
-    setForm({ title: '', category: 'MANUAL', description: '' })
-    setLinkUrl('')
-    setErrors({})
-    setFile(null)
-    setDragging(false)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-    onClose()
-  }
-
-  async function submit() {
-    const nextErrors: Record<string, string> = {}
-    if (!form.title.trim()) nextErrors.title = 'Title is required.'
-    if (!file && !linkUrl.trim()) nextErrors.file = 'File or URL is required.'
-    if (linkUrl.trim()) {
-      try {
-        new URL(linkUrl.trim())
-      } catch {
-        nextErrors.linkUrl = 'Please enter a valid URL.'
-      }
-    }
-
-    if (Object.keys(nextErrors).length > 0) {
-      setErrors(nextErrors)
-      return
-    }
-
-    setErrors({})
-    setUploading(true)
-    try {
-      let fileUrl: string | undefined
-      let fileSize = 'Link'
-
-      if (file) {
-        const uploadFile: File = file
-        const fileName = `library/${Date.now()}-${uploadFile.name.replace(/\s+/g, '_')}`
-        const { data: storageData, error: storageError } = await supabase.storage
-          .from('documents')
-          .upload(fileName, uploadFile, { cacheControl: '3600', upsert: false })
-
-        if (storageError) {
-          toast.error('File upload failed. Please try again.')
-          setUploading(false)
-          return
-        }
-        const { data: urlData } = supabase.storage
-          .from('documents')
-          .getPublicUrl(storageData.path)
-        fileUrl  = urlData.publicUrl
-        fileSize = (uploadFile.size / 1024 / 1024).toFixed(1) + ' MB'
-      } else {
-        fileUrl  = linkUrl.trim()
-        fileSize = 'Link'
-      }
-
-      const today   = new Date().toISOString().split('T')[0]
-      const now     = new Date().toISOString()
-      const newItem: LibraryItemWithUrl = {
-        id:          `lib-${Date.now()}`,
-        title:       form.title.trim(),
-        category:    form.category,
-        size:        fileSize,
-        dateAdded:   today,
-        fileUrl,
-        description: form.description.trim() || undefined,
-        created_at:  now,
-      }
-
-      await addLibraryItem(newItem)
-      toast.success(`"${form.title}" added to the Library.`)
-      onAdd(newItem)
-      resetAndClose()
-    } catch (err) {
-      console.error(err)
-      toast.error('Something went wrong. Please try again.')
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  const hasMissingRequired = !form.title.trim() || (!file && !linkUrl.trim())
-
-  const cls = (f: string) =>
-    `w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-slate-50 focus:outline-none focus:bg-white transition ${
-      errors[f] ? 'border-red-400 focus:border-red-400' : 'border-slate-200 focus:border-blue-500'
-    }`
-
-  return (
-    <Modal open={open} onClose={uploading ? () => {} : resetAndClose} title="Add to e-Library" width="max-w-lg">
-      <div className="p-6 space-y-4">
-        <div>
-          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-            Title <span className="text-red-500">*</span>
-          </label>
-          <input
-            className={cls('title')}
-            placeholder="e.g. PNP Anti-Corruption Manual 2024"
-            value={form.title}
-            onChange={e => field('title', e.target.value)}
-            disabled={uploading}
-          />
-          {errors.title && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.title}</p>}
-        </div>
-
-        <div>
-          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Category</label>
-          <select
-            className={cls('category')}
-            value={form.category}
-            onChange={e => field('category', e.target.value as LibraryCategory)}
-            disabled={uploading}
-          >
-            <option value="MANUAL">Manual</option>
-            <option value="GUIDELINE">Guideline</option>
-            <option value="TEMPLATE">Template</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Description</label>
-          <textarea
-            rows={3}
-            className={`${cls('description')} resize-none`}
-            placeholder="Brief description of this library item…"
-            value={form.description}
-            onChange={e => field('description', e.target.value)}
-            disabled={uploading}
-          />
-        </div>
-
-          <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-              Link URL <span className="text-slate-400">(optional if uploading a file)</span>
-            </label>
-            <input
-              type="url"
-              className={cls('linkUrl')}
-              placeholder="https://www.pnp.gov.ph/…"
-              value={linkUrl}
-              onChange={e => { setLinkUrl(e.target.value); setErrors(prev => ({ ...prev, linkUrl: '' })) }}
-              disabled={uploading}
-            />
-            {errors.linkUrl && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.linkUrl}</p>}
-          </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-            className="hidden"
-            onChange={e => handleFileChange(e.target.files?.[0] ?? null)}
-          />
-
-          {file ? (
-            <div className="flex items-center justify-between px-4 py-3 bg-blue-50 border-[1.5px] border-blue-200 rounded-xl">
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="text-2xl flex-shrink-0">
-                  {file.name.endsWith('.pdf')      ? '📕'
-                    : file.name.match(/\.docx?$/) ? '📘'
-                    : file.name.match(/\.xlsx?$/) ? '📗'
-                    : '🖼️'}
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-800 truncate">{file.name}</p>
-                  <p className="text-xs text-slate-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                </div>
-              </div>
-              {!uploading && (
-                <button
-                  onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
-                  className="text-slate-400 hover:text-red-500 font-bold text-sm ml-3 flex-shrink-0"
-                >✕</button>
-              )}
-            </div>
-          ) : (
-            <div
-              onDragOver={e  => { e.preventDefault(); setDragging(true) }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={e => { e.preventDefault(); setDragging(false); handleFileChange(e.dataTransfer.files?.[0] ?? null) }}
-              onClick={() => !uploading && fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition ${
-                errors.file
-                  ? 'border-red-400 bg-red-50'
-                  : dragging
-                    ? 'border-blue-400 bg-blue-50'
-                    : 'border-slate-200 hover:border-blue-400 hover:bg-blue-50'
-              }`}
-            >
-              <div className="text-2xl mb-1.5">📗</div>
-              <p className="text-sm font-medium text-slate-600 mb-0.5">Upload file</p>
-              <p className="text-xs text-slate-400">PDF, DOCX, XLSX, JPG — max 50 MB</p>
-            </div>
-          )}
-          {!file && (
-            <p className="text-xs text-slate-500 mt-2">Or paste a public PNP site URL above instead of uploading a file.</p>
-          )}
-
-          {uploading && (
-            <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
-              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-              <p className="text-sm text-blue-700 font-medium">Uploading to cloud storage…</p>
-            </div>
-          )}
-
-          <div className="flex justify-end gap-2.5 pt-1">
-            <Button variant="outline" onClick={resetAndClose} disabled={uploading}>Cancel</Button>
-            <Button variant="primary" onClick={submit} disabled={uploading || hasMissingRequired}>
-              {uploading ? 'Uploading…' : '📚 Add to Library'}
-            </Button>
-          </div>
-        </div>
-      </Modal>
-  )
-}
 
 // ── View Item Modal ───────────────────────────
 function ViewItemModal({
@@ -306,7 +55,7 @@ function ViewItemModal({
   return (
     <Modal open={open} onClose={onClose} title="Library Item" width="max-w-4xl">
       <div className="p-6 space-y-4">
-          <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <div className="col-span-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Title</p>
             <p className="text-sm font-bold text-slate-800">{item.title}</p>
@@ -320,11 +69,11 @@ function ViewItemModal({
               <Badge className={libraryBadgeClass(item.category)}>{item.category}</Badge>
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Added</p>
+              <p className="text-[11px] font-semibold uppercase tracking-widests text-slate-400 mb-1">Added</p>
               <p className="text-xs text-slate-600">{item.dateAdded}</p>
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Size</p>
+              <p className="text-[11px] font-semibold uppercase tracking-widests text-slate-400 mb-1">Size</p>
               <p className="text-xs text-slate-600">{item.size}</p>
             </div>
           </div>
@@ -359,8 +108,11 @@ function ViewItemModal({
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <span className="text-4xl mb-3">📗</span>
                 <p className="text-sm text-slate-500 mb-3">Preview not available for this file type.</p>
-                <a href={item.fileUrl} download
-                  className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition">
+                <a
+                  href={item.fileUrl}
+                  download
+                  className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+                >
                   ⬇ Download to view
                 </a>
               </div>
@@ -381,6 +133,7 @@ function ViewItemModal({
   )
 }
 
+// ── Edit Library Item Modal ───────────────────
 function EditLibraryItemModal({
   item,
   open,
@@ -393,19 +146,19 @@ function EditLibraryItemModal({
   onSave: (updated: LibraryItemWithUrl) => Promise<void>
 }) {
   const [form, setForm] = useState({
-    title: '',
-    category: 'MANUAL' as LibraryCategory,
+    title:       '',
+    category:    'MANUAL' as LibraryCategory,
     description: '',
-    dateAdded: '',
+    dateAdded:   '',
   })
 
   useEffect(() => {
     if (!item || !open) return
     setForm({
-      title: item.title,
-      category: item.category,
+      title:       item.title,
+      category:    item.category,
       description: item.description ?? '',
-      dateAdded: item.dateAdded,
+      dateAdded:   item.dateAdded,
     })
   }, [item, open])
 
@@ -450,7 +203,7 @@ function EditLibraryItemModal({
         </div>
 
         <div>
-          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Description</label>
+          <label className="block text-[11px] font-semibold uppercase tracking-widests text-slate-500 mb-1.5">Description</label>
           <textarea
             rows={3}
             className={`${cls} resize-none`}
@@ -465,11 +218,11 @@ function EditLibraryItemModal({
             variant="primary"
             onClick={() => onSave({
               ...item,
-              title: form.title.trim(),
-              category: form.category,
+              title:       form.title.trim(),
+              category:    form.category,
               description: form.description.trim() || undefined,
-              dateAdded: form.dateAdded,
-              created_at: item.created_at,
+              dateAdded:   form.dateAdded,
+              created_at:  item.created_at,
             })}
             disabled={!form.title.trim() || !form.dateAdded}
           >
@@ -481,19 +234,17 @@ function EditLibraryItemModal({
   )
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// Print File Function
-// ══════════════════════════════════════════════════════════════════════════
+// ── Print helper ──────────────────────────────
 async function printFileFromUrl(fileUrl: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const iframe = document.createElement('iframe')
     iframe.style.position = 'fixed'
-    iframe.style.right = '0'
-    iframe.style.bottom = '0'
-    iframe.style.width = '0'
-    iframe.style.height = '0'
-    iframe.style.border = '0'
-    iframe.style.opacity = '0'
+    iframe.style.right    = '0'
+    iframe.style.bottom   = '0'
+    iframe.style.width    = '0'
+    iframe.style.height   = '0'
+    iframe.style.border   = '0'
+    iframe.style.opacity  = '0'
 
     let settled = false
     let blobUrl: string | null = null
@@ -511,13 +262,9 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
     }
 
     const timeout = window.setTimeout(() => {
-      finish(() => {
-        cleanup()
-        reject(new Error('Print timed out.'))
-      })
+      finish(() => { cleanup(); reject(new Error('Print timed out.')) })
     }, 15000)
 
-    // First fetch the file as blob to create same-origin URL
     fetch(fileUrl)
       .then(response => {
         if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`)
@@ -530,13 +277,9 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
         iframe.onload = () => {
           const target = iframe.contentWindow
           if (!target) {
-            finish(() => {
-              cleanup()
-              reject(new Error('Unable to load printable content.'))
-            })
+            finish(() => { cleanup(); reject(new Error('Unable to load printable content.')) })
             return
           }
-
           window.setTimeout(() => {
             finish(() => {
               try {
@@ -553,10 +296,7 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
         }
 
         iframe.onerror = () => {
-          finish(() => {
-            cleanup()
-            reject(new Error('Could not load file for printing.'))
-          })
+          finish(() => { cleanup(); reject(new Error('Could not load file for printing.')) })
         }
 
         document.body.appendChild(iframe)
@@ -573,19 +313,19 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
 // ── Main Page ─────────────────────────────────
 export default function LibraryPage() {
   const { toast }  = useToast()
-  const { user } = useAuth()
-  const [items, setItems]     = useState<LibraryItemWithUrl[]>([])
-  useRealtimeLibraryItems(setItems as any)
+  const { user }   = useAuth()
+
+  const [items,   setItems]   = useState<LibraryItemWithUrl[]>([])
   const [loading, setLoading] = useState(true)
   const [catFilter, setCat]   = useState<LibraryCategory | 'ALL'>('ALL')
 
-  const canUploadLibrary = user?.permissions.canUpload ?? false
-  const isSuperAdmin = user?.role === 'P1'
+  useRealtimeLibraryItems(setItems as any)
 
-  // Permission flags
-  const canEdit = user?.role ? canEditDocuments(user.role) : false
-  const canDelete = user?.role ? canDeleteDocuments(user.role) : false
-  const canArchive = user?.role ? canArchiveDocuments(user.role) : false
+  const canUploadLibrary = user?.permissions.canUpload ?? false
+  const isSuperAdmin     = user?.role === 'P1'
+  const canEdit          = user?.role ? canEditDocuments(user.role)   : false
+  const canDelete        = user?.role ? canDeleteDocuments(user.role) : false
+  const canArchive       = user?.role ? canArchiveDocuments(user.role): false
 
   const newModal    = useModal()
   const viewDisc    = useDisclosure<LibraryItemWithUrl>()
@@ -599,6 +339,7 @@ export default function LibraryPage() {
   )
   const filtered = searched.filter(i => catFilter === 'ALL' || i.category === catFilter)
 
+  // ── Load items ──────────────────────────────────────────────────────────
   useEffect(() => {
     Promise.all([getLibraryItems(), getArchivedDocs()]).then(([data, archived]) => {
       const archivedIds = new Set(
@@ -612,12 +353,14 @@ export default function LibraryPage() {
     })
   }, [])
 
+  // ── Called by AddLibraryItemModal via onAdd callback ────────────────────
+  // The modal now handles the Drive upload AND the DB persist internally.
+  // This function just appends the returned item to local state.
   function handleAdd(newItem: LibraryItemWithUrl) {
     if (!canUploadLibrary) {
       toast.error('Only P1–P10 accounts can add e-Library items.')
       return
     }
-
     setItems(prev => [newItem, ...prev])
   }
 
@@ -626,13 +369,9 @@ export default function LibraryPage() {
       toast.error('You do not have permission to archive e-Library items.')
       return
     }
-
     const item = archiveDisc.payload
     if (!item) return
-
     const today = new Date().toISOString().split('T')[0]
-
-    // Insert into archived_docs
     await addArchivedDoc({
       id:           `arc-lib-${item.id}`,
       title:        item.title,
@@ -640,9 +379,7 @@ export default function LibraryPage() {
       archivedDate: today,
       archivedBy:   'Admin',
     })
-
     await archiveLibraryItem(item.id)
-
     setItems(prev => prev.filter(i => i.id !== item.id))
     toast.success(`"${item.title}" has been archived.`)
     archiveDisc.close()
@@ -653,13 +390,10 @@ export default function LibraryPage() {
       toast.error('You do not have permission to edit e-Library items.')
       return
     }
-
     await updateLibraryItem(updated)
     await logEditLibraryItem(updated.title)
     setItems(prev => prev.map(item => item.id === updated.id ? updated : item))
-    if (viewDisc.payload?.id === updated.id) {
-      viewDisc.open(updated)
-    }
+    if (viewDisc.payload?.id === updated.id) viewDisc.open(updated)
     toast.success('Library item updated.')
     editDisc.close()
   }
@@ -671,7 +405,6 @@ export default function LibraryPage() {
       toast.error('You do not have permission to delete e-Library items.')
       return
     }
-
     await deleteLibraryItem(item.id)
     await logDeleteDocument(item.title, 'library item', user?.role as AdminRole)
     setItems(prev => prev.filter(i => i.id !== item.id))
@@ -681,7 +414,7 @@ export default function LibraryPage() {
     deleteDisc.close()
   }
 
-  const handlePrintFile = async (
+  const handlePrintFile = useCallback(async (
     fileUrl: string,
     fileName: string,
     sourceDocumentId?: string,
@@ -689,22 +422,18 @@ export default function LibraryPage() {
     try {
       if (user && !isSuperAdmin) {
         if (!sourceDocumentId) {
-          toast.error('Printing/downloading is only allowed for files approved by P1.')
+          toast.error('Printing is only allowed for files approved by P1.')
           return
         }
-
-        // Check if document is unrestricted (open to all without approval)
         await isDocumentUnrestricted(sourceDocumentId, 'library')
       }
-
       await printFileFromUrl(fileUrl)
-
       toast.success(`Opened print preview for "${fileName}".`)
     } catch (error) {
       console.error('print error:', error)
       toast.error('Could not print the file.')
     }
-  }
+  }, [user, isSuperAdmin, toast])
 
   const categoryStats = {
     ALL:       items.length,
@@ -778,8 +507,8 @@ export default function LibraryPage() {
                   : 'Add your first library item to get started.'
               }
               action={
-                !query && catFilter === 'ALL'
-                  ? (canUploadLibrary ? <Button variant="primary" size="sm" onClick={newModal.open}>+ Add to Library</Button> : undefined)
+                !query && catFilter === 'ALL' && canUploadLibrary
+                  ? <Button variant="primary" size="sm" onClick={newModal.open}>+ Add to Library</Button>
                   : undefined
               }
             />
@@ -802,7 +531,7 @@ export default function LibraryPage() {
                           <span className="font-semibold text-sm text-slate-800">{item.title}</span>
                           {item.fileUrl && (
                             <span className="inline-flex items-center bg-emerald-50 text-emerald-600 text-[10px] font-semibold px-1.5 py-0.5 rounded border border-emerald-200">
-                                <Paperclip size={11} />
+                              <Paperclip size={11} />
                             </span>
                           )}
                         </div>
@@ -816,15 +545,13 @@ export default function LibraryPage() {
                       <td className="px-4 py-3.5 text-sm text-slate-500">{item.size}</td>
                       <td className="px-4 py-3.5 text-sm text-slate-500">
                         <div className="flex flex-col gap-0.5">
-                         
                           {item.created_at && (
-                            <span className="text-xs">📅 {new Date(item.created_at).toLocaleString('en-PH', { 
-                              year: 'numeric', 
-                              month: 'short', 
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}</span>
+                            <span className="text-xs">
+                              📅 {new Date(item.created_at).toLocaleString('en-PH', {
+                                year: 'numeric', month: 'short', day: 'numeric',
+                                hour: '2-digit', minute: '2-digit',
+                              })}
+                            </span>
                           )}
                         </div>
                       </td>
@@ -842,43 +569,24 @@ export default function LibraryPage() {
                             <Eye size={16} className="text-slate-600" />
                           </Button>
                           {canEdit && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
-                              onClick={() => editDisc.open(item)}
-                              title="Edit item"
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => editDisc.open(item)} title="Edit item">
                               <PencilLine size={16} className="text-slate-600" />
                             </Button>
                           )}
                           {canDelete && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
-                              onClick={() => deleteDisc.open(item)}
-                              title="Delete item"
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => deleteDisc.open(item)} title="Delete item">
                               <Trash2 size={16} className="text-slate-600" />
                             </Button>
                           )}
                           {item.fileUrl && (
                             <a href={item.fileUrl} download target="_blank" rel="noopener noreferrer">
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                title="Download file"
-                              >
+                              <Button variant="ghost" size="sm" title="Download file">
                                 <Download size={16} className="text-slate-600" />
                               </Button>
                             </a>
                           )}
                           {canArchive && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
-                              onClick={() => archiveDisc.open(item)}
-                              title="Archive item"
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => archiveDisc.open(item)} title="Archive item">
                               <span className="text-lg">🗄️</span>
                             </Button>
                           )}
@@ -893,6 +601,13 @@ export default function LibraryPage() {
         </div>
       </div>
 
+      {/* ── Modals ── */}
+
+      {/*
+        Option A: using the migrated component from components/modals/AddLibraryItemModal.tsx
+        The modal handles Drive upload + DB persist internally.
+        onAdd receives the completed item and we append it to local state.
+      */}
       {canUploadLibrary && (
         <AddLibraryItemModal
           open={newModal.isOpen}
@@ -940,7 +655,6 @@ export default function LibraryPage() {
           onCancel={archiveDisc.close}
         />
       )}
-
-      </>
+    </>
   )
 }
