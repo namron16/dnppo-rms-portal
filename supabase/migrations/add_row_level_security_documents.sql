@@ -54,8 +54,8 @@ drop policy if exists "all roles read library items"     on public.library_items
 drop policy if exists "all roles write library items"    on public.library_items;
 
 -- classified_documents
-drop policy if exists "all roles read classified"        on public.classified_documents;
-drop policy if exists "all roles write classified"       on public.classified_documents;
+drop policy if exists "all roles read classified"        on public.confidential_docs;
+drop policy if exists "all roles write classified"       on public.confidential_docs;
 
 
 -- ============================================================
@@ -294,11 +294,11 @@ create policy "non-admin delete library items"
 -- 5. CLASSIFIED DOCUMENTS
 -- ============================================================
 
-alter table public.classified_documents enable row level security;
+alter table public.confidential_docs enable row level security;
 
 -- SELECT: all roles except admin
 create policy "non-admin read classified"
-  on public.classified_documents for select
+  on public.confidential_docs for select
   using (
     exists (
       select 1 from public.profiles
@@ -309,7 +309,7 @@ create policy "non-admin read classified"
 
 -- INSERT: all roles except admin
 create policy "non-admin insert classified"
-  on public.classified_documents for insert
+  on public.confidential_docs for insert
   with check (
     exists (
       select 1 from public.profiles
@@ -320,7 +320,7 @@ create policy "non-admin insert classified"
 
 -- UPDATE: all roles except admin
 create policy "non-admin update classified"
-  on public.classified_documents for update
+  on public.confidential_docs for update
   using (
     exists (
       select 1 from public.profiles
@@ -338,7 +338,7 @@ create policy "non-admin update classified"
 
 -- DELETE: all roles except admin
 create policy "non-admin delete classified"
-  on public.classified_documents for delete
+  on public.confidential_docs for delete
   using (
     exists (
       select 1 from public.profiles
@@ -348,23 +348,20 @@ create policy "non-admin delete classified"
   );
 
 
--- ============================================================
--- VERIFICATION QUERIES
--- Run these after applying the policies to confirm they exist.
--- ============================================================
---
--- select schemaname, tablename, policyname, cmd, qual
--- from pg_policies
--- where schemaname = 'public'
---   and tablename in (
---     'master_documents',
---     'special_orders',
---     'daily_journals',
---     'library_items',
---     'classified_documents'
---   )
--- order by tablename, cmd;
---
--- Expected: 4 policies per table (select, insert, update, delete)
---           = 20 policies total
--- ============================================================
+
+
+
+select schemaname, tablename, policyname, cmd, qual
+from pg_policies
+where schemaname = 'public'
+  and tablename in (
+    'master_documents',
+    'special_orders',
+    'daily_journals',
+    'library_items',
+    'classified_documents'
+  )
+order by tablename, cmd;
+
+Expected: 4 policies per table (select, insert, update, delete)
+          = 20 policies total
