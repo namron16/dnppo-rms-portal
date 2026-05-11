@@ -129,7 +129,7 @@ function Breadcrumb({
     <div className="flex items-center gap-0 flex-wrap mb-4 px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl">
       <span className="text-slate-400 mr-1 text-sm">🗂</span>
       {navStack.map((entry, i) => {
-        const label = entry.kind === 'document' ? entry.doc.title : entry.att.file_name
+        const label = entry.kind === 'document' ? `${entry.doc.tag} – ${entry.doc.title}` : entry.att.file_name
         const isLast = i === navStack.length - 1
         const fi = entry.kind === 'attachment' ? fileInfo(entry.att.file_name) : null
 
