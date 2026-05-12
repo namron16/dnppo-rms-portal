@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth'
 import { getDefaultAdminRoute, type SessionRole } from '@/lib/adminRouteAccess'
 
 const ROLE_EMAIL_MAP: Record<string, string> = {
-  admin: 'superadmin@dnppo.gov.ph',
+  admin: 'dalenamron@gmail.com',
   PD:    'pd@dnppo.gov.ph',
   DPDA:  'dpda@dnppo.gov.ph',
   DPDO:  'dpdo@dnppo.gov.ph',
