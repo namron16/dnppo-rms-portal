@@ -86,7 +86,7 @@ const ACTION_CONFIG: Record<string, { label: string; icon: string; badgeCls: str
   approve_document:     { label: 'Approve',        icon: '✅', badgeCls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
   reject_document:      { label: 'Reject',         icon: '❌', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
   recall_inbox_item:    { label: 'Recall',         icon: '↩️', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
-  save_inbox_item:      { label: 'Save',           icon: '💾', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
+  save_forwarded_document:      { label: 'Save',           icon: '💾', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
 }
 
 function getActionConfig(action: string) {
