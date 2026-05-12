@@ -14,7 +14,7 @@ export type LogActionType =
   | 'add_library_item' | 'archive_library_item'
   | 'review_document' | 'approve_document' | 'reject_document'
   | 'add_org_member' | 'edit_org_member' | 'remove_org_member'
-  | 'recall_inbox_item' | 'save_inbox_item'
+  | 'recall_inbox_item' | 'save_inbox_item' | 'change_password'
 
 // Module-level state — set on login via setCurrentLogger()
 let _currentUserId: string | null = null    // Supabase UUID
@@ -101,3 +101,6 @@ export const logEditLibraryItem = (itemTitle: string) =>
 
 export const logRenameAttachment = (oldName: string, newName: string) =>
   logAction('edit_document', `Renamed attachment "${oldName}" to "${newName}"`)
+
+export const logPasswordChange = () =>
+  logAction('change_password', `Changed password`)

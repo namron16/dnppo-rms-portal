@@ -4,7 +4,9 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useToast } from '@/components/ui/Toast'
+import { useAuth } from '@/lib/auth'
 import type { AdminUser } from '@/lib/auth'
+import { logAction, logPasswordChange } from '@/lib/adminLogger'
 import {
   getStoredProfilePrefs,
   saveStoredProfilePrefs,
@@ -42,6 +44,7 @@ export function ProfileSettingsModal({
   onProfileUpdated,
 }: ProfileSettingsModalProps) {
   const { toast } = useToast()
+  const { changePassword } = useAuth()
   const fileInputRef  = useRef<HTMLInputElement>(null)
   const modalRef      = useRef<HTMLDivElement>(null)
 
@@ -51,19 +54,19 @@ export function ProfileSettingsModal({
   const [closing, setClosing] = useState(false)
 
   // Profile fields
-  const [displayName, setDisplayName] = useState(user?.name ?? '')
-  const [email,       setEmail]       = useState(`${user?.id?.toLowerCase()}@ddnppo.gov.ph`)
-  const [photoFile,   setPhotoFile]   = useState<File | null>(null)
+  const [displayName,  setDisplayName]  = useState(user?.name ?? '')
+  const [email,        setEmail]        = useState(user?.email ?? '')
+  const [photoFile,    setPhotoFile]    = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string>('')
-  const [nameError,   setNameError]   = useState('')
-  const [emailError,  setEmailError]  = useState('')
+  const [nameError,    setNameError]    = useState('')
+  const [emailError,   setEmailError]   = useState('')
 
   // Password fields
-  const [currentPw,  setCurrentPw]  = useState('')
-  const [newPw,      setNewPw]      = useState('')
-  const [confirmPw,  setConfirmPw]  = useState('')
-  const [showPw,     setShowPw]     = useState({ current: false, next: false, confirm: false })
-  const [pwErrors,   setPwErrors]   = useState<Record<string, string>>({})
+  const [currentPw, setCurrentPw] = useState('')
+  const [newPw,     setNewPw]     = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+  const [showPw,    setShowPw]    = useState({ current: false, next: false, confirm: false })
+  const [pwErrors,  setPwErrors]  = useState<Record<string, string>>({})
 
   // ── animation lifecycle ───────────────────────
   useEffect(() => {
@@ -84,10 +87,9 @@ export function ProfileSettingsModal({
     void (async () => {
       const prefs = user ? await getStoredProfilePrefs(user.role) : {}
       setDisplayName(prefs.displayName ?? user?.name ?? '')
-      // Strip cache-buster for display but keep full URL for saving
       setPhotoPreview(prefs.avatarUrl ?? user?.avatarUrl ?? '')
     })()
-    setEmail(`${user?.id?.toLowerCase()}@ddnppo.gov.ph`)
+    setEmail(user?.email ?? '')
     setPhotoFile(null)
     setNameError('')
     setEmailError('')
@@ -111,18 +113,8 @@ export function ProfileSettingsModal({
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please select an image file.')
-      return
-    }
-    // Validate file size (max 5 MB)
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Image must be smaller than 5 MB.')
-      return
-    }
-
+    if (!file.type.startsWith('image/')) { toast.error('Please select an image file.'); return }
+    if (file.size > 5 * 1024 * 1024)    { toast.error('Image must be smaller than 5 MB.'); return }
     setPhotoFile(file)
     const reader = new FileReader()
     reader.onload = ev => setPhotoPreview(ev.target?.result as string)
@@ -142,7 +134,6 @@ export function ProfileSettingsModal({
       let avatarUrl: string | undefined = undefined
 
       if (photoFile && user) {
-        // Upload to stable path in the avatars bucket
         const uploadedUrl = await uploadProfileAvatar(user.role, photoFile)
         if (!uploadedUrl) {
           toast.error('Photo upload failed. Please try again.')
@@ -152,10 +143,8 @@ export function ProfileSettingsModal({
         avatarUrl = uploadedUrl
       }
 
-      // If no new photo, keep current stored URL (without the cache buster if present)
       if (!avatarUrl) {
         const currentPrefs = user ? await getStoredProfilePrefs(user.role) : {}
-        // Remove any old cache buster so we store a clean base URL
         avatarUrl = currentPrefs.avatarUrl?.split('?')[0] ?? user?.avatarUrl ?? undefined
       }
 
@@ -164,7 +153,6 @@ export function ProfileSettingsModal({
           displayName: displayName.trim(),
           avatarUrl,
         })
-
         if (!saved) {
           toast.error('Profile saved locally, but cloud sync failed. Check Supabase permissions/policies.')
           return
@@ -182,26 +170,62 @@ export function ProfileSettingsModal({
   }
 
   // ── password save ─────────────────────────────
-  function handlePasswordSave() {
-    const errors: Record<string, string> = {}
-    if (!currentPw) errors.current = 'Current password is required.'
-    if (!newPw) errors.next = 'New password is required.'
-    else if (newPw.length < 6) errors.next = 'Password must be at least 6 characters.'
-    if (!confirmPw) errors.confirm = 'Please confirm the new password.'
-    else if (newPw !== confirmPw) errors.confirm = 'Passwords do not match.'
-    setPwErrors(errors)
-    if (Object.keys(errors).length > 0) return
+  async function handlePasswordSave() {
+  // ── Client-side validation ──────────────────────────────
+  const errors: Record<string, string> = {}
 
-    setSaving(true)
-    setTimeout(() => {
-      setSaving(false)
-      toast.success('Password changed successfully.')
-      setCurrentPw(''); setNewPw(''); setConfirmPw('')
-    }, 700)
+  if (!currentPw)
+    errors.current = 'Current password is required.'
+
+  if (!newPw)
+    errors.next = 'New password is required.'
+  else if (newPw.length < 12)
+    errors.next = 'Password must be at least 12 characters.'
+
+  if (!confirmPw)
+    errors.confirm = 'Please confirm the new password.'
+  else if (newPw !== confirmPw)
+    errors.confirm = 'Passwords do not match.'
+
+  // Prevent reuse of the same password
+  if (newPw && currentPw && newPw === currentPw)
+    errors.next = 'New password must be different from your current password.'
+
+  setPwErrors(errors)
+  if (Object.keys(errors).length > 0) return
+
+  // ── Call Supabase ───────────────────────────────────────
+  setSaving(true)
+
+  const { error } = await changePassword(currentPw, newPw)
+
+  setSaving(false)
+
+  if (error) {
+    // Route the error to the right field
+    if (error === 'Current password is incorrect.') {
+      setPwErrors(prev => ({ ...prev, current: error }))
+    } else {
+      toast.error(error)
+    }
+    return
   }
 
+  // ── Success ─────────────────────────────────────────────
+  toast.success('Password updated successfully.')
+  void logPasswordChange()
+  setCurrentPw('')
+  setNewPw('')
+  setConfirmPw('')
+  // Stay on the Security tab — no forced logout
+}
+
   // ── password strength ─────────────────────────
-  const pwStrength = newPw.length >= 12 ? 4 : newPw.length >= 8 ? 3 : newPw.length >= 6 ? 2 : newPw.length > 0 ? 1 : 0
+  const pwStrength = newPw.length >= 20 ? 4   // Strong
+  : newPw.length >= 16 ? 3                  // Good
+  : newPw.length >= 12 ? 2                  // Fair (meets minimum)
+  : newPw.length > 0   ? 1                  // Weak (below minimum)
+  : 0
   const pwStrengthColors = ['', 'bg-red-400', 'bg-amber-400', 'bg-blue-500', 'bg-emerald-500']
   const pwStrengthLabels = ['', 'Weak', 'Fair', 'Good', 'Strong']
 
@@ -212,8 +236,8 @@ export function ProfileSettingsModal({
       err ? 'border-red-400 focus:border-red-400' : 'border-slate-200 focus:border-blue-500'
     }`
 
-  const avatarBg   = user?.avatarColor ?? '#3b63b8'
-  const initials   = displayName ? getInitials(displayName) : (user?.initials ?? '??')
+  const avatarBg = user?.avatarColor ?? '#3b63b8'
+  const initials = displayName ? getInitials(displayName) : (user?.initials ?? '??')
 
   return (
     <>
@@ -225,7 +249,7 @@ export function ProfileSettingsModal({
         onClick={onClose}
       />
 
-      {/* Panel — anchored below the sidebar profile card */}
+      {/* Panel */}
       <div
         ref={modalRef}
         onClick={e => e.stopPropagation()}
@@ -234,20 +258,13 @@ export function ProfileSettingsModal({
             ? 'opacity-0 translate-y-2 scale-[0.98]'
             : 'opacity-100 translate-y-0 scale-100'
         }`}
-        style={{
-          left: '252px',
-          top: '16px',
-          bottom: '16px',
-          width: '360px',
-          maxHeight: 'calc(100vh - 32px)',
-        }}
+        style={{ left: '252px', top: '16px', bottom: '16px', width: '360px', maxHeight: 'calc(100vh - 32px)' }}
       >
         <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[calc(100vh-32px)]">
 
           {/* ── Header ── */}
           <div className="bg-[#0f1c35] px-5 py-4 flex-shrink-0">
             <div className="flex items-center gap-3">
-              {/* Avatar */}
               <div className="relative group flex-shrink-0">
                 <div
                   className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-[15px] border-2 border-white/20 overflow-hidden cursor-pointer transition-opacity hover:opacity-80"
@@ -257,8 +274,7 @@ export function ProfileSettingsModal({
                 >
                   {photoPreview
                     ? <img src={photoPreview} alt="preview" className="w-full h-full object-cover" />
-                    : initials
-                  }
+                    : initials}
                 </div>
                 <div
                   className="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity"
@@ -275,13 +291,11 @@ export function ProfileSettingsModal({
                 />
               </div>
 
-              {/* Identity */}
               <div className="flex-1 min-w-0">
                 <p className="text-white text-[14px] font-bold leading-tight truncate">{displayName || user?.name}</p>
                 <p className="text-white/50 text-[11px] capitalize mt-0.5">{user?.role} · {user?.title}</p>
               </div>
 
-              {/* Close */}
               <button
                 onClick={onClose}
                 className="text-white/40 hover:text-white/80 transition p-1 rounded-lg hover:bg-white/10 flex-shrink-0"
@@ -292,8 +306,6 @@ export function ProfileSettingsModal({
                 </svg>
               </button>
             </div>
-
-            {/* Photo hint */}
             <p className="text-white/30 text-[10px] mt-2.5 flex items-center gap-1">
               <span>📷</span> Click your avatar above to change profile photo (max 5 MB)
             </p>
@@ -323,7 +335,6 @@ export function ProfileSettingsModal({
             {tab === 'profile' && (
               <div className="p-5 space-y-4">
 
-                {/* Display Name */}
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     Display Name <span className="text-red-500">*</span>
@@ -339,9 +350,8 @@ export function ProfileSettingsModal({
                   <p className="text-[10px] text-slate-400 mt-1">Updates your sidebar display name only.</p>
                 </div>
 
-                {/* Email */}
                 <div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-widests text-slate-500 mb-1.5">
+                  <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     Email Address <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -349,15 +359,14 @@ export function ProfileSettingsModal({
                     className={inputCls(emailError)}
                     value={email}
                     onChange={e => { setEmail(e.target.value); setEmailError('') }}
-                    placeholder="yourname@ddnppo.gov.ph"
+                    placeholder="yourname@dnppo.gov.ph"
                     disabled={saving}
                   />
                   {emailError && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {emailError}</p>}
                 </div>
 
-                {/* Role (read-only) */}
                 <div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-widests text-slate-500 mb-1.5">
+                  <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     System Role <span className="text-[10px] text-slate-400 normal-case">(read-only)</span>
                   </label>
                   <div className="w-full px-3 py-2.5 border-[1.5px] border-slate-100 rounded-xl text-sm bg-slate-50 text-slate-400 flex items-center gap-2">
@@ -368,15 +377,12 @@ export function ProfileSettingsModal({
                   </div>
                 </div>
 
-                {/* Photo upload section */}
                 {photoFile ? (
                   <div className="flex items-center gap-3 px-3 py-3 bg-blue-50 border border-blue-200 rounded-xl">
                     <div className="w-9 h-9 rounded-full overflow-hidden border-2 border-blue-200 flex-shrink-0">
-                      {photoPreview ? (
-                        <img src={photoPreview} alt="preview" className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full bg-slate-200" />
-                      )}
+                      {photoPreview
+                        ? <img src={photoPreview} alt="preview" className="w-full h-full object-cover" />
+                        : <div className="w-full h-full bg-slate-200" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-slate-700 truncate">{photoFile.name}</p>
@@ -385,7 +391,6 @@ export function ProfileSettingsModal({
                     <button
                       onClick={() => {
                         setPhotoFile(null)
-                        // Restore the saved avatar URL
                         void getStoredProfilePrefs(user!.role).then(p => {
                           setPhotoPreview(p.avatarUrl ?? user?.avatarUrl ?? '')
                         })
@@ -417,21 +422,15 @@ export function ProfileSettingsModal({
                 )}
 
                 <div className="flex gap-2 pt-1">
-                  <button
-                    onClick={onClose}
-                    disabled={saving}
-                    className="flex-1 px-4 py-2.5 border-[1.5px] border-slate-200 text-slate-600 font-semibold text-sm rounded-xl hover:bg-slate-50 transition disabled:opacity-60"
-                  >
+                  <button onClick={onClose} disabled={saving}
+                    className="flex-1 px-4 py-2.5 border-[1.5px] border-slate-200 text-slate-600 font-semibold text-sm rounded-xl hover:bg-slate-50 transition disabled:opacity-60">
                     Cancel
                   </button>
-                  <button
-                    onClick={handleProfileSave}
-                    disabled={saving}
-                    className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl transition disabled:opacity-60 flex items-center justify-center gap-2"
-                  >
-                    {saving ? (
-                      <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Saving…</>
-                    ) : '💾 Save Changes'}
+                  <button onClick={handleProfileSave} disabled={saving}
+                    className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl transition disabled:opacity-60 flex items-center justify-center gap-2">
+                    {saving
+                      ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Saving…</>
+                      : '💾 Save Changes'}
                   </button>
                 </div>
               </div>
@@ -443,12 +442,12 @@ export function ProfileSettingsModal({
 
                 <div className="flex items-start gap-2 px-3 py-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
                   <span className="flex-shrink-0 mt-0.5">⚠️</span>
-                  <span>Use a strong password (min. 6 characters). You remain logged in after changing.</span>
+                  <span>Use a strong password (min. 12 characters, mix of upper/lower, numbers & symbols). You remain logged in after changing.</span>
                 </div>
 
                 {/* Current */}
                 <div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-widests text-slate-500 mb-1.5">
+                  <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     Current Password <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
@@ -470,14 +469,14 @@ export function ProfileSettingsModal({
 
                 {/* New */}
                 <div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-widests text-slate-500 mb-1.5">
+                  <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     New Password <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
                     <input
                       type={showPw.next ? 'text' : 'password'}
                       className={`${inputCls(pwErrors.next)} pr-10`}
-                      placeholder="Min. 6 characters"
+                      placeholder="Min. 12 characters"
                       value={newPw}
                       onChange={e => { setNewPw(e.target.value); setPwErrors(p => ({ ...p, next: '' })) }}
                       disabled={saving}
@@ -487,7 +486,6 @@ export function ProfileSettingsModal({
                       {showPw.next ? '🙈' : '👁'}
                     </button>
                   </div>
-                  {/* Strength bar */}
                   {newPw && (
                     <div className="mt-1.5 space-y-1">
                       <div className="flex gap-1">
@@ -505,7 +503,7 @@ export function ProfileSettingsModal({
 
                 {/* Confirm */}
                 <div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-widests text-slate-500 mb-1.5">
+                  <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     Confirm Password <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
@@ -536,21 +534,15 @@ export function ProfileSettingsModal({
                 )}
 
                 <div className="flex gap-2 pt-1">
-                  <button
-                    onClick={onClose}
-                    disabled={saving}
-                    className="flex-1 px-4 py-2.5 border-[1.5px] border-slate-200 text-slate-600 font-semibold text-sm rounded-xl hover:bg-slate-50 transition disabled:opacity-60"
-                  >
+                  <button onClick={onClose} disabled={saving}
+                    className="flex-1 px-4 py-2.5 border-[1.5px] border-slate-200 text-slate-600 font-semibold text-sm rounded-xl hover:bg-slate-50 transition disabled:opacity-60">
                     Cancel
                   </button>
-                  <button
-                    onClick={handlePasswordSave}
-                    disabled={saving}
-                    className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl transition disabled:opacity-60 flex items-center justify-center gap-2"
-                  >
-                    {saving ? (
-                      <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Updating…</>
-                    ) : '🔑 Update Password'}
+                  <button onClick={handlePasswordSave} disabled={saving}
+                    className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl transition disabled:opacity-60 flex items-center justify-center gap-2">
+                    {saving
+                      ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Updating…</>
+                      : '🔑 Update Password'}
                   </button>
                 </div>
               </div>

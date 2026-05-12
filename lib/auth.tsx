@@ -107,6 +107,7 @@ interface AuthContextValue {
   isLoading: boolean
   loginPassword: (email: string, password: string) => Promise<{ error: string | null }>
   logout:        () => Promise<void>
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ error: string | null }>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -203,9 +204,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSession(null)
   }, [supabase])
 
+  // change password
+  
+  const changePassword = useCallback(async (
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ error: string | null }> => {
+
+    // user is guaranteed non-null here because the modal
+    // only renders when the user is authenticated.
+    if (!user?.email) {
+      return { error: 'Session error. Please log out and log back in.' }
+    }
+
+    // ── Step A: Re-authenticate with the current password ──
+    // This is the critical security step. Without it, anyone who
+    // walks up to an unlocked screen could change the password.
+    const { error: reAuthError } = await supabase.auth.signInWithPassword({
+      email:    user.email,
+      password: currentPassword,
+    })
+
+    if (reAuthError) {
+      // Return a generic message — don't leak Supabase internals
+      return { error: 'Current password is incorrect.' }
+    }
+
+  // ── Step B: Set the new password ──
+  const { error: updateError } = await supabase.auth.updateUser({
+    password: newPassword,
+  })
+
+  if (updateError) {
+    return { error: updateError.message }
+  }
+
+  return { error: null }
+}, [supabase, user])
+
   return (
     <AuthContext.Provider value={{
-      user, session, isLoading, loginPassword, logout,
+      user, session, isLoading, loginPassword, logout, changePassword,
     }}>
       {children}
     </AuthContext.Provider>
