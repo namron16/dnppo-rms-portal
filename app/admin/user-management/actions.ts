@@ -1,4 +1,5 @@
 
+'use server'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient }  from '@supabase/supabase-js'
 
@@ -29,7 +30,10 @@ async function assertSuperAdmin() {
 // ── List all users ──────────────────────────
 
 export async function listAllUsers() {
+  console.log('listAllUsers called') 
   await assertSuperAdmin()
+  console.log('assertSuperAdmin passed')
+  
   const admin = getAdminClient()
 
   const { data, error } = await admin.auth.admin.listUsers()

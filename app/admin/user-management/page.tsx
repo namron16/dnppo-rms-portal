@@ -66,10 +66,13 @@ export default function UserManagementPage() {
   // ── Load users + presence ─────────────────────────────────────────────────
 
   const load = useCallback(async () => {
+    console.log('load called') 
     setLoading(true)
     try {
       // listAllUsers() is a server action — returns auth users enriched with profiles
+      console.log('calling listAllUsers') 
       const raw = await listAllUsers()
+      console.log('listAllUsers returned:', raw)
 
       // Also fetch presence for all users from admin_presence (client-side, uses RLS)
       const supabase = createClient()
@@ -105,6 +108,7 @@ export default function UserManagementPage() {
         })
       )
     } catch (e: unknown) {
+      console.error('load error:', e)
       setMessage({ type: 'error', text: e instanceof Error ? e.message : 'Failed to load users.' })
     } finally {
       setLoading(false)

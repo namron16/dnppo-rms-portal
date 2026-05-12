@@ -127,6 +127,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .eq('id', authUser.id)
       .single()
 
+      console.log('loadProfile:', { id: authUser.id, data, error })
+
     if (error || !data) {
       console.error('loadProfile error:', error?.message)
       return null
