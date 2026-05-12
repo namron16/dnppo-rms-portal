@@ -16,15 +16,12 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
   const router = useRouter()
 
   useEffect(() => {
-    if (isLoading) return
-    if (!user) {
-      router.replace('/login')
-      return
-    }
-    if (requiredRole === 'officer') {
-      router.replace('/admin/master')
-    }
-  }, [user, isLoading, requiredRole, router])
+  if (isLoading) return
+  if (!user) {
+    router.replace('/login')
+    return
+  }
+}, [user, isLoading, router])
 
   if (isLoading || !user) {
     return <LoadingSpinner fullPage />

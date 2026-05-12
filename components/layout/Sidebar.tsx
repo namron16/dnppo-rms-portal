@@ -1,12 +1,12 @@
 'use client'
 // components/layout/Sidebar.tsx — Updated with clickable profile + ProfileSettingsModal
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
-import { supabase } from '@/lib/supabase'
 import { cn } from '@/lib/utils'
+import {createClient} from '@/lib/supabase/client'
 import LogoutConfirmModal from '@/components/modals/LogoutConfirmModal'
 import { ProfileSettingsModal } from '@/components/modals/ProfileSettingsModal'
 
@@ -84,6 +84,7 @@ function NavLink({ item, active, onNavigate, badgeCount }: {
 
 export function Sidebar() {
   const { user, logout } = useAuth()
+  const supabase = useMemo(() => createClient(), [])
   const router   = useRouter()
   const pathname = usePathname()
 
@@ -154,10 +155,10 @@ export function Sidebar() {
     }
   }, [user])
 
-  function handleLogoutConfirm() {
-    logout()
+  async function handleLogoutConfirm() {
     setShowLogoutConfirm(false)
-    setTimeout(() => { router.push('/login') }, 100)
+    await logout()
+    setTimeout(() => { router.replace('/login') }, 100)
   }
 
   function handleProfileUpdated({ displayName, avatarUrl }: { displayName?: string; avatarUrl?: string }) {
