@@ -50,6 +50,15 @@ export async function GET(request: Request) {
       throw new Error('Google did not return both access_token and refresh_token.')
     }
 
+    const grantedScopes = (tokens.scope ?? '').split(' ')
+    const hasDriveScope = grantedScopes.some(s => s.includes('drive'))
+    if (!hasDriveScope) {
+      throw new Error(
+        'Drive permission was not granted. ' +
+        'Please allow ALL requested permissions on the Google consent screen.'
+      )
+    }
+
     // 2. Get authenticated user's email
     const accountEmail = await getAuthenticatedEmail(tokens.access_token)
 

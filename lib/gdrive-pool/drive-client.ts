@@ -340,14 +340,16 @@ export function getAuthorizationUrl(username: string, redirectUri: string): stri
   const oauth2 = buildOAuth2Client()
 
   return oauth2.generateAuthUrl({
-    access_type: 'offline',          // required to get refresh_token
-    prompt:      'consent',          // force consent screen to always get refresh_token
+    access_type:            'offline',
+    prompt:                 'consent',
+    include_granted_scopes: false,       // ← ADD THIS
     scope: [
-      'https://www.googleapis.com/auth/drive.file',  // only files created by this app
+      'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/userinfo.email',
+      'openid',                          // ← ADD THIS (Google requires it when using userinfo)
     ],
     redirect_uri: redirectUri,
-    state: JSON.stringify({ username }),  // carry username through redirect
+    state: JSON.stringify({ username }),
   })
 }
 
