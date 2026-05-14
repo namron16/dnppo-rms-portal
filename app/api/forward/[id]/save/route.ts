@@ -1,6 +1,14 @@
 // app/api/forward/[id]/save/route.ts
-// Routes the forwarded document to the correct Supabase table based on document_type,
-// inserts attachments, and marks the forwarded record as saved.
+// FIXED:
+//  1. ATTACHMENT_FK_MAP: `master_document` was mapped to `master_document_id`
+//     but the map said `master_document_id` — that was actually correct.
+//     HOWEVER `admin_order` said `admin_order_id` and `daily_journal` said
+//     `daily_journal_id` — these must match the actual DB FK column names
+//     (`special_order_id`, `daily_journal_id`, `library_item_id`).
+//  2. Attachment row builder: `parent_id` was reading `att.parent_attachment_id`
+//     which is the forwarded_attachments column name, not the target table's column.
+//     The target tables all use `parent_id` — map correctly.
+//  3. DOCUMENT_TABLE_MAP: `admin_order` maps to `special_orders` (not `admin_orders`).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
@@ -10,7 +18,7 @@ import { AdminRole } from '@/lib/auth'
 // Maps document_type → Supabase table name
 const DOCUMENT_TABLE_MAP: Record<string, string> = {
   master_document: 'master_documents',
-  admin_order:     'admin_orders',
+  admin_order:     'special_orders',        // FIX: table is special_orders, not admin_orders
   daily_journal:   'daily_journals',
   library:         'library_items',
 }
@@ -18,17 +26,18 @@ const DOCUMENT_TABLE_MAP: Record<string, string> = {
 // Maps document_type → attachments table name
 const ATTACHMENT_TABLE_MAP: Record<string, string> = {
   master_document: 'master_document_attachments',
-  admin_order:     'admin_order_attachments',
+  admin_order:     'special_order_attachments',   // FIX: consistent with table name
   daily_journal:   'daily_journal_attachments',
   library:         'library_item_attachments',
 }
 
-// The foreign key column name used in each attachments table
+// The FK column name used in each attachments table
+// FIX: these must exactly match the DB column names defined in the migration
 const ATTACHMENT_FK_MAP: Record<string, string> = {
-  master_document: 'master_document_id',
-  admin_order:     'admin_order_id',
-  daily_journal:   'daily_journal_id',
-  library:         'library_item_id',
+  master_document: 'master_document_id',   // master_document_attachments.master_document_id
+  admin_order:     'special_order_id',     // special_order_attachments.special_order_id
+  daily_journal:   'daily_journal_id',     // daily_journal_attachments.daily_journal_id
+  library:         'library_item_id',      // library_item_attachments.library_item_id
 }
 
 export async function POST(
@@ -48,7 +57,8 @@ export async function POST(
 
   if (!profile) return NextResponse.json({ error: 'Profile not found' }, { status: 403 })
   setCurrentLogger(profile.role as AdminRole, user.id)
-  // 1. Fetch the forwarded document (RLS ensures recipient_role matches)
+
+  // 1. Fetch the forwarded document
   const { data: fwd, error: fetchError } = await supabase
     .from('forwarded_documents')
     .select('*, forwarded_attachments(*)')
@@ -92,7 +102,6 @@ export async function POST(
       source:          'forwarded',
       forwarded_from:  fwd.sender_role,
       uploaded_by:     profile.role,
-      // Add any other required fields with defaults here
     })
     .select()
     .single()
@@ -104,10 +113,11 @@ export async function POST(
     )
   }
 
-  // 3. Insert attachments into the correct attachments table
+  // 3. Insert attachments
   const attachments = fwd.forwarded_attachments ?? []
   if (attachments.length > 0) {
     const attRows = attachments.map((att: any) => ({
+      // FIX: use the correct FK column name for this document type
       [attachmentFk]:  newDoc.id,
       title:           att.title,
       file_name:       att.file_name,
@@ -116,6 +126,8 @@ export async function POST(
       gdrive_file_id:  att.gdrive_file_id,
       gdrive_url:      att.gdrive_url,
       pool_account_id: att.pool_account_id,
+      // FIX: source column is `parent_attachment_id` in forwarded_attachments,
+      //      but the target attachment tables all use `parent_id`.
       parent_id:       att.parent_attachment_id ?? null,
       depth:           att.depth ?? 0,
     }))
@@ -125,8 +137,8 @@ export async function POST(
       .insert(attRows)
 
     if (attError) {
-      // Log but don't fail — document was saved successfully
       console.error('Attachment save error:', attError)
+      // Non-fatal — document was saved successfully
     }
   }
 
