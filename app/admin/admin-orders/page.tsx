@@ -1,11 +1,13 @@
 'use client'
 // app/admin/admin-orders/page.tsx
-// FIXED:
-//  1. parentDepth now reads the parent attachment's own depth (not a sibling's)
-//  2. dbAddAttachment no longer sends a client-generated `id` (DB generates uuid)
-//  3. attachmentsMap key is consistently `parent_id ?? special_order_id`
-//  4. ForwardDocumentModal attachmentsMap cast removed — passed as-is (structurally compatible)
-//  5. Minor: archiveDisc/deleteDisc opened with full order object (consistent with editOrderDisc)
+// Fixed:
+//  1. handleUpload now uses the Drive pool API (/api/gdrive/upload) instead of
+//     supabase.storage — attachments go to the uploading user's own Drive accounts.
+//  2. pool_account_id is now a real UUID from the Drive pool, not 'supabase-storage'.
+//  3. AddSpecialOrderModal now receives and stores full Drive metadata on the SO record.
+//  4. parentDepth reads the parent attachment's own depth (not a sibling's).
+//  5. dbAddAttachment no longer sends a client-generated `id` (DB generates uuid).
+//  6. attachmentsMap key is consistently `parent_id ?? special_order_id`.
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { PageHeader }           from '@/components/ui/PageHeader'
@@ -38,8 +40,15 @@ import type { AdminRole } from '@/lib/auth'
 import { useRealtimeSpecialOrders } from '@/hooks/useRealtimeSpecialOrders'
 import type { SpecialOrder }    from '@/types'
 
-// ── Types ─────────────────────────────────────────────────────────────────
-type SOWithUrl = SpecialOrder & { fileUrl?: string }
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type SOWithUrl = SpecialOrder & {
+  fileUrl?:         string
+  gdrive_file_id?:  string
+  gdrive_url?:      string
+  pool_account_id?: string
+  download_url?:    string
+}
 
 export interface SOAttachment {
   id: string
@@ -60,7 +69,7 @@ type NavEntry =
   | { kind: 'order';      order: SOWithUrl }
   | { kind: 'attachment'; att: SOAttachment }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function formatBytes(bytes: number | null): string {
   if (bytes === null || bytes === undefined) return '—'
@@ -73,7 +82,8 @@ function displayName(att: SOAttachment): string {
   return att.title || att.file_name || att.gdrive_file_id
 }
 
-// ── Supabase helpers ───────────────────────────────────────────────────────
+// ── Supabase helpers ───────────────────────────────────────────────────────────
+
 function normaliseAttachment(row: any): SOAttachment {
   return {
     id:               row.id,
@@ -91,7 +101,7 @@ function normaliseAttachment(row: any): SOAttachment {
   }
 }
 
-// FIX: removed `id` from the insert — DB generates the uuid via default.
+// No `id` field — DB generates the uuid via default.
 async function dbAddAttachment(
   att: Omit<SOAttachment, 'id' | 'created_at'>
 ): Promise<SOAttachment | null> {
@@ -122,7 +132,62 @@ async function dbDeleteAttachment(id: string): Promise<boolean> {
   return true
 }
 
-// ── File-type helpers ──────────────────────────────────────────────────────
+// ── Drive pool upload helper ───────────────────────────────────────────────────
+//
+// Uploads a single file to the Drive pool API and returns the Drive metadata.
+// Uses the same /api/gdrive/upload endpoint as the modal hooks — uploads go to
+// the uploading user's own Drive accounts (ownership is enforced server-side).
+
+interface DriveAttachmentResult {
+  gdriveFileId:  string
+  gdrive_url:    string
+  poolAccountId: string
+  downloadUrl:   string
+  fileSizeBytes: number
+}
+
+async function uploadAttachmentToDrive(
+  file: File,
+  uploadedBy: string,
+  entityId: string,
+  parentAttId: string | null
+): Promise<DriveAttachmentResult | null> {
+  const formData = new FormData()
+  formData.append('file',        file)
+  formData.append('category',    'special_orders')
+  formData.append('uploadedBy',  uploadedBy)
+  formData.append('entityType',  parentAttId ? 'special_order_attachment' : 'special_order')
+  formData.append('entityId',    entityId)
+
+  const res = await fetch('/api/gdrive/upload', {
+    method: 'POST',
+    body:   formData,
+  })
+
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}))
+    console.error('[uploadAttachmentToDrive] API error:', json.error ?? res.status)
+    return null
+  }
+
+  const json = await res.json()
+  const r    = json.data
+  if (!r?.gdriveFileId && !r?.gdrive_file_id) {
+    console.error('[uploadAttachmentToDrive] Missing gdriveFileId in response', r)
+    return null
+  }
+
+  return {
+    gdriveFileId:  r.gdriveFileId  ?? r.gdrive_file_id,
+    gdrive_url:    r.fileUrl       ?? r.drive_url ?? `https://drive.google.com/file/d/${r.gdriveFileId}/view`,
+    poolAccountId: r.poolAccountId ?? r.pool_account_id,
+    downloadUrl:   r.downloadUrl   ?? '',
+    fileSizeBytes: file.size,
+  }
+}
+
+// ── File-type helpers ──────────────────────────────────────────────────────────
+
 function fileInfoFromMime(mimeType: string | null, fileName: string | null) {
   const name = fileName ?? ''
   const mime = mimeType ?? ''
@@ -152,14 +217,13 @@ function getSuggestedFileName(baseName: string, fileUrl: string) {
 async function saveFileFromUrl(fileUrl: string, suggestedName: string): Promise<boolean> {
   const response = await fetch(fileUrl)
   if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`)
-
   const blob = await response.blob()
+
   const picker = window as Window & {
     showSaveFilePicker?: (options?: { suggestedName?: string }) => Promise<FileSystemFileHandle>
   }
-
   if (picker.showSaveFilePicker) {
-    const handle = await picker.showSaveFilePicker({ suggestedName })
+    const handle   = await picker.showSaveFilePicker({ suggestedName })
     const writable = await handle.createWritable()
     await writable.write(blob)
     await writable.close()
@@ -167,10 +231,10 @@ async function saveFileFromUrl(fileUrl: string, suggestedName: string): Promise<
   }
 
   const objectUrl = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = objectUrl
+  const anchor    = document.createElement('a')
+  anchor.href     = objectUrl
   anchor.download = suggestedName
-  anchor.rel = 'noopener'
+  anchor.rel      = 'noopener'
   document.body.appendChild(anchor)
   anchor.click()
   anchor.remove()
@@ -183,7 +247,7 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
     const iframe = document.createElement('iframe')
     iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0'
 
-    let settled = false
+    let settled  = false
     let blobUrl: string | null = null
 
     const cleanup = () => {
@@ -205,11 +269,14 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
     fetch(fileUrl)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob() })
       .then(blob => {
-        blobUrl = URL.createObjectURL(blob)
+        blobUrl    = URL.createObjectURL(blob)
         iframe.src = blobUrl
         iframe.onload = () => {
           const target = iframe.contentWindow
-          if (!target) { finish(() => { cleanup(); reject(new Error('Unable to load printable content.')) }); return }
+          if (!target) {
+            finish(() => { cleanup(); reject(new Error('Unable to load printable content.')) })
+            return
+          }
           window.setTimeout(() => {
             finish(() => {
               try { target.focus(); target.print(); resolve() }
@@ -218,16 +285,20 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
             })
           }, 500)
         }
-        iframe.onerror = () => finish(() => { cleanup(); reject(new Error('Could not load file for printing.')) })
+        iframe.onerror = () =>
+          finish(() => { cleanup(); reject(new Error('Could not load file for printing.')) })
         document.body.appendChild(iframe)
       })
-      .catch(e => finish(() => { cleanup(); reject(e instanceof Error ? e : new Error('Failed to prepare file for printing.')) }))
+      .catch(e =>
+        finish(() => { cleanup(); reject(e instanceof Error ? e : new Error('Failed to prepare file for printing.')) })
+      )
   })
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
 // Inline File Viewer Modal
-// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+
 function InlineFileViewerModal({
   fileUrl, fileName, open, onClose,
 }: { fileUrl: string; fileName: string; open: boolean; onClose: () => void }) {
@@ -262,7 +333,7 @@ function InlineFileViewerModal({
               type="button"
               onClick={handleDownload}
               disabled={isDownloading}
-              className="text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition flex items-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition flex items-center gap-1 disabled:opacity-60"
             >
               {isDownloading ? '⬇ Saving…' : '⬇ Download'}
             </button>
@@ -285,7 +356,7 @@ function InlineFileViewerModal({
                 type="button"
                 onClick={handleDownload}
                 disabled={isDownloading}
-                className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-blue-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-blue-700 transition disabled:opacity-60"
               >
                 {isDownloading ? '⬇ Saving…' : '⬇ Download to view'}
               </button>
@@ -296,6 +367,8 @@ function InlineFileViewerModal({
     </Modal>
   )
 }
+
+// ── Edit SO Modal ──────────────────────────────────────────────────────────────
 
 function EditSpecialOrderModal({
   open, order, onClose, onSave,
@@ -386,9 +459,10 @@ function EditSpecialOrderModal({
   )
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
 // Breadcrumb
-// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+
 function Breadcrumb({
   navStack, onNavigateTo,
 }: {
@@ -434,9 +508,10 @@ function Breadcrumb({
   )
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
 // Attachments Table Panel
-// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+
 function AttachmentsTablePanel({
   navStack, currentEntry, attachments, allAttachments,
   onUpload, uploadingId, onForwardOrder, onArchiveOrder, onDeleteOrder,
@@ -467,14 +542,14 @@ function AttachmentsTablePanel({
   const [editingName, setEditingName] = useState('')
   const [renamingId,  setRenamingId]  = useState<string | null>(null)
 
-  const isDrillDown    = currentEntry.kind === 'attachment'
-  const currentOrder   = currentEntry.kind === 'order' ? currentEntry.order : null
-  const currentLabel   = isDrillDown
+  const isDrillDown  = currentEntry.kind === 'attachment'
+  const currentOrder = currentEntry.kind === 'order' ? currentEntry.order : null
+  const currentLabel = isDrillDown
     ? displayName((currentEntry as { kind: 'attachment'; att: SOAttachment }).att)
     : `${currentOrder!.reference} – ${currentOrder!.subject}`
 
-  const rootOrderId  = navStack[0].kind === 'order' ? navStack[0].order.id : ''
-  const parentAttId  = isDrillDown ? (currentEntry as { kind: 'attachment'; att: SOAttachment }).att.id : null
+  const rootOrderId = navStack[0].kind === 'order' ? navStack[0].order.id : ''
+  const parentAttId = isDrillDown ? (currentEntry as { kind: 'attachment'; att: SOAttachment }).att.id : null
 
   function childCount(attId: string): number {
     return (allAttachments.get(attId) ?? []).length
@@ -549,7 +624,7 @@ function AttachmentsTablePanel({
               🖨️ Print
             </button>
             <button onClick={() => canEditOrder && onDeleteAttachment(drillAtt)} disabled={!canEditOrder}
-              className="text-xs px-2.5 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg font-semibold hover:bg-red-100 transition disabled:opacity-50 disabled:cursor-not-allowed">
+              className="text-xs px-2.5 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg font-semibold hover:bg-red-100 transition disabled:opacity-50">
               🗑️ Delete
             </button>
           </div>
@@ -643,7 +718,7 @@ function AttachmentsTablePanel({
                   <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">Title / File name</th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[80px]">Type</th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[90px]">Size</th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widests text-slate-400 w-[130px]">Added</th>
+                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[130px]">Added</th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[90px]">Children</th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[220px]">Actions</th>
                 </tr>
@@ -772,9 +847,8 @@ function AttachmentsTablePanel({
   )
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// Left-panel list node
-// ══════════════════════════════════════════════════════════════════════════
+// ── Left-panel list node ───────────────────────────────────────────────────────
+
 function OrderListNode({
   order, isSelected, onSelect, attachmentsMap, uploadingId,
 }: {
@@ -817,9 +891,10 @@ function OrderListNode({
   )
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
 // Main Page
-// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+
 export default function AdminOrdersPage() {
   const { toast } = useToast()
   const { user }  = useAuth()
@@ -835,8 +910,8 @@ export default function AdminOrdersPage() {
 
   useRealtimeSpecialOrders({ setOrders, setAttachmentsMap, user })
 
-  const [navStack,    setNavStack]    = useState<NavEntry[]>([])
-  const [viewerFile,  setViewerFile]  = useState<{ url: string; name: string } | null>(null)
+  const [navStack,   setNavStack]   = useState<NavEntry[]>([])
+  const [viewerFile, setViewerFile] = useState<{ url: string; name: string } | null>(null)
 
   const deleteAttDisc  = useDisclosure<SOAttachment>()
   const newSOModal     = useModal()
@@ -856,7 +931,7 @@ export default function AdminOrdersPage() {
     }
   }, [currentEntry, attachmentsMap])
 
-  // ── Load orders + attachments ──────────────────────────────────────────
+  // ── Load orders + attachments ──────────────────────────────────────────────
   useEffect(() => {
     async function loadAll() {
       try {
@@ -884,7 +959,6 @@ export default function AdminOrdersPage() {
             const map = new Map<string, SOAttachment[]>()
             for (const row of (allAtts ?? [])) {
               const att = normaliseAttachment(row)
-              // FIX: consistently key by parent_id if set, else by special_order_id
               const key = att.parent_id ?? att.special_order_id
               const list = map.get(key) ?? []
               list.push(att)
@@ -921,34 +995,43 @@ export default function AdminOrdersPage() {
     setNavStack(prev => prev.slice(0, index + 1))
   }
 
-  // ── Upload ──────────────────────────────────────────────────────────────
+  // ── Upload attachments via Drive pool ──────────────────────────────────────
+  //
+  // Fixed: was using supabase.storage directly (bypassed ownership + sent fake
+  // pool_account_id). Now routes through /api/gdrive/upload so the gateway
+  // scopes the upload to the logged-in user's own Drive accounts.
   async function handleUpload(parentOrderId: string, parentAttId: string | null, files: FileList) {
+    if (!user) { toast.error('Not authenticated.'); return }
+
     setUploadingId(parentAttId ?? parentOrderId)
     let count = 0
+
     for (const file of Array.from(files)) {
-      const folder = parentAttId
-        ? `special-orders/attachments/${parentOrderId}/nested/${parentAttId}`
-        : `special-orders/attachments/${parentOrderId}`
-      const filePath = `${folder}/${Date.now()}-${file.name.replace(/\s+/g, '_')}`
-      const { data: storageData, error: storageError } = await supabase.storage
-        .from('documents').upload(filePath, file, { cacheControl: '3600', upsert: false })
-      if (storageError) { toast.error(`Failed to upload "${file.name}".`); continue }
+      // Upload to Drive pool — goes to the current user's own Drive accounts only
+      const driveResult = await uploadAttachmentToDrive(
+        file,
+        user.role,         // e.g. 'P1', 'DPDA' — gateway enforces ownership
+        parentOrderId,
+        parentAttId,
+      )
 
-      const { data: urlData } = supabase.storage.from('documents').getPublicUrl(storageData.path)
+      if (!driveResult) {
+        toast.error(`Failed to upload "${file.name}" to Google Drive.`)
+        continue
+      }
 
-      // FIX: correctly compute depth from the parent attachment's own depth field,
-      // not from one of its children.
+      // Compute depth: parent attachment's depth + 1, or 0 if top-level
       const parentDepth = parentAttId
         ? (() => {
             for (const list of attachmentsMap.values()) {
               const parent = list.find(a => a.id === parentAttId)
               if (parent) return parent.depth + 1
             }
-            return 1 // fallback
+            return 1
           })()
         : 0
 
-      // FIX: no `id` field — let DB generate the uuid
+      // Persist attachment record to Supabase (no `id` — DB generates uuid)
       const newAtt = await dbAddAttachment({
         special_order_id: parentOrderId,
         parent_id:        parentAttId,
@@ -957,10 +1040,11 @@ export default function AdminOrdersPage() {
         file_name:        file.name,
         file_size_bytes:  file.size,
         mime_type:        file.type || null,
-        gdrive_file_id:   storageData.path,
-        gdrive_url:       urlData.publicUrl,
-        pool_account_id:  'supabase-storage',
+        gdrive_file_id:   driveResult.gdriveFileId,
+        gdrive_url:       driveResult.gdrive_url,
+        pool_account_id:  driveResult.poolAccountId,   // real UUID from pool
       })
+
       if (newAtt) {
         const mapKey = parentAttId ?? parentOrderId
         setAttachmentsMap(prev => {
@@ -973,6 +1057,7 @@ export default function AdminOrdersPage() {
         count++
       }
     }
+
     if (count > 0) toast.success(`${count} file${count > 1 ? 's' : ''} attached.`)
     setUploadingId(null)
   }
@@ -1257,7 +1342,7 @@ export default function AdminOrdersPage() {
       <ConfirmDialog
         open={archiveDisc.isOpen}
         title="Archive Special Order"
-        message={`Archive "${archiveDisc.payload?.reference}"? It will be moved to the Archive page and can be restored from there.`}
+        message={`Archive "${archiveDisc.payload?.reference}"? It will be moved to the Archive page.`}
         confirmLabel="Archive"
         variant="danger"
         onConfirm={handleArchiveOrder}
@@ -1277,7 +1362,7 @@ export default function AdminOrdersPage() {
       <ConfirmDialog
         open={deleteDisc.isOpen}
         title="Delete Special Order"
-        message={`Delete "${deleteDisc.payload?.reference}" permanently? This action cannot be undone.`}
+        message={`Delete "${deleteDisc.payload?.reference}" permanently? This cannot be undone.`}
         confirmLabel="Delete"
         variant="danger"
         onConfirm={handleDeleteOrder}

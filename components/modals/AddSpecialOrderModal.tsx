@@ -1,5 +1,7 @@
 'use client'
-// components/modals/AddSpecialOrderModal.tsx (v2 — Drive Pool upload)
+// components/modals/AddSpecialOrderModal.tsx
+// Fixed: uploadToDrive returns DriveUploadResult (object), not a string.
+// All Drive metadata (gdriveFileId, poolAccountId, downloadUrl) now stored on the SO record.
 
 import { useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -11,7 +13,15 @@ import { useAuth } from '@/lib/auth'
 import type { SpecialOrder } from '@/types'
 import { FileText, Image as ImageIcon, Paperclip } from 'lucide-react'
 
-type SOWithUrl = SpecialOrder & { fileUrl?: string }
+// Extended SO type that carries Drive metadata so the detail panel
+// can render View / Download / Print buttons immediately after creation.
+type SOWithUrl = SpecialOrder & {
+  fileUrl?:         string
+  gdrive_file_id?:  string
+  gdrive_url?:      string
+  pool_account_id?: string
+  download_url?:    string
+}
 
 interface Props {
   open: boolean
@@ -33,7 +43,7 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
   const [file, setFile]         = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
 
-  const field = (key: string, value: string) => {
+  function field(key: string, value: string) {
     setForm(p => ({ ...p, [key]: value }))
     setErrors(p => ({ ...p, [key]: '' }))
   }
@@ -42,7 +52,6 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
     if (!incoming) return
     setFile(incoming)
     setErrors(prev => ({ ...prev, file: '' }))
-    setForm(prev => (prev.date ? prev : { ...prev, date: today }))
   }
 
   function resetAndClose() {
@@ -55,6 +64,8 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
   }
 
   async function submit() {
+    if (!user) { toast.error('Not authenticated.'); return }
+
     const result = AddSpecialOrderSchema.safeParse(form)
     if (!result.success) {
       setErrors(zodErrors(result.error))
@@ -71,14 +82,16 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
     try {
       const soId = `so-${Date.now()}`
 
-      // ── Drive Pool upload (replaces supabase.storage) ─────────────────
-      const fileUrl = await uploadToDrive(file, 'special_orders', {
-        uploadedBy: user?.role ?? 'unknown',
+      // ── Drive Pool upload ─────────────────────────────────────────────
+      // uploadToDrive returns a DriveUploadResult object (not a string).
+      // It uploads to the logged-in user's own Drive accounts only.
+      const driveResult = await uploadToDrive(file, 'special_orders', {
+        uploadedBy: user.role,   // e.g. 'P1', 'DPDA' — scopes to that user's Drive pool
         entityId:   soId,
         entityType: 'special_order',
       })
 
-      if (!fileUrl) {
+      if (!driveResult) {
         toast.error(uploadError ?? 'File upload failed. Please try again.')
         return
       }
@@ -90,14 +103,20 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
         date:        result.data.date,
         attachments: 0,
         status:      result.data.status as 'ACTIVE' | 'ARCHIVED',
-        fileUrl,
+
+        // Drive metadata — all four fields, matching AddDocumentModal's pattern
+        fileUrl:          driveResult.fileUrl,
+        gdrive_file_id:   driveResult.gdriveFileId,
+        gdrive_url:       driveResult.fileUrl,
+        pool_account_id:  driveResult.poolAccountId,
+        download_url:     driveResult.downloadUrl,
       }
 
       if (onAdd) await onAdd(newSO)
       toast.success(`Special Order "${result.data.reference}" created.`)
       resetAndClose()
     } catch (err) {
-      console.error(err)
+      console.error('[AddSpecialOrderModal] submit error:', err)
       toast.error('Something went wrong. Please try again.')
     }
   }
@@ -144,11 +163,16 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
           {errors.subject && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.subject}</p>}
         </div>
 
-        <input ref={fileInputRef} type="file"
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
           accept=".pdf,.jpg,.jpeg,.png"
           className="hidden"
-          onChange={e => handleFileChange(e.target.files?.[0] ?? null)} />
+          onChange={e => handleFileChange(e.target.files?.[0] ?? null)}
+        />
 
+        {/* File picker / preview */}
         {file ? (
           <div className="flex items-center justify-between px-4 py-3 bg-blue-50 border-[1.5px] border-blue-200 rounded-xl">
             <div className="flex items-center gap-3 min-w-0">
@@ -159,12 +183,15 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
               </div>
             </div>
             {!uploading && (
-              <button onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
-                className="text-slate-400 hover:text-red-500 font-bold text-sm ml-3 flex-shrink-0 transition">✕</button>
+              <button
+                onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
+                className="text-slate-400 hover:text-red-500 font-bold text-sm ml-3 flex-shrink-0 transition"
+              >✕</button>
             )}
           </div>
         ) : (
-          <div onDragOver={e => { e.preventDefault(); setDragging(true) }}
+          <div
+            onDragOver={e => { e.preventDefault(); setDragging(true) }}
             onDragLeave={() => setDragging(false)}
             onDrop={e => { e.preventDefault(); setDragging(false); handleFileChange(e.dataTransfer.files?.[0] ?? null) }}
             onClick={() => !uploading && fileInputRef.current?.click()}
@@ -174,8 +201,11 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
                 : dragging
                   ? 'border-blue-400 bg-blue-50'
                   : 'border-slate-200 hover:border-blue-400 hover:bg-blue-50'
-            } ${uploading ? 'pointer-events-none opacity-50' : ''}`}>
-            <div className="mb-2 flex justify-center text-blue-600"><Paperclip size={30} strokeWidth={2.1} /></div>
+            } ${uploading ? 'pointer-events-none opacity-50' : ''}`}
+          >
+            <div className="mb-2 flex justify-center text-blue-600">
+              <Paperclip size={30} strokeWidth={2.1} />
+            </div>
             <p className="text-sm font-medium text-slate-600 mb-1">Click to browse or drag &amp; drop</p>
             <p className="text-xs text-slate-400">PDF, JPG — max 50 MB</p>
           </div>
