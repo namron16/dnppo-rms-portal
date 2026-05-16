@@ -682,59 +682,71 @@ function EditProfileModal({ person, open, onClose, onSave }: {
         : Boolean(separatedReason)
 
   async function submit() {
-    if (!form.name.trim()) { toast.error('Name is required.'); return }
-    if (!statusVal) { toast.error('Please select a status.'); return }
-    if (statusVal === 'Inactive' && !inactiveReason) {
-      toast.error('Please select a reason for inactivity.')
-      return
-    }
-    if (statusVal === 'Separated from Service') {
-      if (!separatedReason) { toast.error('Please select a reason for separation.'); return }
-    }
-
-    setSaving(true)
-    try {
-      let photoUrl = person?.photoUrl ?? undefined
-
-      if (photoFile) {
-        const fileName = `avatars/${person?.id}-${Date.now()}-${photoFile.name.replace(/\s+/g, '_')}`
-        const { data: storageData, error: storageError } = await supabase.storage
-          .from('documents')
-          .upload(fileName, photoFile, { cacheControl: '3600', upsert: true })
-
-        if (storageError) {
-          toast.error('Photo upload failed.')
-          setSaving(false)
-          return
-        }
-        const { data: urlData } = supabase.storage.from('documents').getPublicUrl(storageData.path)
-        photoUrl = urlData.publicUrl
-      }
-
-      onSave({
-        name:            form.name.trim(),
-        rank:            form.rank.trim(),
-        unit:            form.unit.trim(),
-        status:          statusVal,
-        contactNo:       form.contactNo.trim(),
-        address:         form.address.trim(),
-        photoUrl,
-        tin:             form.tin.trim()             || undefined,
-        pagIbigNo:       form.pagIbigNo.trim()       || undefined,
-        philHealthNo:    form.philHealthNo.trim()    || undefined,
-        firearmSerialNo: form.firearmSerialNo.trim() || undefined,
-        inactiveReason:   statusVal === 'Inactive'               ? inactiveReason  : undefined,
-        separatedReason:  statusVal === 'Separated from Service' ? separatedReason : undefined,
-        dateOfSeparation: statusVal === 'Separated from Service' ? (dateOfSeparation || getTodayISODate()) : undefined,
-      })
-      toast.success('Profile updated.')
-      onClose()
-    } catch {
-      toast.error('Something went wrong.')
-    } finally {
-      setSaving(false)
-    }
+  if (!form.name.trim()) { toast.error('Name is required.'); return }
+  if (!statusVal) { toast.error('Please select a status.'); return }
+  if (statusVal === 'Inactive' && !inactiveReason) {
+    toast.error('Please select a reason for inactivity.')
+    return
   }
+  if (statusVal === 'Separated from Service' && !separatedReason) {
+    toast.error('Please select a reason for separation.')
+    return
+  }
+ 
+  setSaving(true)
+  try {
+    let photoUrl = person?.photoUrl ?? undefined
+ 
+    // ── Upload new photo to Drive pool (replaces supabase.storage) ─────
+    if (photoFile) {
+      const avatarForm = new FormData()
+      avatarForm.append('file',     photoFile)
+      // Use the personnel record ID as the username key so the file is
+      // stored under a stable, unique identifier in the Drive pool.
+      avatarForm.append('username', person?.id ?? 'unknown')
+ 
+      const avatarRes  = await fetch('/api/users/avatar', {
+        method: 'POST',
+        body:   avatarForm,
+      })
+      const avatarJson = await avatarRes.json()
+ 
+      if (avatarRes.ok && avatarJson.data?.fileUrl) {
+        photoUrl = avatarJson.data.fileUrl
+      } else {
+        // Photo upload failed — not fatal, proceed with existing photo
+        console.warn('[EditProfileModal] Avatar upload failed:', avatarJson.error)
+        toast.error('Photo upload failed. Profile info will still be saved.')
+        // Don't return — continue saving the rest of the profile
+      }
+    }
+ 
+    onSave({
+      name:            form.name.trim(),
+      rank:            form.rank.trim(),
+      unit:            form.unit.trim(),
+      status:          statusVal,
+      contactNo:       form.contactNo.trim(),
+      address:         form.address.trim(),
+      photoUrl,
+      tin:             form.tin.trim()             || undefined,
+      pagIbigNo:       form.pagIbigNo.trim()       || undefined,
+      philHealthNo:    form.philHealthNo.trim()    || undefined,
+      firearmSerialNo: form.firearmSerialNo.trim() || undefined,
+      inactiveReason:   statusVal === 'Inactive'               ? inactiveReason  : undefined,
+      separatedReason:  statusVal === 'Separated from Service' ? separatedReason : undefined,
+      dateOfSeparation: statusVal === 'Separated from Service'
+        ? (dateOfSeparation || getTodayISODate())
+        : undefined,
+    })
+    toast.success('Profile updated.')
+    onClose()
+  } catch {
+    toast.error('Something went wrong.')
+  } finally {
+    setSaving(false)
+  }
+}
 
   const cls = 'w-full px-3 py-2.5 border-[1.5px] border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition'
 
