@@ -35,6 +35,7 @@ const ADMIN_ROUTES = [
   '/admin/log-history',
   '/admin/user-management',
   '/admin/gdrive',
+  '/admin/backup-recovery',
 ] as const
 
 const P1_ONLY_ROUTES: readonly string[] = []

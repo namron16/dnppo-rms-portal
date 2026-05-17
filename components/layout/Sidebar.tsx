@@ -52,6 +52,7 @@ const ADMIN_NAV: NavItem[] = [
   { label: 'Log History',     icon: '📊', href: '/admin/log-history' },
   { label: 'User Management', icon: '👥', href: '/admin/user-management' },
   { label: 'Drive Storage',   icon: '☁️', href: '/admin/gdrive' }, 
+  { label: 'Backup & Recovery', icon: '🛡️', href: '/admin/backup-recovery' },
 ]
 
 function NavLink({ item, active, onNavigate, badgeCount }: {

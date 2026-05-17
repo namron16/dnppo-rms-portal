@@ -31,7 +31,6 @@ export interface MasterDocument {
   size: string
   tag: string
   created_at?: string
-  taggedAdminAccess?: string[] // Baseline admin roles with permanent access (e.g., ['P2', 'P3', 'P5'])
   children?: MasterDocument[]
 }
 
