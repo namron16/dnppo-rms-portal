@@ -1,9 +1,17 @@
+// app/api/backup/health/route.ts
 import { NextResponse } from 'next/server'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
+import { requireAdmin } from '@/lib/backup/auth-guard'
 
 export const runtime = 'nodejs'
 
-export async function GET() {
+export async function GET(request: Request) {
+  try {
+    await requireAdmin()
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 403 })
+  }
+
   try {
     const db = getServiceClient()
 
@@ -21,8 +29,8 @@ export async function GET() {
           .eq('is_read', false),
       ])
 
-    const summary     = (summaryRes.data as any[])?.[0] ?? {}
-    const recentJobs  = recentJobsRes.data ?? []
+    const summary      = (summaryRes.data as any[])?.[0] ?? {}
+    const recentJobs   = recentJobsRes.data ?? []
     const moduleStatus = moduleStatusRes.data ?? []
     const unreadCount  = unreadNotifRes.count ?? 0
 

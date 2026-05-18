@@ -1,47 +1,45 @@
-
+// app/api/backup/notifications/route.ts
+import { NextResponse } from 'next/server'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
+import { requireAdmin } from '@/lib/backup/auth-guard'
 
-interface NotifyParams {
-  jobId:       string
-  module_name: string
-  success:     boolean
-  folderName?: string
-  durationSecs?: number
-  totalBytes?:   number
-  error?:        string
-}
+export const runtime = 'nodejs'
 
-export async function notifyBackupResult(params: NotifyParams): Promise<void> {
-  const db = getServiceClient()
-
-  const type    = params.success ? 'success' : 'failure'
-  const sizeStr = params.totalBytes
-    ? `(${(params.totalBytes / 1024 / 1024).toFixed(1)} MB)`
-    : ''
-
-  const title = params.success
-    ? `✅ Backup Completed — ${params.module_name}`
-    : `❌ Backup Failed — ${params.module_name}`
-
-  const message = params.success
-    ? `Backup "${params.folderName}" completed in ${params.durationSecs}s ${sizeStr}`
-    : `Backup failed: ${params.error ?? 'Unknown error'}`
-
-  await db.from('backup_notifications').insert({
-    backup_job_id: params.jobId,
-    type,
-    title,
-    message,
-  })
-
-  // Optionally send email notification if SMTP is configured
-  if (process.env.SMTP_HOST && !params.success) {
-    await sendEmailAlert({ title, message })
+export async function GET(request: Request) {
+  try {
+    await requireAdmin()
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 403 })
   }
+
+  const db = getServiceClient()
+  const { data, error } = await db
+    .from('backup_notifications')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(50)
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ data })
 }
 
-async function sendEmailAlert(params: { title: string; message: string }): Promise<void> {
-  // Implement using nodemailer or Resend API
-  // process.env.BACKUP_ALERT_EMAIL = 'sysadmin@dnppo.pnp.gov.ph'
-  console.log(`[Backup Email Alert] ${params.title}: ${params.message}`)
+export async function PATCH(request: Request) {
+  try {
+    await requireAdmin()
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 403 })
+  }
+
+  try {
+    const { ids } = await request.json()
+    const db = getServiceClient()
+
+    await db.from('backup_notifications')
+      .update({ is_read: true })
+      .in('id', ids)
+
+    return NextResponse.json({ data: { success: true } })
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
 }

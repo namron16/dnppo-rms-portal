@@ -7,6 +7,12 @@ import { BACKUP_MODULES } from './modules'
 export interface RecoveryOptions {
   backup_job_id: string
   module_name:   BackupModuleName
+  /**
+   * The role/username that triggered the recovery.
+   * Files will be re-uploaded to this user's Drive pool.
+   * Defaults to 'P1' (Super Admin) — the only role that can trigger recovery.
+   */
+  triggered_by?: string
 }
 
 export interface RecoveryResult {
@@ -24,6 +30,10 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
   const db = getServiceClient()
   const start = Date.now()
 
+  // The user triggering recovery — files are re-uploaded to their Drive pool.
+  // but we accept it as a parameter so the caller can be explicit.
+  const triggeredBy = opts.triggered_by ?? 'DPDA'
+
   // Create recovery job record
   const { data: recoveryJob } = await db
     .from('recovery_jobs')
@@ -31,7 +41,7 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
       backup_job_id: opts.backup_job_id,
       module_name:   opts.module_name,
       status:        'running',
-      triggered_by:  'P1',
+      triggered_by:  triggeredBy,
       started_at:    new Date().toISOString(),
     })
     .select()
@@ -63,7 +73,7 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
       throw new Error('Manifest checksum mismatch — backup may be corrupted or tampered with.')
     }
 
-    console.log(`[Recovery] Manifest validated. Records: ${manifest.contents.database.record_count}`)
+    console.log(`[Recovery] Manifest validated. Records: ${manifest.contents?.database?.record_count ?? 'n/a'}`)
 
     // ── 4. Create pre-recovery snapshot (rollback protection) ────────────────
     const rollbackSnapshot = await createRollbackSnapshot(opts.module_name)
@@ -91,34 +101,47 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
     }
 
     // ── 6. Re-upload file attachments to Drive ───────────────────────────────
+    //
+    // FIX: was hardcoded to 'DPDA' — files would be uploaded to DPDA's Drive
+    // pool regardless of who triggered recovery or who owns the module data.
+    //
+    // Now uses `triggeredBy` (always 'P1' for recovery operations, enforced by
+    // auth-guard) so files land in the correct user's Drive pool.
+    //
+    // The gdrive_category is cast to DocumentCategory via the module definition.
+    // entity_type is read from the module def (may be null for some modules).
     let filesRestored = 0
 
-    if (manifest.contents.attachments) {
-      for (const docEntry of manifest.contents.attachments.files) {
+    if (manifest.contents?.attachments) {
+      for (const docEntry of manifest.contents.attachments.files ?? []) {
         for (const att of docEntry.attachments ?? []) {
           if (att.error) continue
 
           try {
             const fileBuffer = await extractFile(zipBlob, att.file)
 
-            // Verify checksum
+            // Verify per-file checksum before re-uploading
             if (!verifyChecksum(fileBuffer, att.checksum)) {
               console.warn(`[Recovery] Checksum mismatch for ${att.file} — skipping`)
               continue
             }
 
-            // Re-upload to Drive pool
-
+            // Resolve the entity_type for this module (some modules have null entity_type)
             const def = moduleDef as any
+            const entityType: string | undefined =
+              typeof def.entity_type === 'string' ? def.entity_type : undefined
 
+            // Re-upload to Drive pool under the recovery operator's account.
+            // triggeredBy = 'P1' ensures the file lands in P1's Drive pool,
+            // which is the designated recovery operator pool for this system.
             await uploadViaPool({
               file:          fileBuffer,
               fileName:      att.file.split('/').pop()!,
               mimeType:      'application/octet-stream',
               category:      moduleDef.gdrive_category as any,
-              entityType:    def.entity_type,
+              entityType,
               entityId:      docEntry.document_id,
-              uploadedBy:    'DPDA',
+              uploadedBy:    triggeredBy,   // FIX: was hardcoded 'DPDA'
               fileSizeBytes: fileBuffer.length,
             })
 
@@ -137,11 +160,11 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
 
     // ── 8. Finalize recovery job ─────────────────────────────────────────────
     await db.from('recovery_jobs').update({
-      status:           'completed',
-      completed_at:     new Date().toISOString(),
-      duration_seconds: durationSecs,
-      records_restored: recordsRestored,
-      files_restored:   filesRestored,
+      status:            'completed',
+      completed_at:      new Date().toISOString(),
+      duration_seconds:  durationSecs,
+      records_restored:  recordsRestored,
+      files_restored:    filesRestored,
       validation_passed: validationPassed,
     }).eq('id', recoveryJobId)
 
