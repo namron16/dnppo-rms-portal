@@ -7,7 +7,7 @@
 -- ENUM: backup frequency
 DO $$ BEGIN
   CREATE TYPE backup_frequency_enum AS ENUM (
-    'daily', 'weekly', 'monthly', 'yearly', 'custom'
+    'daily', 'weekly', 'monthly', 'yearly', 'custom', 'manual'
   );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
