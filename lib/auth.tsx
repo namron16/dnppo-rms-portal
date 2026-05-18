@@ -159,6 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginPassword = useCallback(async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    console.log('Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
 
     if (error)      return { error: error.message }
     if (!data.user) return { error: 'No user returned.' }
