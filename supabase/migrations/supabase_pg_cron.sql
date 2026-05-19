@@ -39,3 +39,14 @@ SELECT cron.schedule(
     body := '{"frequency":"yearly","triggered_by":"scheduler"}'::jsonb
   )$$
 );
+
+-- auto delete backup job records older than retention days
+SELECT cron.schedule(
+  'rms-cleanup-old-backups',
+  '0 3 * * *',  -- 3:00 AM daily
+  $$
+  DELETE FROM public.backup_jobs
+  WHERE created_at < NOW() - INTERVAL '90 days'
+    AND status = 'completed';
+  $$
+);
