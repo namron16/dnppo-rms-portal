@@ -18,6 +18,26 @@ const MODULES = [
 const FREQUENCIES = ['daily', 'weekly', 'monthly', 'yearly', 'custom'] as const
 const BACKUP_TYPES = ['full', 'incremental', 'differential'] as const
 
+// ── NEW: 24-hour options formatted as "2:00 AM", "11:00 PM", etc. ─────────────
+function formatHour(h: number): string {
+  const period  = h >= 12 ? 'PM' : 'AM'
+  const display = h % 12 === 0 ? 12 : h % 12
+  return `${display}:00 ${period}`
+}
+
+// ── NEW: preview what pg_cron will actually be set to ─────────────────────────
+function buildCronPreview(frequency: string, hour: number, customCron: string): string {
+  if (frequency === 'custom') return customCron || '—'
+  const h = Math.max(0, Math.min(23, hour))
+  switch (frequency) {
+    case 'daily':   return `0 ${h} * * *`
+    case 'weekly':  return `0 ${h} * * 1`
+    case 'monthly': return `0 ${h} 1 * *`
+    case 'yearly':  return `0 ${h} 1 1 *`
+    default:        return '—'
+  }
+}
+
 interface ModuleStatus {
   module_name:        string
   is_enabled:         boolean
@@ -29,6 +49,7 @@ interface ScheduleForm {
   module_name:         string
   is_enabled:          boolean
   frequency:           typeof FREQUENCIES[number]
+  backup_hour:         number    // NEW — 0–23, default 2
   custom_cron:         string
   backup_type:         typeof BACKUP_TYPES[number]
   include_attachments: boolean
@@ -40,6 +61,7 @@ const DEFAULT_FORM: ScheduleForm = {
   module_name:         '',
   is_enabled:          true,
   frequency:           'daily',
+  backup_hour:         2,        // NEW — default 2 AM
   custom_cron:         '0 2 * * *',
   backup_type:         'full',
   include_attachments: true,
@@ -58,6 +80,7 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
   const [form,    setForm]    = useState<ScheduleForm>(DEFAULT_FORM)
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)   // NEW
   const [saved,   setSaved]   = useState(false)
 
   // When a module is selected, pre-fill from existing config
@@ -80,7 +103,9 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
 
   const handleSave = async () => {
     if (!form.module_name) { setError('Select a module.'); return }
-    setError(null); setLoading(true)
+    setError(null)
+    setWarning(null)   // NEW — clear previous warning
+    setLoading(true)
     try {
       const res  = await fetch('/api/backup/schedule', {
         method:  'POST',
@@ -89,6 +114,8 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to save')
+      // NEW — surface non-fatal pg_cron warning without blocking success
+      if (json.warning) setWarning(json.warning)
       setSaved(true)
       setTimeout(() => { setSaved(false); onSaved() }, 1500)
     } catch (e: any) {
@@ -99,7 +126,7 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
   }
 
   const handleClose = () => {
-    setForm(DEFAULT_FORM); setError(null); setSaved(false)
+    setForm(DEFAULT_FORM); setError(null); setWarning(null); setSaved(false)
     onClose()
   }
 
@@ -129,6 +156,10 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
                 <CheckCircle2 size={24} className="text-emerald-400" />
               </div>
               <p className="text-sm font-semibold text-slate-900">Schedule Saved</p>
+              {/* NEW — show warning even on success if pg_cron reschedule had issues */}
+              {warning && (
+                <p className="text-[11px] text-amber-600 text-center px-4">{warning}</p>
+              )}
             </div>
           ) : (
             <>
@@ -179,6 +210,35 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
                     >{f}</button>
                   ))}
                 </div>
+
+                {/* NEW — Backup time picker (hidden when frequency is 'custom') */}
+                {form.frequency !== 'custom' && (
+                  <div className="mt-3 flex items-center gap-3">
+                    <div className="flex-1">
+                      <label className="block text-[11px] text-slate-500 mb-1">Backup time</label>
+                      <div className="relative">
+                        <select
+                          value={form.backup_hour}
+                          onChange={e => set('backup_hour', parseInt(e.target.value, 10))}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 appearance-none focus:outline-none focus:border-slate-400 transition pr-7"
+                        >
+                          {Array.from({ length: 24 }, (_, i) => (
+                            <option key={i} value={i}>{formatHour(i)}</option>
+                          ))}
+                        </select>
+                        <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      </div>
+                    </div>
+                    {/* Live cron expression preview */}
+                    <div className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                      <p className="text-[10px] text-slate-400 mb-0.5">pg_cron expression</p>
+                      <p className="text-xs font-mono text-slate-700">
+                        {buildCronPreview(form.frequency, form.backup_hour, form.custom_cron)}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {form.frequency === 'custom' && (
                   <div className="mt-2">
                     <input
@@ -244,6 +304,13 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
                   <span>7 days</span><span>1 year</span>
                 </div>
               </div>
+
+              {/* NEW — warning banner (non-fatal: config saved but pg_cron had issues) */}
+              {warning && (
+                <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-700">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" /> {warning}
+                </div>
+              )}
 
               {error && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">
