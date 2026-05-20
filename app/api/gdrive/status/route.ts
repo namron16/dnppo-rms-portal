@@ -21,6 +21,8 @@ export async function GET() {
         accounts: accounts.map((a: any) => ({
           id:              a.id,
           accountEmail:    a.account_email,
+          ownerUsername:   a.owner_username,
+          label:           a.label,
           status:          a.status,
           isActive:        a.is_active,
           usageGb:         +(a.current_usage_bytes / 1073741824).toFixed(2),
