@@ -117,21 +117,21 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-lg bg-[#131c2e] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/8">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/15 flex items-center justify-center">
-              <RotateCcw size={15} className="text-amber-400" />
+            <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center">
+              <RotateCcw size={15} className="text-amber-600" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">Restore from Backup</h2>
-              <p className="text-[11px] text-slate-400">Super Admin operation — creates rollback snapshot first</p>
+              <h2 className="text-sm font-bold text-slate-900">Restore from Backup</h2>
+              <p className="text-[11px] text-slate-500">Super Admin operation — creates rollback snapshot first</p>
             </div>
           </div>
-          <button onClick={handleClose} className="text-slate-500 hover:text-white transition">
+          <button onClick={handleClose} className="text-slate-500 hover:text-slate-900 transition">
             <X size={18} />
           </button>
         </div>
@@ -143,14 +143,14 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
             <div className="space-y-4">
               <div className="flex flex-col items-center gap-3 py-4">
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                  result.validationPassed ? 'bg-emerald-500/15' : 'bg-amber-500/15'
+                  result.validationPassed ? 'bg-emerald-50' : 'bg-amber-50'
                 }`}>
                   {result.validationPassed
-                    ? <CheckCircle2 size={24} className="text-emerald-400" />
-                    : <AlertTriangle size={24} className="text-amber-400" />
+                    ? <CheckCircle2 size={24} className="text-emerald-600" />
+                    : <AlertTriangle size={24} className="text-amber-600" />
                   }
                 </div>
-                <p className="text-sm font-semibold text-white">
+                <p className="text-sm font-semibold text-slate-900">
                   {result.validationPassed ? 'Recovery Successful' : 'Recovery Completed with Warnings'}
                 </p>
               </div>
@@ -160,12 +160,12 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
                 <Stat label="Duration"         value={`${result.durationSecs}s`} />
                 <Stat label="Validation"       value={result.validationPassed ? '✓ Passed' : '⚠ Failed'} />
               </div>
-              <p className="text-[11px] text-slate-500 font-mono bg-white/5 px-3 py-1.5 rounded-lg">
+              <p className="text-[11px] text-slate-500 font-mono bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
                 Recovery ID: {result.recoveryJobId}
               </p>
               <button
                 onClick={() => { handleClose(); onSuccess() }}
-                className="w-full py-2.5 text-sm font-semibold text-[#0f1623] bg-[#fde047] hover:bg-[#fde047]/90 rounded-xl transition"
+                className="w-full py-2.5 text-sm font-semibold text-slate-900 bg-amber-400 hover:bg-amber-300 rounded-xl transition"
               >
                 Done
               </button>
@@ -174,26 +174,26 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
             /* ── Form State ── */
             <>
               {/* Warning Banner */}
-              <div className="flex items-start gap-3 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl">
-                <AlertTriangle size={15} className="text-red-400 mt-0.5 shrink-0" />
-                <div className="text-[11px] text-red-300 space-y-0.5">
+              <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+                <AlertTriangle size={15} className="text-red-600 mt-0.5 shrink-0" />
+                <div className="text-[11px] text-red-700 space-y-0.5">
                   <p className="font-bold">This will overwrite existing data.</p>
-                  <p className="text-red-400/80">A rollback snapshot will be created automatically before recovery begins. This operation is logged.</p>
+                  <p className="text-red-600/80">A rollback snapshot will be created automatically before recovery begins. This operation is logged.</p>
                 </div>
               </div>
 
               {/* Module Select */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2">Module to Restore</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-2">Module to Restore</label>
                 <div className="relative">
                   <select
                     value={module_name}
                     onChange={e => setModuleName(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white appearance-none focus:outline-none focus:border-[#fde047]/40 transition"
+                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-900 appearance-none focus:outline-none focus:border-slate-400 transition"
                   >
-                    <option value="" disabled className="bg-[#131c2e]">Select module…</option>
+                    <option value="" disabled className="bg-white">Select module…</option>
                     {Object.entries(MODULE_LABELS).map(([k, v]) => (
-                      <option key={k} value={k} className="bg-[#131c2e]">{v}</option>
+                      <option key={k} value={k} className="bg-white">{v}</option>
                     ))}
                   </select>
                   <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -203,11 +203,11 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
               {/* Job Select */}
               {module_name && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-2">
                     Restore Point ({moduleJobs.length} available)
                   </label>
                   {moduleJobs.length === 0 ? (
-                    <div className="text-center py-4 text-[12px] text-slate-500 bg-white/3 rounded-xl border border-white/8">
+                    <div className="text-center py-4 text-[12px] text-slate-500 bg-slate-50 rounded-xl border border-slate-200">
                       No completed backups found for this module
                     </div>
                   ) : (
@@ -218,18 +218,18 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
                           onClick={() => setSelectedJob(job)}
                           className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition ${
                             selectedJob?.id === job.id
-                              ? 'bg-[#1b365d] border-[#fde047]/30'
-                              : 'bg-white/3 border-white/8 hover:border-white/20'
+                              ? 'bg-slate-900 border-slate-900'
+                              : 'bg-white border-slate-200 hover:border-slate-300'
                           }`}
                         >
                           <div className="space-y-0.5">
-                            <p className="text-[12px] font-semibold text-white capitalize">{job.backup_type} backup</p>
+                            <p className="text-[12px] font-semibold text-slate-900 capitalize">{job.backup_type} backup</p>
                             <p className="text-[11px] text-slate-400">{fmt(job.completed_at)}</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-[11px] text-slate-300">{formatBytes(job.total_size_bytes)}</p>
+                            <p className="text-[11px] text-slate-600">{formatBytes(job.total_size_bytes)}</p>
                             {selectedJob?.id === job.id && (
-                              <Shield size={11} className="text-[#fde047] ml-auto mt-1" />
+                              <Shield size={11} className="text-amber-400 ml-auto mt-1" />
                             )}
                           </div>
                         </button>
@@ -245,15 +245,15 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
                   type="checkbox"
                   checked={confirmed}
                   onChange={e => setConfirmed(e.target.checked)}
-                  className="mt-0.5 accent-[#fde047] w-4 h-4 rounded"
+                  className="mt-0.5 accent-amber-500 w-4 h-4 rounded"
                 />
-                <span className="text-[12px] text-slate-300">
-                  I understand this will overwrite current data for <strong className="text-white">{(MODULE_LABELS[module_name] ?? module_name) || '—'}</strong> and acknowledge that a rollback snapshot will be created.
+                <span className="text-[12px] text-slate-700">
+                  I understand this will overwrite current data for <strong className="text-slate-900">{(MODULE_LABELS[module_name] ?? module_name) || '—'}</strong> and acknowledge that a rollback snapshot will be created.
                 </span>
               </label>
 
               {error && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[11px] text-red-400">
+                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">
                   <AlertTriangle size={13} /> {error}
                 </div>
               )}
@@ -282,9 +282,9 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="bg-white/5 rounded-xl px-4 py-3">
+    <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
       <p className="text-[10px] text-slate-500 mb-1">{label}</p>
-      <p className="text-sm font-bold text-white">{value}</p>
+      <p className="text-sm font-bold text-slate-900">{value}</p>
     </div>
   )
 }

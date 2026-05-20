@@ -118,17 +118,17 @@ export function NotificationsModal({ open, onClose }: NotifProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md bg-[#131c2e] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden">
 
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/8">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-white/8 flex items-center justify-center">
-              <Bell size={15} className="text-slate-300" />
+            <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
+              <Bell size={15} className="text-slate-700" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">Backup Alerts</h2>
-              <p className="text-[11px] text-slate-400">{unread.length} unread</p>
+              <h2 className="text-sm font-bold text-slate-900">Backup Alerts</h2>
+              <p className="text-[11px] text-slate-500">{unread.length} unread</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -136,38 +136,38 @@ export function NotificationsModal({ open, onClose }: NotifProps) {
               <button
                 onClick={markAllRead}
                 disabled={marking}
-                className="text-[11px] text-[#fde047] hover:text-[#fde047]/80 transition"
+                className="text-[11px] text-amber-600 hover:text-amber-700 transition"
               >
                 Mark all read
               </button>
             )}
-            <button onClick={onClose} className="text-slate-500 hover:text-white transition">
+            <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition">
               <X size={18} />
             </button>
           </div>
         </div>
 
-        <div className="max-h-[60vh] overflow-y-auto divide-y divide-white/5">
+        <div className="max-h-[60vh] overflow-y-auto divide-y divide-slate-200">
           {loading ? (
             <div className="py-12 flex items-center justify-center">
-              <span className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              <span className="w-5 h-5 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
             </div>
           ) : notifs.length === 0 ? (
             <div className="py-12 text-center text-sm text-slate-500">No alerts yet</div>
           ) : notifs.map(n => (
-            <div key={n.id} className={`px-6 py-4 transition ${!n.is_read ? 'bg-white/3' : ''}`}>
+            <div key={n.id} className={`px-6 py-4 transition ${!n.is_read ? 'bg-slate-50' : ''}`}>
               <div className="flex items-start gap-3">
                 <div className="mt-0.5 shrink-0">{notifIcon(n.type)}</div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <p className={`text-[12px] font-semibold ${!n.is_read ? 'text-white' : 'text-slate-300'}`}>
+                    <p className={`text-[12px] font-semibold ${!n.is_read ? 'text-slate-900' : 'text-slate-700'}`}>
                       {n.title}
                     </p>
                     {!n.is_read && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#fde047] shrink-0" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5">{n.message}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">{n.message}</p>
                   <p className="text-[10px] text-slate-600 mt-1">{fmtRelative(n.created_at)}</p>
                 </div>
               </div>
@@ -175,10 +175,10 @@ export function NotificationsModal({ open, onClose }: NotifProps) {
           ))}
         </div>
 
-        <div className="px-6 py-4 border-t border-white/8">
+        <div className="px-6 py-4 border-t border-slate-200">
           <button
             onClick={onClose}
-            className="w-full py-2 text-sm text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-xl transition"
+            className="w-full py-2 text-sm text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition"
           >
             Close
           </button>
@@ -216,26 +216,26 @@ export function JobDetailModal({ job, onClose, onRecover }: JobDetailProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md bg-[#131c2e] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden">
 
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/8">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-white/8 flex items-center justify-center">
-              <Database size={15} className="text-slate-300" />
+            <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
+              <Database size={15} className="text-slate-700" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">Backup Job Detail</h2>
-              <p className="text-[11px] text-slate-400 font-mono">{job.id.slice(0, 16)}…</p>
+              <h2 className="text-sm font-bold text-slate-900">Backup Job Detail</h2>
+              <p className="text-[11px] text-slate-500 font-mono">{job.id.slice(0, 16)}…</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-white transition"><X size={18} /></button>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition"><X size={18} /></button>
         </div>
 
         <div className="px-6 py-5 space-y-4">
 
           {/* Status Badge */}
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400">Status</span>
+            <span className="text-xs text-slate-500">Status</span>
             <span className={`text-[11px] px-3 py-1 rounded-full border font-semibold capitalize ${statusColor[job.status] ?? ''}`}>
               {job.status}
             </span>
@@ -263,14 +263,14 @@ export function JobDetailModal({ job, onClose, onRecover }: JobDetailProps) {
           <div className="flex gap-3 pt-1">
             <button
               onClick={onClose}
-              className="flex-1 py-2.5 text-sm text-slate-300 bg-white/5 hover:bg-white/10 rounded-xl transition"
+              className="flex-1 py-2.5 text-sm text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition"
             >
               Close
             </button>
             {job.status === 'completed' && (
               <button
                 onClick={onRecover}
-                className="flex-1 py-2.5 text-sm font-semibold text-[#0f1623] bg-[#fde047] hover:bg-[#fde047]/90 rounded-xl transition flex items-center justify-center gap-2"
+                className="flex-1 py-2.5 text-sm font-semibold text-slate-900 bg-amber-400 hover:bg-amber-300 rounded-xl transition flex items-center justify-center gap-2"
               >
                 <RotateCcw size={14} /> Restore
               </button>
@@ -284,12 +284,12 @@ export function JobDetailModal({ job, onClose, onRecover }: JobDetailProps) {
 
 function DetailRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="bg-white/4 rounded-xl px-3 py-2.5">
+    <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
       <div className="flex items-center gap-1.5 text-slate-500 mb-1">
         {icon}
         <span className="text-[10px] font-medium">{label}</span>
       </div>
-      <p className="text-[12px] text-white font-medium capitalize truncate">{value}</p>
+      <p className="text-[12px] text-slate-900 font-medium capitalize truncate">{value}</p>
     </div>
   )
 }

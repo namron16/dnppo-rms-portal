@@ -177,32 +177,32 @@ export default function BackupRecoveryPage() {
   const circumference = 2 * Math.PI * 40
 
   return (
-    <div className="min-h-screen bg-[#0f1623] text-slate-100 font-sans">
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
 
       {/* ── Header ── */}
-      <div className="border-b border-white/5 bg-[#131c2e]/80 backdrop-blur-sm sticky top-0 z-30">
+      <div className="border-b border-slate-200 bg-white/90 backdrop-blur-sm sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#1b365d] border border-[#fde047]/20 flex items-center justify-center">
-              <Shield size={18} className="text-[#fde047]" />
+            <div className="w-9 h-9 rounded-lg bg-slate-900 border border-slate-200 flex items-center justify-center">
+              <Shield size={18} className="text-white" />
             </div>
             <div>
-              <h1 className="text-base font-bold text-white tracking-tight">Backup &amp; Recovery</h1>
-              <p className="text-[11px] text-slate-400">Super Admin · DNPPO RMS v1.4.2</p>
+              <h1 className="text-base font-bold text-slate-900 tracking-tight">Backup &amp; Recovery</h1>
+              <p className="text-[11px] text-slate-500">Super Admin · DNPPO RMS v1.4.2</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => fetchHealth(true)}
               disabled={refreshing}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-white border border-white/10 hover:border-white/20 rounded-lg transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 border border-slate-200 hover:border-slate-300 rounded-lg bg-white transition"
             >
               <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
               Refresh
             </button>
             <button
               onClick={() => setNotifOpen(true)}
-              className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-white border border-white/10 hover:border-white/20 rounded-lg transition"
+              className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 border border-slate-200 hover:border-slate-300 rounded-lg bg-white transition"
             >
               <Bell size={13} />
               Alerts
@@ -214,14 +214,14 @@ export default function BackupRecoveryPage() {
             </button>
             <button
               onClick={() => setScheduleOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-[#1b365d] hover:bg-[#1b365d]/80 border border-[#fde047]/20 rounded-lg transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition"
             >
-              <Settings size={13} className="text-[#fde047]" />
+              <Settings size={13} className="text-slate-500" />
               Schedule
             </button>
             <button
               onClick={() => setTriggerOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-[#0f1623] bg-[#fde047] hover:bg-[#fde047]/90 rounded-lg font-semibold transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg font-semibold transition"
             >
               <Play size={13} />
               Run Backup
@@ -233,7 +233,7 @@ export default function BackupRecoveryPage() {
       <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
 
         {error && (
-          <div className="flex items-center gap-3 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400">
+          <div className="flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
             <AlertTriangle size={16} />
             {error}
           </div>
@@ -243,7 +243,7 @@ export default function BackupRecoveryPage() {
         {loading ? (
           <div className="grid grid-cols-4 gap-4">
             {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-32 rounded-2xl bg-white/5 animate-pulse" />
+              <div key={i} className="h-32 rounded-2xl bg-white animate-pulse border border-slate-200" />
             ))}
           </div>
         ) : health && (
@@ -251,10 +251,10 @@ export default function BackupRecoveryPage() {
             <div className="grid grid-cols-4 gap-4">
 
               {/* Health Score */}
-              <div className="col-span-1 bg-[#131c2e] border border-white/8 rounded-2xl p-5 flex flex-col items-center justify-center gap-3">
+              <div className="col-span-1 bg-white border border-slate-200 rounded-2xl p-5 flex flex-col items-center justify-center gap-3">
                 <div className="relative w-24 h-24">
                   <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
-                    <circle cx="50" cy="50" r="40" fill="none" stroke="#1e293b" strokeWidth="8"/>
+                    <circle cx="50" cy="50" r="40" fill="none" stroke="#e2e8f0" strokeWidth="8"/>
                     <circle cx="50" cy="50" r="40" fill="none" stroke={scoreColor} strokeWidth="8"
                       strokeDasharray={circumference}
                       strokeDashoffset={circumference - (score / 100) * circumference}
@@ -267,7 +267,7 @@ export default function BackupRecoveryPage() {
                   </div>
                 </div>
                 <div className="text-center">
-                  <p className="text-xs font-semibold text-white">Health Score</p>
+                  <p className="text-xs font-semibold text-slate-900">Health Score</p>
                   <p className="text-[10px] text-slate-500">Last 30 days</p>
                 </div>
               </div>
@@ -322,7 +322,7 @@ export default function BackupRecoveryPage() {
             {/* ── Module Status Grid ── */}
             <section>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-bold text-white tracking-tight">Module Status</h2>
+                <h2 className="text-sm font-bold text-slate-900 tracking-tight">Module Status</h2>
                 <span className="text-[11px] text-slate-500">Click module to quick-restore</span>
               </div>
               <div className="grid grid-cols-3 gap-3">
@@ -341,13 +341,13 @@ export default function BackupRecoveryPage() {
             {/* ── Recent Jobs ── */}
             <section>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-bold text-white tracking-tight">Recent Backup Jobs</h2>
+                <h2 className="text-sm font-bold text-slate-900 tracking-tight">Recent Backup Jobs</h2>
                 <span className="text-[11px] text-slate-500">Last 20 jobs</span>
               </div>
-              <div className="bg-[#131c2e] border border-white/8 rounded-2xl overflow-hidden">
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="border-b border-white/5">
+                    <tr className="border-b border-slate-200">
                       <th className="text-left px-5 py-3 text-slate-500 font-medium">Module</th>
                       <th className="text-left px-4 py-3 text-slate-500 font-medium">Type</th>
                       <th className="text-left px-4 py-3 text-slate-500 font-medium">Status</th>
@@ -363,13 +363,13 @@ export default function BackupRecoveryPage() {
                       </tr>
                     ) : health.recentJobs.map(job => (
                       <tr key={job.id}
-                        className="border-b border-white/4 hover:bg-white/3 transition cursor-pointer"
+                        className="border-b border-slate-100 hover:bg-slate-50 transition cursor-pointer"
                         onClick={() => setSelectedJob(job)}
                       >
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-2">
                             <span className="text-slate-400">{MODULE_ICONS[job.module_name]}</span>
-                            <span className="text-white font-medium">{MODULE_LABELS[job.module_name] ?? job.module_name}</span>
+                            <span className="text-slate-900 font-medium">{MODULE_LABELS[job.module_name] ?? job.module_name}</span>
                           </div>
                         </td>
                         <td className="px-4 py-3 text-slate-400 capitalize">{job.backup_type}</td>
@@ -438,17 +438,17 @@ function StatCard({ icon, label, value, sub, color }: {
   icon: React.ReactNode; label: string; value: string | number; sub: string; color: string
 }) {
   const bg: Record<string, string> = {
-    emerald: 'bg-emerald-500/8 border-emerald-500/15',
-    red:     'bg-red-500/8 border-red-500/15',
-    blue:    'bg-blue-500/8 border-blue-500/15',
-    amber:   'bg-amber-500/8 border-amber-500/15',
-    purple:  'bg-purple-500/8 border-purple-500/15',
-    sky:     'bg-sky-500/8 border-sky-500/15',
+    emerald: 'bg-emerald-50 border-emerald-200',
+    red:     'bg-red-50 border-red-200',
+    blue:    'bg-blue-50 border-blue-200',
+    amber:   'bg-amber-50 border-amber-200',
+    purple:  'bg-purple-50 border-purple-200',
+    sky:     'bg-sky-50 border-sky-200',
   }
   return (
-    <div className={`rounded-xl border p-4 ${bg[color] ?? 'bg-white/5 border-white/8'}`}>
-      <div className="flex items-center gap-2 mb-2">{icon}<span className="text-[11px] text-slate-400 font-medium">{label}</span></div>
-      <p className="text-xl font-bold text-white">{value}</p>
+    <div className={`rounded-xl border p-4 ${bg[color] ?? 'bg-white border-slate-200'}`}>
+      <div className="flex items-center gap-2 mb-2">{icon}<span className="text-[11px] text-slate-500 font-medium">{label}</span></div>
+      <p className="text-xl font-bold text-slate-900">{value}</p>
       <p className="text-[10px] text-slate-500 mt-0.5">{sub}</p>
     </div>
   )
@@ -461,16 +461,16 @@ function ModuleCard({ mod, recentJob, onRestore, onSchedule }: {
   onSchedule: () => void
 }) {
   return (
-    <div className="bg-[#131c2e] border border-white/8 rounded-xl p-4 group hover:border-white/15 transition">
+    <div className="bg-white border border-slate-200 rounded-xl p-4 group hover:border-slate-300 transition">
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className="text-slate-400">{MODULE_ICONS[mod.module_name]}</span>
-          <span className="text-sm font-semibold text-white">{MODULE_LABELS[mod.module_name] ?? mod.module_name}</span>
+          <span className="text-sm font-semibold text-slate-900">{MODULE_LABELS[mod.module_name] ?? mod.module_name}</span>
         </div>
         <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
           mod.is_enabled
-            ? 'bg-emerald-500/15 text-emerald-400'
-            : 'bg-slate-500/15 text-slate-500'
+            ? 'bg-emerald-50 text-emerald-700'
+            : 'bg-slate-100 text-slate-500'
         }`}>
           {mod.is_enabled ? 'Active' : 'Disabled'}
         </span>
@@ -479,7 +479,7 @@ function ModuleCard({ mod, recentJob, onRestore, onSchedule }: {
       <div className="space-y-1 mb-3">
         <div className="flex items-center justify-between text-[11px]">
           <span className="text-slate-500">Frequency</span>
-          <span className="text-slate-300 capitalize">{mod.frequency}</span>
+          <span className="text-slate-700 capitalize">{mod.frequency}</span>
         </div>
         <div className="flex items-center justify-between text-[11px]">
           <span className="text-slate-500">Last job</span>
@@ -489,20 +489,20 @@ function ModuleCard({ mod, recentJob, onRestore, onSchedule }: {
         </div>
         <div className="flex items-center justify-between text-[11px]">
           <span className="text-slate-500">Size</span>
-          <span className="text-slate-300">{formatBytes(recentJob?.total_size_bytes ?? null)}</span>
+          <span className="text-slate-700">{formatBytes(recentJob?.total_size_bytes ?? null)}</span>
         </div>
       </div>
 
       <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition">
         <button
           onClick={onRestore}
-          className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] text-[#fde047] bg-[#fde047]/10 hover:bg-[#fde047]/20 rounded-lg border border-[#fde047]/20 transition font-medium"
+          className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] text-slate-700 bg-white hover:bg-slate-50 rounded-lg border border-slate-200 transition font-medium"
         >
           <RotateCcw size={11} /> Restore
         </button>
         <button
           onClick={onSchedule}
-          className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition"
+          className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] text-slate-700 bg-white hover:bg-slate-50 rounded-lg border border-slate-200 transition"
         >
           <Settings size={11} /> Config
         </button>

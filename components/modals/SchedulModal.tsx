@@ -104,21 +104,21 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-lg bg-[#131c2e] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/8">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-[#1b365d] flex items-center justify-center">
-              <Settings size={15} className="text-[#fde047]" />
+            <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center">
+              <Settings size={15} className="text-white" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">Configure Backup Schedule</h2>
-              <p className="text-[11px] text-slate-400">Changes apply to the next scheduled run</p>
+              <h2 className="text-sm font-bold text-slate-900">Configure Backup Schedule</h2>
+              <p className="text-[11px] text-slate-500">Changes apply to the next scheduled run</p>
             </div>
           </div>
-          <button onClick={handleClose} className="text-slate-500 hover:text-white transition"><X size={18} /></button>
+          <button onClick={handleClose} className="text-slate-500 hover:text-slate-900 transition"><X size={18} /></button>
         </div>
 
         <div className="px-6 py-5 space-y-5 max-h-[75vh] overflow-y-auto">
@@ -128,22 +128,22 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
               <div className="w-12 h-12 rounded-full bg-emerald-500/15 flex items-center justify-center">
                 <CheckCircle2 size={24} className="text-emerald-400" />
               </div>
-              <p className="text-sm font-semibold text-white">Schedule Saved</p>
+              <p className="text-sm font-semibold text-slate-900">Schedule Saved</p>
             </div>
           ) : (
             <>
               {/* Module */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2">Module</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-2">Module</label>
                 <div className="relative">
                   <select
                     value={form.module_name}
                     onChange={e => set('module_name', e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white appearance-none focus:outline-none focus:border-[#fde047]/40 transition"
+                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-900 appearance-none focus:outline-none focus:border-slate-400 transition"
                   >
-                    <option value="" disabled className="bg-[#131c2e]">Select module…</option>
+                    <option value="" disabled className="bg-white">Select module…</option>
                     {MODULES.map(m => (
-                      <option key={m.key} value={m.key} className="bg-[#131c2e]">{m.label}</option>
+                      <option key={m.key} value={m.key} className="bg-white">{m.label}</option>
                     ))}
                   </select>
                   <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -158,7 +158,7 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
                 </div>
                 <button
                   onClick={() => set('is_enabled', !form.is_enabled)}
-                  className={`w-11 h-6 rounded-full transition relative ${form.is_enabled ? 'bg-[#fde047]' : 'bg-white/15'}`}
+                  className={`w-11 h-6 rounded-full transition relative ${form.is_enabled ? 'bg-amber-400' : 'bg-slate-200'}`}
                 >
                   <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${form.is_enabled ? 'left-5.5 left-[calc(100%-1.375rem)]' : 'left-0.5'}`} />
                 </button>
@@ -166,15 +166,15 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
 
               {/* Frequency */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2">Frequency</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-2">Frequency</label>
                 <div className="flex gap-2">
                   {FREQUENCIES.map(f => (
                     <button key={f}
                       onClick={() => set('frequency', f)}
                       className={`flex-1 py-2 text-[11px] capitalize rounded-lg border transition font-medium ${
                         form.frequency === f
-                          ? 'bg-[#1b365d] border-[#fde047]/30 text-white'
-                          : 'bg-white/3 border-white/8 text-slate-400 hover:border-white/20 hover:text-white'
+                          ? 'bg-slate-900 border-slate-900 text-white'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 hover:text-slate-900'
                       }`}
                     >{f}</button>
                   ))}
@@ -186,10 +186,10 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
                       value={form.custom_cron}
                       onChange={e => set('custom_cron', e.target.value)}
                       placeholder="0 2 * * *"
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white font-mono focus:outline-none focus:border-[#fde047]/40 transition"
+                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-900 font-mono focus:outline-none focus:border-slate-400 transition"
                     />
                     <p className="text-[10px] text-slate-500 mt-1">
-                      Cron expression (UTC). Default: <code className="text-slate-400">0 2 * * *</code> = daily at 2 AM
+                      Cron expression (UTC). Default: <code className="text-slate-700">0 2 * * *</code> = daily at 2 AM
                     </p>
                   </div>
                 )}
@@ -197,15 +197,15 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
 
               {/* Backup Type */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2">Backup Type</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-2">Backup Type</label>
                 <div className="flex gap-2">
                   {BACKUP_TYPES.map(t => (
                     <button key={t}
                       onClick={() => set('backup_type', t)}
                       className={`flex-1 py-2 text-[11px] capitalize rounded-lg border transition font-medium ${
                         form.backup_type === t
-                          ? 'bg-[#1b365d] border-[#fde047]/30 text-white'
-                          : 'bg-white/3 border-white/8 text-slate-400 hover:border-white/20 hover:text-white'
+                          ? 'bg-slate-900 border-slate-900 text-white'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 hover:text-slate-900'
                       }`}
                     >{t}</button>
                   ))}
@@ -214,7 +214,7 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
 
               {/* Options */}
               <div className="space-y-3">
-                <p className="text-xs font-semibold text-slate-300">Options</p>
+                <p className="text-xs font-semibold text-slate-700">Options</p>
                 <Toggle
                   label="Include File Attachments"
                   sub="Downloads files from Google Drive pool"
@@ -231,8 +231,8 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
 
               {/* Retention */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2">
-                  Retention Period — <span className="text-[#fde047]">{form.retention_days} days</span>
+                <label className="block text-xs font-semibold text-slate-700 mb-2">
+                  Retention Period — <span className="text-amber-600">{form.retention_days} days</span>
                 </label>
                 <input
                   type="range" min={7} max={365} step={1}
@@ -246,7 +246,7 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
               </div>
 
               {error && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-[11px] text-red-400">
+                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">
                   <AlertTriangle size={13} /> {error}
                 </div>
               )}
@@ -254,10 +254,10 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
               <button
                 onClick={handleSave}
                 disabled={loading || !form.module_name}
-                className="w-full py-2.5 text-sm font-semibold text-[#0f1623] bg-[#fde047] hover:bg-[#fde047]/90 disabled:opacity-50 rounded-xl transition flex items-center justify-center gap-2"
+                className="w-full py-2.5 text-sm font-semibold text-slate-900 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 rounded-xl transition flex items-center justify-center gap-2"
               >
                 {loading ? (
-                  <span className="w-4 h-4 border-2 border-[#0f1623]/30 border-t-[#0f1623] rounded-full animate-spin" />
+                  <span className="w-4 h-4 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin" />
                 ) : (
                   <><Save size={14} /> Save Schedule</>
                 )}
@@ -276,12 +276,12 @@ function Toggle({ label, sub, value, onChange }: {
   return (
     <div className="flex items-center justify-between py-2">
       <div>
-        <p className="text-[12px] text-slate-200">{label}</p>
+        <p className="text-[12px] text-slate-800">{label}</p>
         <p className="text-[11px] text-slate-500">{sub}</p>
       </div>
       <button
         onClick={() => onChange(!value)}
-        className={`w-10 h-5 rounded-full transition relative shrink-0 ${value ? 'bg-[#fde047]' : 'bg-white/15'}`}
+        className={`w-10 h-5 rounded-full transition relative shrink-0 ${value ? 'bg-amber-400' : 'bg-slate-200'}`}
       >
         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${value ? 'left-[calc(100%-1.125rem)]' : 'left-0.5'}`} />
       </button>
