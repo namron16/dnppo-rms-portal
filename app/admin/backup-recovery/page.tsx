@@ -12,7 +12,7 @@ import {
 
 import { TriggerBackupModal }   from '@/components/modals/TriggerBackupModal'
 import { RecoverModal }   from '@/components/modals/RecoverModal'
-import { ScheduleModal }        from '@/components/modals/SchedulModal'
+import { ScheduleModal }        from '@/components/modals/ScheduleModal'
 import { NotificationsModal, JobDetailModal }   from '@/components/modals/NotificationsModal'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
