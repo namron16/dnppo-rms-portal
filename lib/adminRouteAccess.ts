@@ -38,13 +38,17 @@ const ADMIN_ROUTES = [
   '/admin/backup-recovery',
 ] as const
 
+const DPDA_ROUTES = [
+  '/admin/dpda-inbox',
+] as const
+
 const P1_ONLY_ROUTES: readonly string[] = []
 
 const ROLE_DEFAULT_ROUTE: Record<SessionRole, string> = {
   admin: '/admin/log-history',
   PD: '/admin/master',
-  DPDA: '/admin/master',
-  DPDO: '/admin/master',
+  DPDA: '/admin/dpda-inbox',
+  DPDO: '/admin/dpda-inbox',
   P1: '/admin/master',
   P2: '/admin/master',
   P3: '/admin/master',
@@ -67,7 +71,7 @@ export function getDefaultAdminRoute(role: SessionRole): string {
 
 export function getAllowedAdminRoutes(role: SessionRole): string[] {
   const viewerRoles = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10'] as const
-    const docs = role === 'admin'
+  const docs = role === 'admin'
     ? []
     : role === 'P2'
       ? [...P2_DOC_ROUTES]
@@ -75,8 +79,9 @@ export function getAllowedAdminRoutes(role: SessionRole): string[] {
         ? [...VIEWER_DOC_ROUTES]
         : [...DOC_ROUTES]
   const admin = role === 'admin' ? [...ADMIN_ROUTES] : []
+  const dpdaRoutes = (role === 'DPDA' || role === 'DPDO') ? [...DPDA_ROUTES] : []
   const p1Only = role === 'P1' ? [...P1_ONLY_ROUTES] : []
-  return uniqueRoutes([...docs, ...admin, ...p1Only])
+  return uniqueRoutes([...docs, ...admin, ...dpdaRoutes, ...p1Only])
 }
 
 export function isAllowedAdminPath(pathname: string, role: SessionRole): boolean {
