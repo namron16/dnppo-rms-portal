@@ -55,6 +55,16 @@ const ADMIN_NAV: NavItem[] = [
   { label: 'Backup & Recovery', icon: '🛡️', href: '/admin/backup-recovery' },
 ]
 
+const DPDA_NAV: NavItem[] = [
+  { label: 'Master Documents',      icon: '📁', href: '/admin/master' },
+  { label: 'Admin Orders',          icon: '📋', href: '/admin/admin-orders' },
+  { label: 'Daily Journal',         icon: '📒', href: '/admin/daily-journals' },
+  { label: 'Organization',          icon: '🏛️', href: '/admin/organization' },
+  { label: 'e-Library',             icon: '📚', href: '/admin/e-library' },
+  { label: 'Archive',               icon: '🗄️', href: '/admin/archive' },
+  { label: 'DPDA Inbox',            icon: '📮', href: '/admin/dpda-inbox' },
+]
+
 function NavLink({ item, active, onNavigate, badgeCount }: {
   item: NavItem
   active: boolean
@@ -156,6 +166,7 @@ export function Sidebar() {
   }
 
   const isAdmin = user && ['admin'].includes(user.role)
+  const isDPDA = user && ['DPDA', 'DPDO'].includes(user.role)
   const canSeeP2    = user?.role === 'P2'
   const isViewerNo201 = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10'].includes(user?.role ?? '')
   const isP1        = user?.role === 'P1'
@@ -241,7 +252,7 @@ export function Sidebar() {
         )}
 
         {/* ── Documents nav ── */}
-        {!isAdmin && (
+        {!isAdmin && !isDPDA && (
           <div className="px-3 pt-5 pb-2">
           <div className="px-3 mb-2 text-[10px] font-bold tracking-widest uppercase text-white/30">Documents</div>
           {canSeeP2
@@ -265,6 +276,18 @@ export function Sidebar() {
                   badgeCount={item.href === '/admin/forwarded' ? unreadInboxCount : undefined} />
               ))  
           }
+          </div>
+        )}
+
+        {/* ── DPDA nav ── */}
+        {isDPDA && (
+          <div className="px-3 pt-5 pb-2">
+            <div className="px-3 mb-2 text-[10px] font-bold tracking-widest uppercase text-white/30">Management</div>
+            {DPDA_NAV.map(item => (
+              <NavLink key={item.href} item={item}
+                active={pathname === item.href || pendingHref === item.href}
+                onNavigate={setPendingHref} />
+            ))}
           </div>
         )}
        
