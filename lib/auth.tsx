@@ -33,7 +33,7 @@ export interface AdminUser {
   }
 }
 
-// ── Helpers (unchanged) ───────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function permissionsForRole(role: AdminRole): AdminUser['permissions'] {
   switch (role) {
@@ -87,7 +87,7 @@ function buildAdminUser(user: User, profile: ProfileRow): AdminUser {
   }
 }
 
-// ── The actual profile fetch — one place, one responsibility ─────────────────
+// ── Profile fetch ─────────────────────────────────────────────────────────────
 
 async function fetchProfile(supabase: ReturnType<typeof createClient>, user: User): Promise<AdminUser | null> {
   try {
@@ -107,12 +107,15 @@ async function fetchProfile(supabase: ReturnType<typeof createClient>, user: Use
 // ── Context ───────────────────────────────────────────────────────────────────
 
 interface AuthContextValue {
-  user:           AdminUser | null
-  session:        Session | null
-  isLoading:      boolean
-  loginPassword:  (email: string, password: string) => Promise<{ error: string | null }>
-  logout:         () => Promise<void>
-  changePassword: (current: string, next: string)   => Promise<{ error: string | null }>
+  user:                  AdminUser | null
+  session:               Session | null
+  isLoading:             boolean
+  loginPassword:         (email: string, password: string) => Promise<{ error: string | null }>
+  logout:                () => Promise<void>
+  changePassword:        (current: string, next: string)   => Promise<{ error: string | null }>
+  // ── OTP password reset (for logged-out users on the login page) ───────────
+  sendPasswordResetOTP:  (email: string) => Promise<{ error: string | null }>
+  verifyOTPAndReset:     (email: string, token: string, newPassword: string) => Promise<{ error: string | null }>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -124,9 +127,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session,   setSession]   = useState<Session | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  // ── On mount: check for an existing session exactly once ─────────────────
-  // This covers page refresh and direct URL navigation.
-  // onAuthStateChange is NOT used — it's the source of the race conditions.
+  // ── On mount: restore existing session ───────────────────────────────────
 
   useEffect(() => {
     let cancelled = false
@@ -155,7 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Login: fetch profile immediately, set everything at once ─────────────
+  // ── Login ─────────────────────────────────────────────────────────────────
 
   const loginPassword = useCallback(async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
@@ -167,7 +168,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const adminUser = await fetchProfile(supabase, data.user)
     if (!adminUser) return { error: 'Account profile not found. Contact your administrator.' }
 
-    // Set everything atomically — no partial state
     setUser(adminUser)
     setSession(data.session)
     setCurrentLogger(adminUser.role, adminUser.id)
@@ -186,7 +186,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.location.href = '/login'
   }, [supabase])
 
-  // ── Change password ───────────────────────────────────────────────────────
+  // ── Change password (logged-in flow — requires current password) ──────────
 
   const changePassword = useCallback(async (current: string, next: string) => {
     if (!user?.email) return { error: 'Session error. Please log out and back in.' }
@@ -202,8 +202,77 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: null }
   }, [supabase, user])
 
+  // ── Send OTP for password reset (logged-out flow) ─────────────────────────
+  // Uses Supabase's signInWithOtp which sends a 6-digit code via email.
+  // shouldCreateUser: false ensures only existing accounts can trigger this.
+
+  const sendPasswordResetOTP = useCallback(async (email: string) => {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false, // never create a new account via OTP
+      },
+    })
+
+    // Supabase returns a generic error if the email doesn't exist when
+    // shouldCreateUser is false — surface a safe, non-enumerable message.
+    if (error) {
+      // Don't reveal whether the email exists or not — always show the same message
+      return { error: 'Could not send code. Please check your role selection and try again.' }
+    }
+
+    return { error: null }
+  }, [supabase])
+
+  // ── Verify OTP and set new password (logged-out flow) ────────────────────
+  // Step 1: verifyOtp authenticates the user with the 6-digit code.
+  // Step 2: updateUser sets the new password on the now-authenticated session.
+  // The user is left signed in — we then sign them back out so they log in
+  // normally with the new password (clean UX, no accidental session bleed).
+
+  const verifyOTPAndReset = useCallback(async (
+    email: string,
+    token: string,
+    newPassword: string,
+  ) => {
+    // Verify the OTP — this establishes a session
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'email',
+    })
+
+    if (verifyError) {
+      return { error: 'Invalid or expired code. Please request a new one.' }
+    }
+
+    // Set the new password
+    const { error: updateError } = await supabase.auth.updateUser({
+      password: newPassword,
+    })
+
+    if (updateError) {
+      return { error: updateError.message }
+    }
+
+    // Sign out immediately — user should log in fresh with their new password.
+    // This prevents an unintended session from persisting on the login page.
+    await supabase.auth.signOut()
+
+    return { error: null }
+  }, [supabase])
+
   return (
-    <AuthContext.Provider value={{ user, session, isLoading, loginPassword, logout, changePassword }}>
+    <AuthContext.Provider value={{
+      user,
+      session,
+      isLoading,
+      loginPassword,
+      logout,
+      changePassword,
+      sendPasswordResetOTP,
+      verifyOTPAndReset,
+    }}>
       {children}
     </AuthContext.Provider>
   )

@@ -6,10 +6,12 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import { getDefaultAdminRoute, type SessionRole } from '@/lib/adminRouteAccess'
 
+// ── Role / email mapping ──────────────────────────────────────────────────────
+
 const ROLE_EMAIL_MAP: Record<string, string> = {
   admin: 'dalenamron@gmail.com',
   PD:    'pd@dnppo.gov.ph',
-  DPDA:  'dpda@dnppo.gov.ph',
+  DPDA:  '11dnpporms.dpda@gmail.com',
   DPDO:  'dpdo@dnppo.gov.ph',
   P1:    '11dnpporms.p1@gmail.com',
   P2:    '11dnpporms.p2@gmail.com',
@@ -38,117 +40,581 @@ const ROLE_OPTIONS = Object.keys(ROLE_EMAIL_MAP).map(id => ({
   id, label: getRoleLabel(id),
 }))
 
+// ── Password strength helper ──────────────────────────────────────────────────
+
+function getPwStrength(pw: string) {
+  if (!pw) return 0
+  if (pw.length >= 20) return 4
+  if (pw.length >= 16) return 3
+  if (pw.length >= 12) return 2
+  return 1
+}
+const PW_STRENGTH_COLORS = ['', 'bg-red-400', 'bg-amber-400', 'bg-blue-500', 'bg-emerald-500']
+const PW_STRENGTH_LABELS = ['', 'Weak', 'Fair', 'Good', 'Strong']
+const PW_STRENGTH_TEXT   = ['', 'text-red-400', 'text-amber-400', 'text-blue-400', 'text-emerald-400']
+
+// ── Shared input style ────────────────────────────────────────────────────────
+
+function inputCls(hasError = false) {
+  return (
+    'w-full px-4 py-3 border rounded-lg text-sm text-slate-800 bg-white ' +
+    'focus:outline-none focus:ring-2 transition ' +
+    (hasError
+      ? 'border-red-300 focus:ring-red-200'
+      : 'border-slate-300 focus:ring-[#1b365d]/40')
+  )
+}
+
+// ── Step indicator ────────────────────────────────────────────────────────────
+
+function StepDots({ step }: { step: 1 | 2 | 3 }) {
+  return (
+    <div className="flex items-center justify-center gap-2 mb-6">
+      {([1, 2, 3] as const).map(n => (
+        <div
+          key={n}
+          className={`h-1.5 rounded-full transition-all duration-300 ${
+            n === step
+              ? 'w-6 bg-[#fde047]'
+              : n < step
+              ? 'w-3 bg-[#fde047]/40'
+              : 'w-3 bg-white/20'
+          }`}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ── Main form component ───────────────────────────────────────────────────────
+
+type View = 'login' | 'forgot_role' | 'forgot_otp' | 'forgot_newpw'
+
 function LoginForm() {
-  const { loginPassword } = useAuth()
+  const { loginPassword, sendPasswordResetOTP, verifyOTPAndReset } = useAuth()
   const router       = useRouter()
   const searchParams = useSearchParams()
   const reason       = searchParams.get('reason')
 
-  const [roleId,   setRoleId]   = useState('')
-  const [password, setPassword] = useState('')
-  const [error,    setError]    = useState('')
-  const [loading,  setLoading]  = useState(false)
+  // ── View state ────────────────────────────────────────────────────────────
+  const [view,    setView]    = useState<View>('login')
+  const [loading, setLoading] = useState(false)
 
-  const selectedEmail = ROLE_EMAIL_MAP[roleId] ?? ''
+  // ── Login fields ──────────────────────────────────────────────────────────
+  const [roleId,      setRoleId]      = useState('')
+  const [password,    setPassword]    = useState('')
+  const [loginError,  setLoginError]  = useState('')
+  const [resetSuccess, setResetSuccess] = useState(false) // banner after reset
 
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+  // ── Forgot password shared state ──────────────────────────────────────────
+  const [fpRoleId,  setFpRoleId]  = useState('')           // step 1 role selection
+  const [otpCode,   setOtpCode]   = useState('')           // step 2 OTP input
+  const [fpError,   setFpError]   = useState('')           // inline error per step
+
+  // ── Step 3 fields ─────────────────────────────────────────────────────────
+  const [newPw,     setNewPw]     = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+  const [showNewPw, setShowNewPw] = useState(false)
+  const [showConPw, setShowConPw] = useState(false)
+
+  const fpEmail   = ROLE_EMAIL_MAP[fpRoleId] ?? ''
+  const pwStrength = getPwStrength(newPw)
+
+  // ── Transition helpers ────────────────────────────────────────────────────
+
+  function goToLogin() {
+    setView('login')
+    setFpRoleId('')
+    setOtpCode('')
+    setNewPw('')
+    setConfirmPw('')
+    setFpError('')
+    setLoading(false)
+  }
+
+  // ── Login submit ──────────────────────────────────────────────────────────
+
+  const handleLogin = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
-    setError('')
+    setLoginError('')
+    setResetSuccess(false)
 
-    if (!roleId)    { setError('Please select your role.'); return }
-    if (!password)  { setError('Please enter your password.'); return }
+    if (!roleId)   { setLoginError('Please select your role.'); return }
+    if (!password) { setLoginError('Please enter your password.'); return }
 
     setLoading(true)
-    const { error } = await loginPassword(selectedEmail, password)
+    const { error } = await loginPassword(ROLE_EMAIL_MAP[roleId] ?? '', password)
     setLoading(false)
 
     if (error) {
-      setError('Invalid credentials. Please check your role and password.')
+      setLoginError('Invalid credentials. Please check your role and password.')
       return
     }
 
     router.replace(getDefaultAdminRoute(roleId as SessionRole))
-  }, [roleId, selectedEmail, password, loginPassword, router])
+  }, [roleId, password, loginPassword, router])
 
-  const inputBase =
-    'w-full px-4 py-3 border rounded-lg text-sm text-slate-800 bg-white ' +
-    'focus:outline-none focus:ring-2 focus:ring-[#1b365d]/50 transition'
-  const inputCls = error ? `${inputBase} border-red-300` : `${inputBase} border-slate-300`
+  // ── Step 1 → send OTP ─────────────────────────────────────────────────────
+
+  const handleSendOTP = useCallback(async () => {
+    setFpError('')
+    if (!fpRoleId) { setFpError('Please select your role first.'); return }
+
+    setLoading(true)
+    const { error } = await sendPasswordResetOTP(fpEmail)
+    setLoading(false)
+
+    if (error) { setFpError(error); return }
+
+    setView('forgot_otp')
+  }, [fpRoleId, fpEmail, sendPasswordResetOTP])
+
+  // ── Step 2 → verify OTP, advance to new password ─────────────────────────
+
+  const handleVerifyOTP = useCallback(async () => {
+    setFpError('')
+    const trimmed = otpCode.trim()
+
+    if (!trimmed)        { setFpError('Please enter the 6-digit code.'); return }
+    if (trimmed.length !== 6 || !/^\d+$/.test(trimmed)) {
+      setFpError('The code must be exactly 6 digits.')
+      return
+    }
+
+    // We don't verify-only via Supabase — verification happens together with
+    // the password update in step 3. Here we just advance the wizard.
+    // (Supabase's verifyOtp requires the new password to be set in the same session.)
+    setView('forgot_newpw')
+  }, [otpCode])
+
+  // ── Step 3 → set new password ─────────────────────────────────────────────
+
+  const handleResetPassword = useCallback(async () => {
+    setFpError('')
+
+    if (!newPw) {
+      setFpError('Please enter a new password.')
+      return
+    }
+    if (newPw.length < 12) {
+      setFpError('Password must be at least 12 characters.')
+      return
+    }
+    if (!confirmPw) {
+      setFpError('Please confirm your new password.')
+      return
+    }
+    if (newPw !== confirmPw) {
+      setFpError('Passwords do not match.')
+      return
+    }
+
+    setLoading(true)
+    const { error } = await verifyOTPAndReset(fpEmail, otpCode.trim(), newPw)
+    setLoading(false)
+
+    if (error) { setFpError(error); return }
+
+    // Success — return to login with a success banner
+    goToLogin()
+    setResetSuccess(true)
+  }, [fpEmail, otpCode, newPw, confirmPw, verifyOTPAndReset])
+
+  // ── Shared label style ────────────────────────────────────────────────────
+  const labelCls = 'block text-[#1b365d] font-bold text-base mb-2'
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="w-[500px] bg-white px-12 py-10 flex flex-col relative shadow-2xl z-20">
+    <div className="w-[500px] bg-white px-12 py-10 flex flex-col relative shadow-2xl z-20 overflow-hidden">
       <div className="flex-1 flex flex-col justify-center items-center w-full">
 
-        {reason === 'account_disabled' && (
+        {/* ── Disabled account banner ── */}
+        {reason === 'account_disabled' && view === 'login' && (
           <div className="w-full mb-4 rounded-lg bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-800">
             Your account has been disabled. Contact your system administrator.
           </div>
         )}
 
-        <div className="text-center mb-10 w-full">
-          <h2 className="font-serif text-[2.5rem] text-[#1b365d] font-bold mb-2 flex items-center justify-center gap-3">
-            <span className="text-[#fde047] text-2xl">⭐</span>
-            Sign In
-            <span className="text-[#fde047] text-2xl">⭐</span>
-          </h2>
-          <p className="text-slate-800 text-sm font-medium">
-            Access restricted to authorized DNPPO personnel
-          </p>
-        </div>
-
-        {error && (
-          <div className="w-full bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg text-center mb-4">
-            {error}
+        {/* ── Password reset success banner ── */}
+        {resetSuccess && view === 'login' && (
+          <div className="w-full mb-4 rounded-lg bg-emerald-50 border border-emerald-300 px-4 py-3 text-sm text-emerald-800 flex items-start gap-2">
+            <span className="flex-shrink-0">✅</span>
+            <span>Password reset successfully. You can now sign in with your new password.</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} noValidate className="w-full space-y-6">
-          <div>
-            <label className="block text-[#1b365d] font-bold text-base mb-2">Role</label>
-            <select
-              value={roleId}
-              onChange={e => { setRoleId(e.target.value); setError('') }}
-              className={inputCls}
-              disabled={loading}
+        {/* ════════════════════════════════════════════════════
+            VIEW: LOGIN
+        ════════════════════════════════════════════════════ */}
+        {view === 'login' && (
+          <>
+            <div className="text-center mb-10 w-full">
+              <h2 className="font-serif text-[2.5rem] text-[#1b365d] font-bold mb-2 flex items-center justify-center gap-3">
+                <span className="text-[#fde047] text-2xl">⭐</span>
+                Sign In
+                <span className="text-[#fde047] text-2xl">⭐</span>
+              </h2>
+              <p className="text-slate-800 text-sm font-medium">
+                Access restricted to authorized DNPPO personnel
+              </p>
+            </div>
+
+            {loginError && (
+              <div className="w-full bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg text-center mb-4">
+                {loginError}
+              </div>
+            )}
+
+            <form onSubmit={handleLogin} noValidate className="w-full space-y-6">
+              <div>
+                <label className={labelCls}>Role</label>
+                <select
+                  value={roleId}
+                  onChange={e => { setRoleId(e.target.value); setLoginError(''); setResetSuccess(false) }}
+                  className={inputCls(!!loginError)}
+                  disabled={loading}
+                >
+                  <option value="" disabled>Select your admin role</option>
+                  {ROLE_OPTIONS.map(r => (
+                    <option key={r.id} value={r.id}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className={labelCls} style={{ marginBottom: 0 }}>Password</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFpRoleId(roleId) // pre-fill role if already selected
+                      setFpError('')
+                      setView('forgot_role')
+                    }}
+                    className="text-xs text-[#1b365d]/60 hover:text-[#1b365d] underline underline-offset-2 transition font-medium"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => { setPassword(e.target.value); setLoginError(''); setResetSuccess(false) }}
+                  placeholder="Enter your password"
+                  className={inputCls(!!loginError)}
+                  disabled={loading}
+                  autoComplete="current-password"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading || !roleId || !password}
+                className="w-full bg-[#1b365d] hover:bg-[#152a4a] text-[#fde047] font-semibold
+                           py-3.5 rounded-lg transition text-lg disabled:opacity-70 shadow-md"
+              >
+                {loading ? 'Signing in…' : 'SIGN IN'}
+              </button>
+            </form>
+
+            <div className="text-center mt-8 text-[11px] text-slate-400 leading-relaxed font-medium">
+              <p>Access credentials are issued by your system administrator</p>
+              <p>No public registration available.</p>
+            </div>
+          </>
+        )}
+
+        {/* ════════════════════════════════════════════════════
+            VIEW: FORGOT — STEP 1 (select role)
+        ════════════════════════════════════════════════════ */}
+        {view === 'forgot_role' && (
+          <div className="w-full">
+
+            {/* Back button */}
+            <button
+              onClick={goToLogin}
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-[#1b365d] transition font-medium mb-6"
             >
-              <option value="" disabled>Select your admin role</option>
-              {ROLE_OPTIONS.map(r => (
-                <option key={r.id} value={r.id}>{r.label}</option>
-              ))}
-            </select>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              Back to Sign In
+            </button>
+
+            <StepDots step={1} />
+
+            <div className="text-center mb-8">
+              <div className="w-14 h-14 rounded-2xl bg-[#1b365d] flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fde047" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </div>
+              <h2 className="font-serif text-2xl text-[#1b365d] font-bold mb-1">Reset Password</h2>
+              <p className="text-slate-500 text-sm">
+                Select your role and we'll send a 6-digit verification code to your registered email address.
+              </p>
+            </div>
+
+            {fpError && (
+              <div className="w-full bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg mb-4">
+                {fpError}
+              </div>
+            )}
+
+            <div className="space-y-5">
+              <div>
+                <label className={labelCls}>Your Role</label>
+                <select
+                  value={fpRoleId}
+                  onChange={e => { setFpRoleId(e.target.value); setFpError('') }}
+                  className={inputCls(!!fpError && !fpRoleId)}
+                  disabled={loading}
+                >
+                  <option value="" disabled>Select your admin role</option>
+                  {ROLE_OPTIONS.map(r => (
+                    <option key={r.id} value={r.id}>{r.label}</option>
+                  ))}
+                </select>
+                {fpRoleId && (
+                  <p className="text-[11px] text-slate-400 mt-1.5">
+                    Code will be sent to <span className="font-semibold text-slate-600">{fpEmail}</span>
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSendOTP}
+                disabled={loading || !fpRoleId}
+                className="w-full bg-[#1b365d] hover:bg-[#152a4a] text-[#fde047] font-semibold
+                           py-3.5 rounded-lg transition text-base disabled:opacity-70 shadow-md
+                           flex items-center justify-center gap-2"
+              >
+                {loading
+                  ? <><Spinner /> Sending code…</>
+                  : 'Send Verification Code'}
+              </button>
+            </div>
           </div>
+        )}
 
-          <div>
-            <label className="block text-[#1b365d] font-bold text-base mb-2">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => { setPassword(e.target.value); setError('') }}
-              placeholder="Enter your password"
-              className={inputCls}
-              disabled={loading}
-              autoComplete="current-password"
-            />
+        {/* ════════════════════════════════════════════════════
+            VIEW: FORGOT — STEP 2 (enter OTP)
+        ════════════════════════════════════════════════════ */}
+        {view === 'forgot_otp' && (
+          <div className="w-full">
+
+            <button
+              onClick={() => { setView('forgot_role'); setFpError('') }}
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-[#1b365d] transition font-medium mb-6"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              Back
+            </button>
+
+            <StepDots step={2} />
+
+            <div className="text-center mb-8">
+              <div className="w-14 h-14 rounded-2xl bg-[#1b365d] flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fde047" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                  <polyline points="22,6 12,13 2,6" />
+                </svg>
+              </div>
+              <h2 className="font-serif text-2xl text-[#1b365d] font-bold mb-1">Check Your Email</h2>
+              <p className="text-slate-500 text-sm">
+                A 6-digit code was sent to
+              </p>
+              <p className="text-[#1b365d] font-semibold text-sm mt-0.5">{fpEmail}</p>
+            </div>
+
+            {fpError && (
+              <div className="w-full bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg mb-4">
+                {fpError}
+              </div>
+            )}
+
+            <div className="space-y-5">
+              <div>
+                <label className={labelCls}>Verification Code</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={e => {
+                    // digits only
+                    const val = e.target.value.replace(/\D/g, '').slice(0, 6)
+                    setOtpCode(val)
+                    setFpError('')
+                  }}
+                  placeholder="Enter 6-digit code"
+                  className={`${inputCls(!!fpError)} text-center text-xl tracking-[0.5em] font-bold font-mono`}
+                  disabled={loading}
+                  autoComplete="one-time-code"
+                />
+                <p className="text-[11px] text-slate-400 mt-1.5 text-center">
+                  Didn't receive it?{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOtpCode('')
+                      setFpError('')
+                      handleSendOTP()
+                    }}
+                    className="text-[#1b365d] underline underline-offset-2 hover:opacity-70 transition font-semibold"
+                    disabled={loading}
+                  >
+                    Resend code
+                  </button>
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleVerifyOTP}
+                disabled={loading || otpCode.length !== 6}
+                className="w-full bg-[#1b365d] hover:bg-[#152a4a] text-[#fde047] font-semibold
+                           py-3.5 rounded-lg transition text-base disabled:opacity-70 shadow-md
+                           flex items-center justify-center gap-2"
+              >
+                {loading
+                  ? <><Spinner /> Verifying…</>
+                  : 'Verify Code'}
+              </button>
+            </div>
+
+            <div className="mt-5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <p className="text-[11px] text-amber-800 text-center">
+                ⏱ The code expires in <strong>1 hour</strong>. Check spam/junk if not received.
+              </p>
+            </div>
           </div>
+        )}
 
-          <button
-            type="submit"
-            disabled={loading || !roleId || !password}
-            className="w-full bg-[#1b365d] hover:bg-[#152a4a] text-[#fde047] font-semibold
-                       py-3.5 rounded-lg transition text-lg disabled:opacity-70 shadow-md"
-          >
-            {loading ? 'Signing in…' : 'SIGN IN'}
-          </button>
-        </form>
+        {/* ════════════════════════════════════════════════════
+            VIEW: FORGOT — STEP 3 (set new password)
+        ════════════════════════════════════════════════════ */}
+        {view === 'forgot_newpw' && (
+          <div className="w-full">
 
-        <div className="text-center mt-8 text-[11px] text-slate-400 leading-relaxed font-medium">
-          <p>Access credentials are issued by your system administrator</p>
-          <p>No public registration available.</p>
-        </div>
+            <button
+              onClick={() => { setView('forgot_otp'); setFpError('') }}
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-[#1b365d] transition font-medium mb-6"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              Back
+            </button>
+
+            <StepDots step={3} />
+
+            <div className="text-center mb-8">
+              <div className="w-14 h-14 rounded-2xl bg-[#1b365d] flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fde047" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+              </div>
+              <h2 className="font-serif text-2xl text-[#1b365d] font-bold mb-1">Set New Password</h2>
+              <p className="text-slate-500 text-sm">
+                Choose a strong password — minimum 12 characters.
+              </p>
+            </div>
+
+            {fpError && (
+              <div className="w-full bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg mb-4">
+                {fpError}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              {/* New password */}
+              <div>
+                <label className={labelCls}>New Password</label>
+                <div className="relative">
+                  <input
+                    type={showNewPw ? 'text' : 'password'}
+                    value={newPw}
+                    onChange={e => { setNewPw(e.target.value); setFpError('') }}
+                    placeholder="Min. 12 characters"
+                    className={`${inputCls(!!fpError && !newPw)} pr-10`}
+                    disabled={loading}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPw(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                  >
+                    {showNewPw ? '🙈' : '👁'}
+                  </button>
+                </div>
+                {newPw && (
+                  <div className="mt-2 space-y-1">
+                    <div className="flex gap-1">
+                      {[1,2,3,4].map(i => (
+                        <div key={i} className={`h-1 flex-1 rounded-full transition-colors ${pwStrength >= i ? PW_STRENGTH_COLORS[pwStrength] : 'bg-slate-200'}`} />
+                      ))}
+                    </div>
+                    <p className={`text-[10px] font-semibold ${PW_STRENGTH_TEXT[pwStrength]}`}>
+                      {PW_STRENGTH_LABELS[pwStrength]}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Confirm password */}
+              <div>
+                <label className={labelCls}>Confirm Password</label>
+                <div className="relative">
+                  <input
+                    type={showConPw ? 'text' : 'password'}
+                    value={confirmPw}
+                    onChange={e => { setConfirmPw(e.target.value); setFpError('') }}
+                    placeholder="Repeat new password"
+                    className={`${inputCls(!!fpError && !confirmPw)} pr-10`}
+                    disabled={loading}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConPw(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                  >
+                    {showConPw ? '🙈' : '👁'}
+                  </button>
+                </div>
+                {confirmPw && newPw === confirmPw && (
+                  <p className="text-xs text-emerald-600 mt-1 font-medium">✅ Passwords match</p>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleResetPassword}
+                disabled={loading || newPw.length < 12 || newPw !== confirmPw}
+                className="w-full bg-[#1b365d] hover:bg-[#152a4a] text-[#fde047] font-semibold
+                           py-3.5 rounded-lg transition text-base disabled:opacity-70 shadow-md
+                           flex items-center justify-center gap-2 mt-2"
+              >
+                {loading
+                  ? <><Spinner /> Resetting password…</>
+                  : '🔑 Reset Password'}
+              </button>
+            </div>
+          </div>
+        )}
 
       </div>
 
-      {/* STI Footer */}
+      {/* ── STI Footer (shown on all views) ── */}
       <div className="mt-auto pt-6 flex items-center justify-center gap-3 w-full border-t border-slate-100">
         <p className="text-[10px] text-slate-700 font-medium leading-tight text-center max-w-[250px]">
           This Record Management System was developed in collaboration with the 4th-year BSIS students, Class 2026 of STI College Tagum.
@@ -169,6 +635,16 @@ function LoginForm() {
     </div>
   )
 }
+
+// ── Spinner ───────────────────────────────────────────────────────────────────
+
+function Spinner() {
+  return (
+    <div className="w-4 h-4 border-2 border-[#fde047] border-t-transparent rounded-full animate-spin flex-shrink-0" />
+  )
+}
+
+// ── Page shell ────────────────────────────────────────────────────────────────
 
 export default function LoginPage() {
   return (
@@ -207,7 +683,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Right: Login form */}
+      {/* Right: Login / Reset form */}
       <Suspense fallback={
         <div className="w-[500px] bg-white flex items-center justify-center">
           <div className="w-6 h-6 border-2 border-[#1b365d] border-t-transparent rounded-full animate-spin" />
