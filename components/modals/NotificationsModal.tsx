@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import {
   Bell, X, CheckCircle2, XCircle, AlertTriangle,
-  Info, RotateCcw, ChevronRight, Database, FileText,
+  Info, RotateCcw, Database, FileText,
   Clock, HardDrive, Shield,
 } from 'lucide-react'
 
@@ -11,10 +11,12 @@ import {
 
 interface Notification {
   id:            string
-  backup_job_id: string | null
-  type:          'success' | 'failure' | 'warning' | 'recovery'
+  job_id:        string | null   // FIX: was backup_job_id — matches notifications.ts insert
+  // FIX: added 'error' to union — notifications.ts inserts type:'error' for failures,
+  // not 'failure'. Kept 'failure' for backwards compat with any older rows.
+  type:          'success' | 'error' | 'failure' | 'warning' | 'recovery'
   title:         string
-  message:       string
+  body:          string          // FIX: was 'message' — notifications.ts inserts { body }
   is_read:       boolean
   created_at:    string
 }
@@ -29,25 +31,27 @@ interface BackupJob {
   completed_at:     string | null
   total_size_bytes: number | null
   error_message:    string | null
+  // FIX: added download_url — engine.ts now stores this after every successful backup
+  download_url:     string | null
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const MODULE_LABELS: Record<string, string> = {
-  master_documents:    'Master Documents',
-  admin_orders:        'Admin Orders',
-  daily_journals:      'Daily Journals',
-  e_library:           'E-Library',
-  classified_documents:'Classified Documents',
-  archived_files:      'Archived Files',
-  admin_logs:          'Admin Logs',
-  personnel_201:       '201 Files',
-  organization:        'Organization Chart',
+  master_documents:     'Master Documents',
+  admin_orders:         'Admin Orders',
+  daily_journals:       'Daily Journals',
+  e_library:            'E-Library',
+  classified_documents: 'Classified Documents',
+  archived_files:       'Archived Files',
+  admin_logs:           'Admin Logs',
+  personnel_201:        '201 Files',
+  organization:         'Organization Chart',
 }
 
 function formatBytes(bytes: number | null) {
   if (!bytes) return '—'
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1048576)    return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`
   return `${(bytes / 1073741824).toFixed(2)} GB`
 }
@@ -78,9 +82,9 @@ interface NotifProps {
 }
 
 export function NotificationsModal({ open, onClose }: NotifProps) {
-  const [notifs,   setNotifs]   = useState<Notification[]>([])
-  const [loading,  setLoading]  = useState(false)
-  const [marking,  setMarking]  = useState(false)
+  const [notifs,  setNotifs]  = useState<Notification[]>([])
+  const [loading, setLoading] = useState(false)
+  const [marking, setMarking] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -107,13 +111,16 @@ export function NotificationsModal({ open, onClose }: NotifProps) {
     setMarking(false)
   }
 
+  // FIX: added 'error' case to match what notifications.ts actually inserts.
+  // 'failure' kept as alias for backwards compatibility with older rows.
   const notifIcon = (type: string) => {
     switch (type) {
-      case 'success':  return <CheckCircle2 size={14} className="text-emerald-400" />
-      case 'failure':  return <XCircle      size={14} className="text-red-400" />
-      case 'warning':  return <AlertTriangle size={14} className="text-amber-400" />
-      case 'recovery': return <RotateCcw    size={14} className="text-blue-400" />
-      default:         return <Info         size={14} className="text-slate-400" />
+      case 'success':          return <CheckCircle2  size={14} className="text-emerald-400" />
+      case 'error':
+      case 'failure':          return <XCircle       size={14} className="text-red-400" />
+      case 'warning':          return <AlertTriangle size={14} className="text-amber-400" />
+      case 'recovery':         return <RotateCcw     size={14} className="text-blue-400" />
+      default:                 return <Info          size={14} className="text-slate-400" />
     }
   }
 
@@ -147,7 +154,7 @@ export function NotificationsModal({ open, onClose }: NotifProps) {
           </div>
         </div>
 
-        <div className="max-h-[60vh] overflow-y-auto divide-y divide-slate-200">
+        <div className="max-h-[60vh] overflow-y-auto divide-y divide-slate-100">
           {loading ? (
             <div className="py-12 flex items-center justify-center">
               <span className="w-5 h-5 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
@@ -160,15 +167,16 @@ export function NotificationsModal({ open, onClose }: NotifProps) {
                 <div className="mt-0.5 shrink-0">{notifIcon(n.type)}</div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <p className={`text-[12px] font-semibold ${!n.is_read ? 'text-slate-900' : 'text-slate-700'}`}>
+                    <p className={`text-[12px] font-semibold truncate ${!n.is_read ? 'text-slate-900' : 'text-slate-700'}`}>
                       {n.title}
                     </p>
                     {!n.is_read && (
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-0.5">{n.message}</p>
-                  <p className="text-[10px] text-slate-600 mt-1">{fmtRelative(n.created_at)}</p>
+                  {/* FIX: was n.message — now reads n.body to match the DB column */}
+                  <p className="text-[11px] text-slate-500 mt-0.5">{n.body}</p>
+                  <p className="text-[10px] text-slate-400 mt-1">{fmtRelative(n.created_at)}</p>
                 </div>
               </div>
             </div>
@@ -199,17 +207,19 @@ interface JobDetailProps {
 }
 
 export function JobDetailModal({ job, onClose, onRecover }: JobDetailProps) {
-  const statusColor: Record<string, string> = {
-    completed: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-    running:   'text-blue-400 bg-blue-500/10 border-blue-500/20',
-    pending:   'text-amber-400 bg-amber-500/10 border-amber-500/20',
-    failed:    'text-red-400 bg-red-500/10 border-red-500/20',
-    cancelled: 'text-slate-400 bg-slate-500/10 border-slate-500/20',
+  const statusStyle: Record<string, string> = {
+    completed: 'text-emerald-600 bg-emerald-50 border-emerald-200',
+    running:   'text-blue-600 bg-blue-50 border-blue-200',
+    pending:   'text-amber-600 bg-amber-50 border-amber-200',
+    failed:    'text-red-600 bg-red-50 border-red-200',
+    cancelled: 'text-slate-500 bg-slate-100 border-slate-200',
   }
 
   const duration = (() => {
     if (!job.started_at || !job.completed_at) return '—'
-    const secs = Math.round((new Date(job.completed_at).getTime() - new Date(job.started_at).getTime()) / 1000)
+    const secs = Math.round(
+      (new Date(job.completed_at).getTime() - new Date(job.started_at).getTime()) / 1000
+    )
     if (secs < 60) return `${secs}s`
     return `${Math.floor(secs / 60)}m ${secs % 60}s`
   })()
@@ -228,7 +238,9 @@ export function JobDetailModal({ job, onClose, onRecover }: JobDetailProps) {
               <p className="text-[11px] text-slate-500 font-mono">{job.id.slice(0, 16)}…</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition"><X size={18} /></button>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-900 transition">
+            <X size={18} />
+          </button>
         </div>
 
         <div className="px-6 py-5 space-y-4">
@@ -236,26 +248,38 @@ export function JobDetailModal({ job, onClose, onRecover }: JobDetailProps) {
           {/* Status Badge */}
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-500">Status</span>
-            <span className={`text-[11px] px-3 py-1 rounded-full border font-semibold capitalize ${statusColor[job.status] ?? ''}`}>
+            <span className={`text-[11px] px-3 py-1 rounded-full border font-semibold capitalize ${statusStyle[job.status] ?? ''}`}>
               {job.status}
             </span>
           </div>
 
           {/* Details Grid */}
           <div className="grid grid-cols-2 gap-3">
-            <DetailRow icon={<FileText size={12} />}  label="Module"  value={MODULE_LABELS[job.module_name] ?? job.module_name} />
-            <DetailRow icon={<Shield   size={12} />}  label="Type"    value={job.backup_type} />
-            <DetailRow icon={<Clock    size={12} />}  label="Started" value={fmt(job.started_at)} />
-            <DetailRow icon={<Clock    size={12} />}  label="Ended"   value={fmt(job.completed_at)} />
-            <DetailRow icon={<Clock    size={12} />}  label="Duration" value={duration} />
-            <DetailRow icon={<HardDrive size={12} />} label="Size"    value={formatBytes(job.total_size_bytes)} />
+            <DetailRow icon={<FileText  size={12} />} label="Module"   value={MODULE_LABELS[job.module_name] ?? job.module_name} />
+            <DetailRow icon={<Shield    size={12} />} label="Type"     value={job.backup_type} />
+            <DetailRow icon={<Clock     size={12} />} label="Started"  value={fmt(job.started_at)} />
+            <DetailRow icon={<Clock     size={12} />} label="Ended"    value={fmt(job.completed_at)} />
+            <DetailRow icon={<Clock     size={12} />} label="Duration" value={duration} />
+            <DetailRow icon={<HardDrive size={12} />} label="Size"     value={formatBytes(job.total_size_bytes)} />
           </div>
+
+          {/* Download link — only shown when backup completed and URL is available */}
+          {job.status === 'completed' && job.download_url && (
+            <a
+              href={job.download_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 w-full py-2 text-[12px] font-medium text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-xl transition"
+            >
+              <HardDrive size={13} /> Download Backup ZIP
+            </a>
+          )}
 
           {/* Error */}
           {job.error_message && (
-            <div className="flex items-start gap-2 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl">
-              <AlertTriangle size={14} className="text-red-400 mt-0.5 shrink-0" />
-              <p className="text-[11px] text-red-300 font-mono break-all">{job.error_message}</p>
+            <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+              <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
+              <p className="text-[11px] text-red-700 font-mono break-all">{job.error_message}</p>
             </div>
           )}
 
@@ -285,7 +309,7 @@ export function JobDetailModal({ job, onClose, onRecover }: JobDetailProps) {
 function DetailRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-slate-500 mb-1">
+      <div className="flex items-center gap-1.5 text-slate-400 mb-1">
         {icon}
         <span className="text-[10px] font-medium">{label}</span>
       </div>

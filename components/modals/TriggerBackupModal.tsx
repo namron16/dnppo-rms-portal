@@ -4,15 +4,15 @@ import { useState } from 'react'
 import { Play, X, AlertTriangle, Shield, CheckCircle2 } from 'lucide-react'
 
 const MODULES = [
-  { key: 'master_documents',    label: 'Master Documents',    encrypted: false },
-  { key: 'admin_orders',        label: 'Admin Orders',        encrypted: false },
-  { key: 'daily_journals',      label: 'Daily Journals',      encrypted: false },
-  { key: 'e_library',           label: 'E-Library',           encrypted: false },
-  { key: 'classified_documents',label: 'Classified Documents',encrypted: true  },
-  { key: 'archived_files',      label: 'Archived Files',      encrypted: false },
-  { key: 'admin_logs',          label: 'Admin Logs',          encrypted: false },
-  { key: 'personnel_201',       label: '201 Files',           encrypted: false },
-  { key: 'organization',        label: 'Organization Chart',  encrypted: false },
+  { key: 'master_documents',     label: 'Master Documents',    encrypted: false },
+  { key: 'admin_orders',         label: 'Admin Orders',        encrypted: false },
+  { key: 'daily_journals',       label: 'Daily Journals',      encrypted: false },
+  { key: 'e_library',            label: 'E-Library',           encrypted: false },
+  { key: 'classified_documents', label: 'Classified Documents',encrypted: true  },
+  { key: 'archived_files',       label: 'Archived Files',      encrypted: false },
+  { key: 'admin_logs',           label: 'Admin Logs',          encrypted: false },
+  { key: 'personnel_201',        label: '201 Files',           encrypted: false },
+  { key: 'organization',         label: 'Organization Chart',  encrypted: false },
 ]
 
 const BACKUP_TYPES = ['full', 'incremental', 'differential', 'manual'] as const
@@ -24,11 +24,11 @@ interface Props {
 }
 
 export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
-  const [module_name,  setModuleName]  = useState('')
-  const [backup_type,  setBackupType]  = useState<typeof BACKUP_TYPES[number]>('full')
-  const [loading,      setLoading]     = useState(false)
-  const [error,        setError]       = useState<string | null>(null)
-  const [result,       setResult]      = useState<{ jobId: string; message: string } | null>(null)
+  const [module_name, setModuleName] = useState('')
+  const [backup_type, setBackupType] = useState<typeof BACKUP_TYPES[number]>('full')
+  const [loading,     setLoading]    = useState(false)
+  const [error,       setError]      = useState<string | null>(null)
+  const [result,      setResult]     = useState<{ jobId: string; message: string } | null>(null)
 
   if (!open) return null
 
@@ -39,10 +39,15 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
     setError(null)
     setLoading(true)
     try {
-      const res  = await fetch('/api/backup/trigger', {
+      const res = await fetch('/api/backup/trigger', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ module_name, backup_type, triggered_by: 'admin' }),
+        // FIX: removed hardcoded triggered_by: 'admin' from the request body.
+        // The API route (trigger/route.ts) derives triggered_by from the
+        // authenticated session via requireAdmin() + supabase.auth.getUser(),
+        // so sending it from the client was redundant and potentially misleading
+        // in the backup_jobs log if auth was ever bypassed.
+        body: JSON.stringify({ module_name, backup_type }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Backup failed to start')
@@ -55,8 +60,11 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
   }
 
   const handleClose = () => {
-    setModuleName(''); setBackupType('full')
-    setError(null); setResult(null); setLoading(false)
+    setModuleName('')
+    setBackupType('full')
+    setError(null)
+    setResult(null)
+    setLoading(false)
     onClose()
   }
 
@@ -88,8 +96,8 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
           {result ? (
             <div className="space-y-4">
               <div className="flex flex-col items-center gap-3 py-4">
-                <div className="w-12 h-12 rounded-full bg-emerald-500/15 flex items-center justify-center">
-                  <CheckCircle2 size={24} className="text-emerald-400" />
+                <div className="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center">
+                  <CheckCircle2 size={24} className="text-emerald-500" />
                 </div>
                 <p className="text-sm font-semibold text-slate-900 text-center">{result.message}</p>
                 <p className="text-[11px] text-slate-500 font-mono bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
@@ -119,7 +127,9 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
                           : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 hover:text-slate-900'
                       }`}
                     >
-                      {m.encrypted && <Shield size={11} className="text-amber-500 shrink-0" />}
+                      {m.encrypted && (
+                        <Shield size={11} className="text-amber-400 shrink-0" />
+                      )}
                       <span className="truncate">{m.label}</span>
                     </button>
                   ))}
@@ -150,7 +160,8 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
               {selectedMod?.encrypted && (
                 <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800">
                   <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                  This module uses double AES-256-GCM encryption. Ensure CLASSIFIED_BACKUP_SECRET is set.
+                  This module uses double AES-256-GCM encryption. Ensure{' '}
+                  <code className="font-mono">CLASSIFIED_BACKUP_SECRET</code> is set.
                 </div>
               )}
 

@@ -10,10 +10,10 @@ import {
   Settings, Archive, FileText, Activity,
 } from 'lucide-react'
 
-import { TriggerBackupModal }   from '@/components/modals/TriggerBackupModal'
-import { RecoverModal }   from '@/components/modals/RecoverModal'
-import { ScheduleModal }        from '@/components/modals/ScheduleModal'
-import { NotificationsModal, JobDetailModal }   from '@/components/modals/NotificationsModal'
+import { TriggerBackupModal } from '@/components/modals/TriggerBackupModal'
+import { RecoverModal }       from '@/components/modals/RecoverModal'
+import { ScheduleModal }      from '@/components/modals/ScheduleModal'
+import { NotificationsModal, JobDetailModal } from '@/components/modals/NotificationsModal'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -38,13 +38,23 @@ interface BackupJob {
   completed_at:     string | null
   total_size_bytes: number | null
   error_message:    string | null
+  // FIX: added download_url — engine.ts now stores this after every successful backup
+  download_url:     string | null
 }
 
+// FIX: extended to match the full ScheduleModal.ModuleStatus interface so the
+// pre-fill useEffect in ScheduleModal can restore all saved config fields.
 interface ModuleStatus {
-  module_name:        string
-  is_enabled:         boolean
-  frequency:          string
-  last_configured_at: string | null
+  module_name:         string
+  is_enabled:          boolean
+  frequency:           string
+  backup_hour:         number | null
+  backup_type:         string | null
+  include_attachments: boolean | null
+  encrypt_backup:      boolean | null
+  retention_days:      number | null
+  custom_cron:         string | null
+  last_configured_at:  string | null
 }
 
 interface HealthData {
@@ -57,35 +67,35 @@ interface HealthData {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MODULE_LABELS: Record<string, string> = {
-  master_documents:    'Master Documents',
-  admin_orders:        'Admin Orders',
-  daily_journals:      'Daily Journals',
-  e_library:           'E-Library',
-  classified_documents:'Classified Documents',
-  archived_files:      'Archived Files',
-  admin_logs:          'Admin Logs',
-  personnel_201:       '201 Files',
-  organization:        'Organization Chart',
+  master_documents:     'Master Documents',
+  admin_orders:         'Admin Orders',
+  daily_journals:       'Daily Journals',
+  e_library:            'E-Library',
+  classified_documents: 'Classified Documents',
+  archived_files:       'Archived Files',
+  admin_logs:           'Admin Logs',
+  personnel_201:        '201 Files',
+  organization:         'Organization Chart',
 }
 
 const MODULE_ICONS: Record<string, React.ReactNode> = {
-  master_documents:    <FileText  size={14} />,
-  admin_orders:        <Archive   size={14} />,
-  daily_journals:      <Calendar  size={14} />,
-  e_library:           <Database  size={14} />,
-  classified_documents:<Shield    size={14} />,
-  archived_files:      <Archive   size={14} />,
-  admin_logs:          <Activity  size={14} />,
-  personnel_201:       <FileText  size={14} />,
-  organization:        <Database  size={14} />,
+  master_documents:     <FileText  size={14} />,
+  admin_orders:         <Archive   size={14} />,
+  daily_journals:       <Calendar  size={14} />,
+  e_library:            <Database  size={14} />,
+  classified_documents: <Shield    size={14} />,
+  archived_files:       <Archive   size={14} />,
+  admin_logs:           <Activity  size={14} />,
+  personnel_201:        <FileText  size={14} />,
+  organization:         <Database  size={14} />,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatBytes(bytes: number | null): string {
   if (!bytes) return '—'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024)       return `${bytes} B`
+  if (bytes < 1048576)    return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`
   return `${(bytes / 1073741824).toFixed(2)} GB`
 }
@@ -96,10 +106,27 @@ function formatRelative(iso: string | null): string {
   const mins = Math.floor(diff / 60000)
   const hrs  = Math.floor(mins / 60)
   const days = Math.floor(hrs  / 24)
-  if (mins < 1)   return 'just now'
-  if (mins < 60)  return `${mins}m ago`
-  if (hrs  < 24)  return `${hrs}h ago`
+  if (mins < 1)  return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  if (hrs  < 24) return `${hrs}h ago`
   return `${days}d ago`
+}
+
+// FIX: helper to summarise configured backup hours across all enabled modules
+function summariseCronSchedule(moduleStatus: ModuleStatus[]): string {
+  const enabled = moduleStatus.filter(m => m.is_enabled)
+  if (enabled.length === 0) return 'No modules active'
+
+  const hours = [...new Set(enabled.map(m => m.backup_hour ?? 2))].sort((a, b) => a - b)
+
+  const fmt = (h: number) => {
+    const period  = h >= 12 ? 'PM' : 'AM'
+    const display = h % 12 === 0 ? 12 : h % 12
+    return `${display}:00 ${h >= 12 ? 'PM' : 'AM'}`
+  }
+
+  if (hours.length === 1) return `${fmt(hours[0])} · Vercel cron`
+  return `${fmt(hours[0])}–${fmt(hours[hours.length - 1])} · Vercel cron`
 }
 
 function statusColor(status: string) {
@@ -125,20 +152,20 @@ function statusDot(status: string) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function BackupRecoveryPage() {
-  const { user }  = useAuth()
-  const router    = useRouter()
+  const { user } = useAuth()
+  const router   = useRouter()
 
-  const [health,    setHealth]    = useState<HealthData | null>(null)
-  const [loading,   setLoading]   = useState(true)
-  const [refreshing,setRefreshing]= useState(false)
-  const [error,     setError]     = useState<string | null>(null)
+  const [health,     setHealth]     = useState<HealthData | null>(null)
+  const [loading,    setLoading]    = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [error,      setError]      = useState<string | null>(null)
 
   // Modal state
-  const [triggerOpen,       setTriggerOpen]       = useState(false)
-  const [recoverOpen,       setRecoverOpen]        = useState(false)
-  const [scheduleOpen,      setScheduleOpen]       = useState(false)
-  const [notifOpen,         setNotifOpen]          = useState(false)
-  const [selectedJob,       setSelectedJob]        = useState<BackupJob | null>(null)
+  const [triggerOpen,              setTriggerOpen]              = useState(false)
+  const [recoverOpen,              setRecoverOpen]              = useState(false)
+  const [scheduleOpen,             setScheduleOpen]             = useState(false)
+  const [notifOpen,                setNotifOpen]                = useState(false)
+  const [selectedJob,              setSelectedJob]              = useState<BackupJob | null>(null)
   const [selectedModuleForRecover, setSelectedModuleForRecover] = useState<string>('')
 
   // Guard: admin only
@@ -172,8 +199,8 @@ export default function BackupRecoveryPage() {
 
   if (user?.role !== 'admin') return null
 
-  const score        = health?.summary.health_score ?? 0
-  const scoreColor   = score >= 90 ? '#34d399' : score >= 70 ? '#fbbf24' : '#f87171'
+  const score       = health?.summary.health_score ?? 0
+  const scoreColor  = score >= 90 ? '#34d399' : score >= 70 ? '#fbbf24' : '#f87171'
   const circumference = 2 * Math.PI * 40
 
   return (
@@ -309,11 +336,12 @@ export default function BackupRecoveryPage() {
                   sub={`of ${health.moduleStatus.length} configured`}
                   color="purple"
                 />
+                {/* FIX: was hardcoded "2:00 AM". Now reads actual configured hours. */}
                 <StatCard
                   icon={<Clock size={18} className="text-sky-400" />}
                   label="Cron Schedule"
-                  value="2:00 AM"
-                  sub="Daily · Vercel cron"
+                  value={summariseCronSchedule(health.moduleStatus)}
+                  sub="Per module config"
                   color="sky"
                 />
               </div>
@@ -362,7 +390,8 @@ export default function BackupRecoveryPage() {
                         <td colSpan={6} className="text-center py-10 text-slate-500">No backup jobs yet</td>
                       </tr>
                     ) : health.recentJobs.map(job => (
-                      <tr key={job.id}
+                      <tr
+                        key={job.id}
                         className="border-b border-slate-100 hover:bg-slate-50 transition cursor-pointer"
                         onClick={() => setSelectedJob(job)}
                       >
@@ -381,7 +410,7 @@ export default function BackupRecoveryPage() {
                         </td>
                         <td className="px-4 py-3 text-slate-400">{formatRelative(job.started_at)}</td>
                         <td className="px-4 py-3 text-slate-400">{formatBytes(job.total_size_bytes)}</td>
-                        <td className="px-4 py-3 text-slate-600">
+                        <td className="px-4 py-3 text-slate-300">
                           <ChevronRight size={14} />
                         </td>
                       </tr>
@@ -417,13 +446,15 @@ export default function BackupRecoveryPage() {
         open={notifOpen}
         onClose={() => { setNotifOpen(false); fetchHealth(true) }}
       />
+      {/* FIX: capture module_name before clearing selectedJob to avoid closure staleness */}
       {selectedJob && (
         <JobDetailModal
           job={selectedJob}
           onClose={() => setSelectedJob(null)}
           onRecover={() => {
+            const moduleName = selectedJob.module_name
             setSelectedJob(null)
-            setSelectedModuleForRecover(selectedJob.module_name)
+            setSelectedModuleForRecover(moduleName)
             setRecoverOpen(true)
           }}
         />
@@ -448,16 +479,16 @@ function StatCard({ icon, label, value, sub, color }: {
   return (
     <div className={`rounded-xl border p-4 ${bg[color] ?? 'bg-white border-slate-200'}`}>
       <div className="flex items-center gap-2 mb-2">{icon}<span className="text-[11px] text-slate-500 font-medium">{label}</span></div>
-      <p className="text-xl font-bold text-slate-900">{value}</p>
+      <p className="text-xl font-bold text-slate-900 truncate">{value}</p>
       <p className="text-[10px] text-slate-500 mt-0.5">{sub}</p>
     </div>
   )
 }
 
 function ModuleCard({ mod, recentJob, onRestore, onSchedule }: {
-  mod: ModuleStatus
+  mod:        ModuleStatus
   recentJob?: BackupJob
-  onRestore: () => void
+  onRestore:  () => void
   onSchedule: () => void
 }) {
   return (

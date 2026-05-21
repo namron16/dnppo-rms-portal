@@ -7,42 +7,42 @@ import type { BackupModuleName } from './modules'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const RMS_VERSION = '1.4.2'
-const MANIFEST_VERSION = '1.0'
+const RMS_VERSION       = '1.4.2'
+const MANIFEST_VERSION  = '1.0'
 const ENCRYPTION_ALGORITHM = 'AES-256-GCM'
-const INTEGRITY_ALGORITHM = 'SHA-256'
+const INTEGRITY_ALGORITHM  = 'SHA-256'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface AttachmentEntry {
   attachment_id: string
   title:         string
-  file:          string            // relative path inside backup folder
-  checksum:      string            // SHA-256 of the file buffer
+  file:          string
+  checksum:      string
 }
 
 export interface DocumentAttachmentGroup {
   document_id:    string
   document_title: string
-  main_file:      string           // relative path
+  main_file:      string
   main_checksum:  string
   attachments:    AttachmentEntry[]
 }
 
 export interface ManifestDatabaseSection {
-  table:            string
-  record_count:     number
-  file:             string          // relative path
-  checksum_sha256:  string
+  table:           string
+  record_count:    number
+  file:            string
+  checksum_sha256: string
 }
 
 export interface ManifestContents {
   database:    ManifestDatabaseSection | ManifestDatabaseSection[]
   attachments: {
-    document_count:    number
-    attachment_count:  number
-    total_size_bytes:  number
-    files:             DocumentAttachmentGroup[]
+    document_count:   number
+    attachment_count: number
+    total_size_bytes: number
+    files:            DocumentAttachmentGroup[]
   }
 }
 
@@ -53,23 +53,23 @@ export interface BackupManifest {
   module:           BackupModuleName
   backup_type:      'full' | 'incremental' | 'differential' | 'manual'
   frequency:        'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom' | 'manual'
-  created_at:       string                  // ISO 8601
-  created_by:       string                  // 'scheduler' | 'P1' | 'system'
+  created_at:       string
+  created_by:       string
   environment:      string
   encryption: {
     algorithm: string
     key_id:    string
     encrypted: boolean
   }
-  contents:   ManifestContents
+  contents:  ManifestContents
   integrity: {
-    manifest_checksum: string               // SHA-256 of the manifest itself (computed after)
+    manifest_checksum: string
     algorithm:         string
   }
   statistics: {
-    total_files:       number
-    total_size_bytes:  number
-    duration_seconds:  number
+    total_files:      number
+    total_size_bytes: number
+    duration_seconds: number
   }
 }
 
@@ -81,28 +81,20 @@ export interface GenerateManifestOptions {
   backup_type:        'full' | 'incremental' | 'differential' | 'manual'
   frequency?:         'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom' | 'manual'
   folderName:         string
-  backupFiles:        Map<string, Buffer>   // relative path → file buffer
+  backupFiles:        Map<string, Buffer>
   attachmentManifest: DocumentAttachmentGroup[]
   now:                Date
-  triggeredBy?:       string               // 'scheduler' | 'P1' | 'system'
+  triggeredBy?:       string
+  /**
+   * Record counts per table name, supplied by the engine after exporting.
+   * If not provided, the manifest will still try to infer counts from the
+   * JSON buffers in backupFiles (best-effort).
+   */
+  recordCounts?:      Record<string, number>
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-/**
- * Generates the MANIFEST.json content for a completed backup.
- *
- * Steps:
- *  1. Build database section(s) — one entry per .json.enc / .xlsx file
- *  2. Build attachments section from the attachment manifest
- *  3. Compute per-file SHA-256 checksums from backupFiles map
- *  4. Compute manifest integrity checksum (SHA-256 of the full JSON string)
- *  5. Return the fully typed BackupManifest object
- *
- * Usage (from engine.ts):
- *   const manifest = await generateManifest({ ... })
- *   backupFiles.set('MANIFEST.json', Buffer.from(JSON.stringify(manifest, null, 2)))
- */
 export async function generateManifest(
   opts: GenerateManifestOptions
 ): Promise<BackupManifest> {
@@ -114,17 +106,13 @@ export async function generateManifest(
     backupFiles,
     attachmentManifest,
     now,
-    triggeredBy = 'scheduler',
+    triggeredBy  = 'scheduler',
+    recordCounts = {},
   } = opts
 
-  // ── 1. Build database section(s) ──────────────────────────────────────────
-  const databaseEntries = buildDatabaseSections(module_name, backupFiles)
-
-  // ── 2. Build attachment section ───────────────────────────────────────────
+  const databaseEntries   = buildDatabaseSections(module_name, backupFiles, recordCounts)
   const attachmentSection = buildAttachmentSection(attachmentManifest, backupFiles)
-
-  // ── 3. Assemble manifest (without final checksum) ─────────────────────────
-  const keyId = deriveKeyId(now)
+  const keyId             = deriveKeyId(now)
 
   const manifest: BackupManifest = {
     manifest_version: MANIFEST_VERSION,
@@ -142,25 +130,21 @@ export async function generateManifest(
       encrypted: true,
     },
     contents: {
-      database:    databaseEntries.length === 1 ? databaseEntries[0] : databaseEntries as any,
+      database:    databaseEntries.length === 1 ? databaseEntries[0] : (databaseEntries as any),
       attachments: attachmentSection,
     },
     integrity: {
-      manifest_checksum: '',   // placeholder — filled below
+      manifest_checksum: '',
       algorithm:         INTEGRITY_ALGORITHM,
     },
     statistics: {
       total_files:      backupFiles.size,
       total_size_bytes: totalSize(backupFiles),
-      duration_seconds: 0,     // engine fills this in after generateManifest returns
+      duration_seconds: 0, // filled in by finalizeManifest()
     },
   }
 
-  // ── 4. Compute manifest checksum ─────────────────────────────────────────
-  // Checksum is over the manifest content excluding the checksum field itself.
-  const withoutChecksum = JSON.stringify({ ...manifest, integrity: { ...manifest.integrity, manifest_checksum: '' } })
-  manifest.integrity.manifest_checksum = sha256(Buffer.from(withoutChecksum))
-
+  manifest.integrity.manifest_checksum = computeManifestChecksum(manifest)
   return manifest
 }
 
@@ -168,31 +152,46 @@ export async function generateManifest(
 
 /**
  * Builds one ManifestDatabaseSection per database file in the backup.
- * Matches any file under "database/" prefix.
+ *
+ * FIX: record_count is now populated from:
+ *   1. The recordCounts map passed in from the engine (most accurate).
+ *   2. Fallback: parse the JSON buffer to count rows (best-effort for
+ *      cases where the engine didn't pass explicit counts).
+ *   3. Last resort: 0 (matches old behaviour, but now clearly documented).
  */
 function buildDatabaseSections(
-  module_name: BackupModuleName,
-  backupFiles: Map<string, Buffer>
+  module_name:  BackupModuleName,
+  backupFiles:  Map<string, Buffer>,
+  recordCounts: Record<string, number>
 ): ManifestDatabaseSection[] {
   const sections: ManifestDatabaseSection[] = []
 
   for (const [relativePath, buffer] of backupFiles) {
     if (!relativePath.startsWith('database/')) continue
 
-    // Derive table name from filename:
-    // e.g. "database/master_documents_2026-05-16T02-00-00Z.json.enc" → "master_documents"
-    const filename = relativePath.replace('database/', '')
+    const filename  = relativePath.replace('database/', '')
     const tableName = extractTableName(filename)
+
+    // Try explicit count first, then parse the buffer, then fall back to 0
+    let count = recordCounts[tableName] ?? 0
+    if (count === 0 && filename.endsWith('.json.enc') === false) {
+      // Only parseable if it's a plain JSON (not encrypted)
+      try {
+        const parsed = JSON.parse(buffer.toString('utf8'))
+        if (Array.isArray(parsed)) count = parsed.length
+      } catch {
+        // Encrypted or malformed — leave as 0
+      }
+    }
 
     sections.push({
       table:           tableName,
-      record_count:    0,    // caller should update this if known; or parse the file
+      record_count:    count,
       file:            relativePath,
       checksum_sha256: sha256(buffer),
     })
   }
 
-  // Fallback: if no database files were found, return an empty placeholder
   if (sections.length === 0) {
     sections.push({
       table:           module_name,
@@ -205,23 +204,16 @@ function buildDatabaseSections(
   return sections
 }
 
-/**
- * Builds the attachments section.
- * Re-computes per-file checksums from the backupFiles map so they're always
- * consistent with the actual bytes that were written.
- */
 function buildAttachmentSection(
   attachmentManifest: DocumentAttachmentGroup[],
-  backupFiles: Map<string, Buffer>
+  backupFiles:        Map<string, Buffer>
 ): ManifestContents['attachments'] {
   let attachmentCount = 0
   let totalSizeBytes  = 0
 
   const files = attachmentManifest.map(group => {
-    // Re-check main file checksum from actual buffer
-    const mainBuf = backupFiles.get(group.main_file)
+    const mainBuf      = backupFiles.get(group.main_file)
     const mainChecksum = mainBuf ? sha256(mainBuf) : group.main_checksum
-
     if (mainBuf) totalSizeBytes += mainBuf.length
 
     const resolvedAttachments: AttachmentEntry[] = group.attachments.map(att => {
@@ -260,37 +252,33 @@ function buildAttachmentSection(
  */
 export function verifyManifestIntegrity(manifest: BackupManifest): boolean {
   const storedChecksum = manifest.integrity.manifest_checksum
-
-  const withoutChecksum = JSON.stringify({
-    ...manifest,
-    integrity: { ...manifest.integrity, manifest_checksum: '' },
-  })
-
-  const recomputed = sha256(Buffer.from(withoutChecksum))
+  const recomputed     = computeManifestChecksum(manifest)
   return recomputed === storedChecksum
 }
 
 /**
- * Updates the duration_seconds field after the backup engine finishes.
- * Call this just before writing the manifest buffer to backupFiles.
+ * Updates duration_seconds and recomputes the manifest checksum.
+ * Must be called by the engine after the backup completes, before writing
+ * the final MANIFEST.json buffer to backupFiles.
  */
 export function finalizeManifest(
-  manifest: BackupManifest,
+  manifest:        BackupManifest,
   durationSeconds: number
 ): BackupManifest {
   manifest.statistics.duration_seconds = durationSeconds
-
-  // Recompute checksum since duration changed
-  const withoutChecksum = JSON.stringify({
-    ...manifest,
-    integrity: { ...manifest.integrity, manifest_checksum: '' },
-  })
-  manifest.integrity.manifest_checksum = sha256(Buffer.from(withoutChecksum))
-
+  manifest.integrity.manifest_checksum = computeManifestChecksum(manifest)
   return manifest
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
+
+function computeManifestChecksum(manifest: BackupManifest): string {
+  const withoutChecksum = JSON.stringify({
+    ...manifest,
+    integrity: { ...manifest.integrity, manifest_checksum: '' },
+  })
+  return sha256(Buffer.from(withoutChecksum))
+}
 
 function sha256(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex')
@@ -300,29 +288,18 @@ function totalSize(backupFiles: Map<string, Buffer>): number {
   return Array.from(backupFiles.values()).reduce((sum, buf) => sum + buf.length, 0)
 }
 
-/**
- * Derives a monthly key identifier hint (never the actual key).
- * Format: "backup-key-YYYY-MM"
- */
 function deriveKeyId(date: Date): string {
   const yyyy = date.getUTCFullYear()
   const mm   = String(date.getUTCMonth() + 1).padStart(2, '0')
   return `backup-key-${yyyy}-${mm}`
 }
 
-/**
- * Extracts the table name from a database backup filename.
- * e.g. "master_documents_2026-05-16T02-00-00Z.json.enc" → "master_documents"
- *      "admin_logs_2026-05-16T02-00-00Z.xlsx"           → "admin_logs"
- */
 function extractTableName(filename: string): string {
-  // Strip common backup suffixes
   const cleaned = filename
     .replace(/\.json\.enc$/, '')
     .replace(/\.xlsx$/, '')
     .replace(/\.json$/, '')
 
-  // The timestamp starts with an ISO date pattern: _YYYY-MM-DD or _YYYY-MM-DDTHH
   const match = cleaned.match(/^(.+?)_\d{4}-\d{2}-\d{2}/)
   return match ? match[1] : cleaned
 }

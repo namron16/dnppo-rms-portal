@@ -1,10 +1,11 @@
+// lib/backup/engine.ts
 
-import { createHash, randomBytes, createCipheriv } from 'crypto'
+import { createHash } from 'crypto'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
 import { getDriveClient } from '@/lib/gdrive-pool/drive-client'
 import { BACKUP_MODULES, type BackupModuleName } from './modules'
-import { encryptBackupData } from './encryption'
-import { generateManifest } from './manifest'
+import { encryptBackupData, doubleEncryptClassified } from './encryption'
+import { generateManifest, finalizeManifest } from './manifest'
 import { exportAdminLogsAsXlsx } from './exporters/logs-exporter'
 import { notifyBackupResult } from './notifications'
 
@@ -15,20 +16,20 @@ export interface BackupRunOptions {
 }
 
 export interface BackupResult {
-  success:       boolean
-  jobId:         string
-  folderName:    string
-  fileCount:     number
-  totalBytes:    number
-  durationSecs:  number
+  success:          boolean
+  jobId:            string
+  folderName:       string
+  fileCount:        number
+  totalBytes:       number
+  durationSecs:     number
   manifestChecksum: string
-  error?:        string
+  error?:           string
 }
 
 /**
  * Runs a complete backup for a single module.
  * Downloads database records + all file attachments from Google Drive.
- * Returns a structured zip-ready object.
+ * Packages everything as a ZIP and stores it to Supabase Storage.
  */
 export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupResult> {
   const db = getServiceClient()
@@ -37,7 +38,9 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
   const moduleDef = BACKUP_MODULES[module_name]
 
   // Update job status to running
-  await db.from('backup_jobs').update({ status: 'running', started_at: new Date().toISOString() })
+  await db
+    .from('backup_jobs')
+    .update({ status: 'running', started_at: new Date().toISOString() })
     .eq('id', jobId)
 
   try {
@@ -49,7 +52,7 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
     console.log(`[Backup] Exporting database for module: ${module_name}`)
 
     if (module_name === 'admin_logs') {
-      // Admin logs → XLSX
+      // Admin logs → XLSX (unencrypted; no sensitive PII, used for audit review)
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
       const xlsxBuf = await exportAdminLogsAsXlsx(thirtyDaysAgo, now)
       backupFiles.set(`database/admin_logs_${timestamp(now)}.xlsx`, xlsxBuf)
@@ -57,7 +60,12 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
       for (const tableName of moduleDef.tables) {
         const records = await exportTable(tableName, moduleDef)
         const json = JSON.stringify(records, null, 2)
-        const encrypted = await encryptBackupData(Buffer.from(json))
+
+        // FIX: apply double-encryption for classified_documents
+        const encrypted = (moduleDef as any).extra_encryption
+          ? await doubleEncryptClassified(Buffer.from(json))
+          : await encryptBackupData(Buffer.from(json))
+
         backupFiles.set(`database/${tableName}_${timestamp(now)}.json.enc`, encrypted)
       }
     }
@@ -65,22 +73,11 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
     // ── 2. Download file attachments from Google Drive ──────────────────────
     let attachmentManifest: any[] = []
 
-    if (moduleDef.attachment_table && moduleDef.attachment_fk) {
+    if ((moduleDef as any).attachment_table && (moduleDef as any).attachment_fk) {
       console.log(`[Backup] Downloading attachments for ${module_name}`)
-      attachmentManifest = await downloadAttachments({
-        module_name,
-        moduleDef,
-        backupFiles,
-        now,
-      })
-    } else if (moduleDef.gdrive_category) {
-      // Modules without a separate attachment table — download from records table
-      attachmentManifest = await downloadFromRecordsTable({
-        module_name,
-        moduleDef,
-        backupFiles,
-        now,
-      })
+      attachmentManifest = await downloadAttachments({ module_name, moduleDef, backupFiles, now })
+    } else if ((moduleDef as any).gdrive_category) {
+      attachmentManifest = await downloadFromRecordsTable({ module_name, moduleDef, backupFiles, now })
     }
 
     // ── 3. Generate manifest ─────────────────────────────────────────────────
@@ -94,47 +91,50 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
       now,
     })
 
-    backupFiles.set('MANIFEST.json', Buffer.from(JSON.stringify(manifest, null, 2)))
+    // ── 4. Finalize manifest with real duration ───────────────────────────────
+    // FIX: was never called before; duration was always 0 in the manifest.
+    const durationSecs = Math.round((Date.now() - start) / 1000)
+    const finalManifest = finalizeManifest(manifest, durationSecs)
+    backupFiles.set('MANIFEST.json', Buffer.from(JSON.stringify(finalManifest, null, 2)))
 
-    // ── 4. Generate backup log ───────────────────────────────────────────────
+    // ── 5. Generate backup log ───────────────────────────────────────────────
     const logContent = generateBackupLog({ jobId, module_name, fileCount: backupFiles.size, now })
     backupFiles.set(`logs/backup_log_${timestamp(now)}.txt`, Buffer.from(logContent))
 
-    // ── 5. Package as ZIP ────────────────────────────────────────────────────
+    // ── 6. Package as ZIP ────────────────────────────────────────────────────
     const zipBlob = await packageAsZip(folderName, backupFiles)
 
-    // ── 6. Compute manifest checksum ─────────────────────────────────────────
+    // ── 7. Compute manifest checksum ─────────────────────────────────────────
     const manifestBuf = backupFiles.get('MANIFEST.json')!
     const manifestChecksum = createHash('sha256').update(manifestBuf).digest('hex')
 
-    const durationSecs = Math.round((Date.now() - start) / 1000)
     const totalBytes = Array.from(backupFiles.values()).reduce((s, b) => s + b.length, 0)
 
-    // ── 7. Update job record ─────────────────────────────────────────────────
+    // ── 8. Store ZIP to Supabase Storage ─────────────────────────────────────
+    // FIX: was a no-op stub; now actually uploads the ZIP.
+    const downloadUrl = await storeBackupBlob(jobId, folderName, zipBlob)
+
+    // ── 9. Update job record ─────────────────────────────────────────────────
     await db.from('backup_jobs').update({
-      status:           'completed',
-      completed_at:     new Date().toISOString(),
-      duration_seconds: durationSecs,
+      status:             'completed',
+      completed_at:       new Date().toISOString(),
+      duration_seconds:   durationSecs,
       backup_folder_name: folderName,
-      file_count:       backupFiles.size,
-      total_size_bytes: totalBytes,
-      manifest_checksum: manifestChecksum,
+      file_count:         backupFiles.size,
+      total_size_bytes:   totalBytes,
+      manifest_checksum:  manifestChecksum,
+      download_url:       downloadUrl,
     }).eq('id', jobId)
 
-    // ── 8. Notify ────────────────────────────────────────────────────────────
+    // ── 10. Notify ───────────────────────────────────────────────────────────
     await notifyBackupResult({
       jobId,
       module_name,
-      success: true,
+      success:     true,
       folderName,
       durationSecs,
       totalBytes,
     })
-
-    // ── 9. Return ZIP for client download ────────────────────────────────────
-    // The actual file download is initiated from the client using the returned blob URL
-    // Store blob temporarily via a signed URL or return base64 for small backups.
-    await storeBackupBlob(jobId, zipBlob)
 
     return {
       success:          true,
@@ -180,7 +180,6 @@ async function exportTable(tableName: string, moduleDef: any): Promise<any[]> {
   while (true) {
     let query = db.from(tableName).select('*').range(offset, offset + PAGE_SIZE - 1)
 
-    // Apply filters (e.g. archived=true for archived_files module)
     if (moduleDef.filter) {
       Object.entries(moduleDef.filter).forEach(([key, value]) => {
         query = query.eq(key, value as any)
@@ -210,14 +209,12 @@ async function downloadAttachments(params: {
   const db = getServiceClient()
   const attachmentManifest: any[] = []
 
-  // Get all attachment rows
   const { data: attachments } = await db
     .from(moduleDef.attachment_table)
     .select('*')
 
   if (!attachments) return []
 
-  // Group by parent document
   const byDocument = new Map<string, any[]>()
   for (const att of attachments) {
     const docId = att[moduleDef.attachment_fk]
@@ -225,7 +222,6 @@ async function downloadAttachments(params: {
     byDocument.get(docId)!.push(att)
   }
 
-  // Download each file from Google Drive
   for (const [docId, atts] of byDocument) {
     const docEntry: any = { document_id: docId, attachments: [] }
 
@@ -263,7 +259,7 @@ async function downloadAttachments(params: {
   return attachmentManifest
 }
 
-// ── Helper: download from records table (for modules without attachment_table) ─
+// ── Helper: download from records table (modules without attachment_table) ─────
 async function downloadFromRecordsTable(params: {
   module_name: string
   moduleDef:   any
@@ -307,6 +303,69 @@ async function downloadFromRecordsTable(params: {
   return manifest
 }
 
+// ── Helper: store ZIP to Supabase Storage ────────────────────────────────────
+/**
+ * Uploads the backup ZIP to the 'backup-staging' Supabase Storage bucket.
+ * Files expire after 1 hour via a signed URL; for permanent storage,
+ * move to a long-lived bucket and remove the expiry.
+ *
+ * Returns the signed URL so the client can download the file.
+ */
+async function storeBackupBlob(
+  jobId:      string,
+  folderName: string,
+  blob:       Blob
+): Promise<string> {
+  const db = getServiceClient()
+  const arrayBuffer = await blob.arrayBuffer()
+  const buffer = Buffer.from(arrayBuffer)
+  const storagePath = `${folderName}/${jobId}.zip`
+
+  const { error: uploadError } = await db.storage
+    .from('backup-staging')
+    .upload(storagePath, buffer, {
+      contentType: 'application/zip',
+      upsert:      true,
+    })
+
+  if (uploadError) {
+    throw new Error(`Failed to store backup ZIP: ${uploadError.message}`)
+  }
+
+  const { data: signedData, error: signedError } = await db.storage
+    .from('backup-staging')
+    .createSignedUrl(storagePath, 60 * 60) // 1-hour expiry
+
+  if (signedError || !signedData?.signedUrl) {
+    throw new Error(`Failed to create signed URL: ${signedError?.message ?? 'unknown'}`)
+  }
+
+  return signedData.signedUrl
+}
+
+// ── Helper: package files as ZIP ─────────────────────────────────────────────
+async function packageAsZip(folderName: string, files: Map<string, Buffer>): Promise<Blob> {
+  const JSZip = (await import('jszip')).default
+  const zip = new JSZip()
+  const root = zip.folder(folderName)!
+
+  for (const [path, buffer] of files) {
+    const parts = path.split('/')
+    const fileName = parts.pop()!
+    let folder = root
+    for (const part of parts) {
+      folder = folder.folder(part) ?? folder
+    }
+    folder.file(fileName, buffer)
+  }
+
+  return zip.generateAsync({
+    type:               'blob',
+    compression:        'DEFLATE',
+    compressionOptions: { level: 6 },
+  })
+}
+
 // ── Helper: build folder name ─────────────────────────────────────────────────
 function buildFolderName(date: Date, module_name: string): string {
   const pad = (n: number) => n.toString().padStart(2, '0')
@@ -334,44 +393,11 @@ function sanitizeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._\-]/g, '_')
 }
 
-// ── Helper: store backup blob for download ────────────────────────────────────
-async function storeBackupBlob(jobId: string, blob: Blob): Promise<void> {
-  // Store temporarily in Supabase Storage (backup-staging bucket, auto-expire 1h)
-  // Or use a signed URL. Implementation depends on deployment.
-  // For local dev: store to /tmp
-  const db = getServiceClient()
-  // Update backup_jobs with a download_url field if needed
-}
-
-// ── Helper: package files as ZIP ─────────────────────────────────────────────
-async function packageAsZip(folderName: string, files: Map<string, Buffer>): Promise<Blob> {
-  // Use 'jszip' library: npm install jszip
-  const JSZip = (await import('jszip')).default
-  const zip = new JSZip()
-  const root = zip.folder(folderName)!
-
-  for (const [path, buffer] of files) {
-    const parts = path.split('/')
-    const fileName = parts.pop()!
-    let folder = root
-    for (const part of parts) {
-      folder = folder.folder(part) ?? folder
-    }
-    folder.file(fileName, buffer)
-  }
-
-  return zip.generateAsync({
-    type: 'blob',
-    compression: 'DEFLATE',
-    compressionOptions: { level: 6 },
-  })
-}
-
 function generateBackupLog(params: {
-  jobId:      string
+  jobId:       string
   module_name: string
-  fileCount:  number
-  now:        Date
+  fileCount:   number
+  now:         Date
 }): string {
   const { jobId, module_name, fileCount, now } = params
   return [
@@ -388,9 +414,10 @@ function generateBackupLog(params: {
   ].join('\n')
 }
 
+// ── Scheduled backup runner ───────────────────────────────────────────────────
 /** Runs all enabled modules for a given frequency */
 export async function runScheduledBackup(opts: {
-  frequency: 'daily' | 'weekly' | 'monthly' | 'yearly'
+  frequency:   'daily' | 'weekly' | 'monthly' | 'yearly'
   triggeredBy: string
 }): Promise<{ started: number; results: BackupResult[] }> {
   const db = getServiceClient()

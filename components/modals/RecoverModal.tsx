@@ -4,25 +4,27 @@ import { useState, useEffect } from 'react'
 import { RotateCcw, X, AlertTriangle, CheckCircle2, Shield, ChevronDown } from 'lucide-react'
 
 const MODULE_LABELS: Record<string, string> = {
-  master_documents:    'Master Documents',
-  admin_orders:        'Admin Orders',
-  daily_journals:      'Daily Journals',
-  e_library:           'E-Library',
-  classified_documents:'Classified Documents',
-  archived_files:      'Archived Files',
-  admin_logs:          'Admin Logs',
-  personnel_201:       '201 Files',
-  organization:        'Organization Chart',
+  master_documents:     'Master Documents',
+  admin_orders:         'Admin Orders',
+  daily_journals:       'Daily Journals',
+  e_library:            'E-Library',
+  classified_documents: 'Classified Documents',
+  archived_files:       'Archived Files',
+  admin_logs:           'Admin Logs',
+  personnel_201:        '201 Files',
+  organization:         'Organization Chart',
 }
 
 interface BackupJob {
-  id:            string
-  module_name:   string
-  status:        string
-  backup_type:   string
-  started_at:    string | null
-  completed_at:  string | null
+  id:               string
+  module_name:      string
+  status:           string
+  backup_type:      string
+  started_at:       string | null
+  completed_at:     string | null
   total_size_bytes: number | null
+  // FIX: added download_url — engine.ts now stores this after every successful backup
+  download_url:     string | null
 }
 
 interface RecoveryResult {
@@ -43,7 +45,7 @@ interface Props {
 
 function formatBytes(bytes: number | null) {
   if (!bytes) return '—'
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1048576)    return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`
   return `${(bytes / 1073741824).toFixed(2)} GB`
 }
@@ -72,18 +74,21 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
   }, [open, defaultModule])
 
   useEffect(() => {
-    // Auto-select the latest completed job for the chosen module
     if (module_name) {
       const latest = recentJobs
         .filter(j => j.module_name === module_name && j.status === 'completed')
-        .sort((a, b) => new Date(b.completed_at ?? 0).getTime() - new Date(a.completed_at ?? 0).getTime())[0]
+        .sort((a, b) =>
+          new Date(b.completed_at ?? 0).getTime() - new Date(a.completed_at ?? 0).getTime()
+        )[0]
       setSelectedJob(latest ?? null)
     }
   }, [module_name, recentJobs])
 
   if (!open) return null
 
-  const moduleJobs = recentJobs.filter(j => j.module_name === module_name && j.status === 'completed')
+  const moduleJobs = recentJobs.filter(
+    j => j.module_name === module_name && j.status === 'completed'
+  )
 
   const handleRecover = async () => {
     if (!selectedJob) { setError('No completed backup selected.'); return }
@@ -111,8 +116,11 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
   }
 
   const handleClose = () => {
-    setModuleName(''); setSelectedJob(null)
-    setConfirmed(false); setError(null); setResult(null)
+    setModuleName('')
+    setSelectedJob(null)
+    setConfirmed(false)
+    setError(null)
+    setResult(null)
     onClose()
   }
 
@@ -146,7 +154,7 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
                   result.validationPassed ? 'bg-emerald-50' : 'bg-amber-50'
                 }`}>
                   {result.validationPassed
-                    ? <CheckCircle2 size={24} className="text-emerald-600" />
+                    ? <CheckCircle2  size={24} className="text-emerald-600" />
                     : <AlertTriangle size={24} className="text-amber-600" />
                   }
                 </div>
@@ -212,28 +220,45 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
-                      {moduleJobs.map(job => (
-                        <button
-                          key={job.id}
-                          onClick={() => setSelectedJob(job)}
-                          className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition ${
-                            selectedJob?.id === job.id
-                              ? 'bg-slate-900 border-slate-900'
-                              : 'bg-white border-slate-200 hover:border-slate-300'
-                          }`}
-                        >
-                          <div className="space-y-0.5">
-                            <p className="text-[12px] font-semibold text-slate-900 capitalize">{job.backup_type} backup</p>
-                            <p className="text-[11px] text-slate-400">{fmt(job.completed_at)}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-[11px] text-slate-600">{formatBytes(job.total_size_bytes)}</p>
-                            {selectedJob?.id === job.id && (
-                              <Shield size={11} className="text-amber-400 ml-auto mt-1" />
-                            )}
-                          </div>
-                        </button>
-                      ))}
+                      {moduleJobs.map(job => {
+                        const isSelected = selectedJob?.id === job.id
+                        return (
+                          <button
+                            key={job.id}
+                            onClick={() => setSelectedJob(job)}
+                            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition ${
+                              isSelected
+                                ? 'bg-slate-900 border-slate-900'
+                                : 'bg-white border-slate-200 hover:border-slate-300'
+                            }`}
+                          >
+                            <div className="space-y-0.5">
+                              {/* FIX: text colors flip to white/slate-300 when card is selected */}
+                              <p className={`text-[12px] font-semibold capitalize ${
+                                isSelected ? 'text-white' : 'text-slate-900'
+                              }`}>
+                                {job.backup_type} backup
+                              </p>
+                              <p className={`text-[11px] ${
+                                isSelected ? 'text-slate-300' : 'text-slate-400'
+                              }`}>
+                                {fmt(job.completed_at)}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              {/* FIX: size text also flips on selection */}
+                              <p className={`text-[11px] ${
+                                isSelected ? 'text-slate-300' : 'text-slate-500'
+                              }`}>
+                                {formatBytes(job.total_size_bytes)}
+                              </p>
+                              {isSelected && (
+                                <Shield size={11} className="text-amber-400 ml-auto mt-1" />
+                              )}
+                            </div>
+                          </button>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -248,7 +273,11 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
                   className="mt-0.5 accent-amber-500 w-4 h-4 rounded"
                 />
                 <span className="text-[12px] text-slate-700">
-                  I understand this will overwrite current data for <strong className="text-slate-900">{(MODULE_LABELS[module_name] ?? module_name) || '—'}</strong> and acknowledge that a rollback snapshot will be created.
+                  I understand this will overwrite current data for{' '}
+                  <strong className="text-slate-900">
+                    {(MODULE_LABELS[module_name] ?? module_name) || '—'}
+                  </strong>{' '}
+                  and acknowledge that a rollback snapshot will be created.
                 </span>
               </label>
 

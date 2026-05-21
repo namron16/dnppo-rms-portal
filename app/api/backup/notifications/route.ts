@@ -1,9 +1,17 @@
+// app/api/backup/notifications/route.ts
 import { NextResponse } from 'next/server'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
+import { requireAdmin } from '@/lib/backup/auth-guard'
 
 export const runtime = 'nodejs'
 
 export async function GET() {
+  try {
+    await requireAdmin()
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 403 })
+  }
+
   const db = getServiceClient()
   const { data, error } = await db
     .from('backup_notifications')
@@ -16,12 +24,23 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const { ids } = await request.json()
-  const db = getServiceClient()
+  try {
+    await requireAdmin()
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 403 })
+  }
 
-  await db.from('backup_notifications')
-    .update({ is_read: true })
-    .in('id', ids)
+  try {
+    const { ids } = await request.json()
+    const db = getServiceClient()
 
-  return NextResponse.json({ data: { success: true } })
+    await db
+      .from('backup_notifications')
+      .update({ is_read: true })
+      .in('id', ids)
+
+    return NextResponse.json({ data: { success: true } })
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
 }

@@ -4,28 +4,26 @@ import { useState, useEffect } from 'react'
 import { Settings, X, Save, AlertTriangle, CheckCircle2, ChevronDown } from 'lucide-react'
 
 const MODULES = [
-  { key: 'master_documents',    label: 'Master Documents'    },
-  { key: 'admin_orders',        label: 'Admin Orders'        },
-  { key: 'daily_journals',      label: 'Daily Journals'      },
-  { key: 'e_library',           label: 'E-Library'           },
-  { key: 'classified_documents',label: 'Classified Documents'},
-  { key: 'archived_files',      label: 'Archived Files'      },
-  { key: 'admin_logs',          label: 'Admin Logs'          },
-  { key: 'personnel_201',       label: '201 Files'           },
-  { key: 'organization',        label: 'Organization Chart'  },
+  { key: 'master_documents',     label: 'Master Documents'    },
+  { key: 'admin_orders',         label: 'Admin Orders'        },
+  { key: 'daily_journals',       label: 'Daily Journals'      },
+  { key: 'e_library',            label: 'E-Library'           },
+  { key: 'classified_documents', label: 'Classified Documents'},
+  { key: 'archived_files',       label: 'Archived Files'      },
+  { key: 'admin_logs',           label: 'Admin Logs'          },
+  { key: 'personnel_201',        label: '201 Files'           },
+  { key: 'organization',         label: 'Organization Chart'  },
 ]
 
-const FREQUENCIES = ['daily', 'weekly', 'monthly', 'yearly', 'custom'] as const
+const FREQUENCIES  = ['daily', 'weekly', 'monthly', 'yearly', 'custom'] as const
 const BACKUP_TYPES = ['full', 'incremental', 'differential'] as const
 
-// ── NEW: 24-hour options formatted as "2:00 AM", "11:00 PM", etc. ─────────────
 function formatHour(h: number): string {
   const period  = h >= 12 ? 'PM' : 'AM'
   const display = h % 12 === 0 ? 12 : h % 12
   return `${display}:00 ${period}`
 }
 
-// ── NEW: preview what pg_cron will actually be set to ─────────────────────────
 function buildCronPreview(frequency: string, hour: number, customCron: string): string {
   if (frequency === 'custom') return customCron || '—'
   const h = Math.max(0, Math.min(23, hour))
@@ -38,18 +36,25 @@ function buildCronPreview(frequency: string, hour: number, customCron: string): 
   }
 }
 
+// FIX: extended interface to include all fields returned by GET /api/backup/schedule
 interface ModuleStatus {
-  module_name:        string
-  is_enabled:         boolean
-  frequency:          string
-  last_configured_at: string | null
+  module_name:         string
+  is_enabled:          boolean
+  frequency:           string
+  backup_hour:         number | null
+  backup_type:         string | null
+  include_attachments: boolean | null
+  encrypt_backup:      boolean | null
+  retention_days:      number | null
+  custom_cron:         string | null
+  last_configured_at:  string | null
 }
 
 interface ScheduleForm {
   module_name:         string
   is_enabled:          boolean
   frequency:           typeof FREQUENCIES[number]
-  backup_hour:         number    // NEW — 0–23, default 2
+  backup_hour:         number
   custom_cron:         string
   backup_type:         typeof BACKUP_TYPES[number]
   include_attachments: boolean
@@ -61,7 +66,7 @@ const DEFAULT_FORM: ScheduleForm = {
   module_name:         '',
   is_enabled:          true,
   frequency:           'daily',
-  backup_hour:         2,        // NEW — default 2 AM
+  backup_hour:         2,
   custom_cron:         '0 2 * * *',
   backup_type:         'full',
   include_attachments: true,
@@ -80,20 +85,32 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
   const [form,    setForm]    = useState<ScheduleForm>(DEFAULT_FORM)
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
-  const [warning, setWarning] = useState<string | null>(null)   // NEW
+  const [warning, setWarning] = useState<string | null>(null)
   const [saved,   setSaved]   = useState(false)
 
-  // When a module is selected, pre-fill from existing config
+  // FIX: pre-fill ALL saved config fields when a module is selected,
+  // not just is_enabled and frequency. Prevents admins from accidentally
+  // overwriting fields they didn't intend to change.
   useEffect(() => {
     if (!form.module_name) return
     const existing = moduleStatus.find(m => m.module_name === form.module_name)
-    if (existing) {
-      setForm(f => ({
-        ...f,
-        is_enabled: existing.is_enabled,
-        frequency:  (existing.frequency as typeof FREQUENCIES[number]) || 'daily',
-      }))
-    }
+    if (!existing) return
+
+    setForm(f => ({
+      ...f,
+      is_enabled:          existing.is_enabled,
+      frequency:           (FREQUENCIES.includes(existing.frequency as any)
+                              ? existing.frequency
+                              : 'daily') as typeof FREQUENCIES[number],
+      backup_hour:         existing.backup_hour   ?? DEFAULT_FORM.backup_hour,
+      backup_type:         (BACKUP_TYPES.includes(existing.backup_type as any)
+                              ? existing.backup_type
+                              : 'full') as typeof BACKUP_TYPES[number],
+      include_attachments: existing.include_attachments ?? DEFAULT_FORM.include_attachments,
+      encrypt_backup:      existing.encrypt_backup      ?? DEFAULT_FORM.encrypt_backup,
+      retention_days:      existing.retention_days      ?? DEFAULT_FORM.retention_days,
+      custom_cron:         existing.custom_cron         ?? DEFAULT_FORM.custom_cron,
+    }))
   }, [form.module_name]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open) return null
@@ -104,7 +121,7 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
   const handleSave = async () => {
     if (!form.module_name) { setError('Select a module.'); return }
     setError(null)
-    setWarning(null)   // NEW — clear previous warning
+    setWarning(null)
     setLoading(true)
     try {
       const res  = await fetch('/api/backup/schedule', {
@@ -114,7 +131,6 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to save')
-      // NEW — surface non-fatal pg_cron warning without blocking success
       if (json.warning) setWarning(json.warning)
       setSaved(true)
       setTimeout(() => { setSaved(false); onSaved() }, 1500)
@@ -145,7 +161,9 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
               <p className="text-[11px] text-slate-500">Changes apply to the next scheduled run</p>
             </div>
           </div>
-          <button onClick={handleClose} className="text-slate-500 hover:text-slate-900 transition"><X size={18} /></button>
+          <button onClick={handleClose} className="text-slate-500 hover:text-slate-900 transition">
+            <X size={18} />
+          </button>
         </div>
 
         <div className="px-6 py-5 space-y-5 max-h-[75vh] overflow-y-auto">
@@ -156,7 +174,6 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
                 <CheckCircle2 size={24} className="text-emerald-400" />
               </div>
               <p className="text-sm font-semibold text-slate-900">Schedule Saved</p>
-              {/* NEW — show warning even on success if pg_cron reschedule had issues */}
               {warning && (
                 <p className="text-[11px] text-amber-600 text-center px-4">{warning}</p>
               )}
@@ -191,7 +208,7 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
                   onClick={() => set('is_enabled', !form.is_enabled)}
                   className={`w-11 h-6 rounded-full transition relative ${form.is_enabled ? 'bg-amber-400' : 'bg-slate-200'}`}
                 >
-                  <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${form.is_enabled ? 'left-5.5 left-[calc(100%-1.375rem)]' : 'left-0.5'}`} />
+                  <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${form.is_enabled ? 'left-[calc(100%-1.375rem)]' : 'left-0.5'}`} />
                 </button>
               </div>
 
@@ -211,7 +228,6 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
                   ))}
                 </div>
 
-                {/* NEW — Backup time picker (hidden when frequency is 'custom') */}
                 {form.frequency !== 'custom' && (
                   <div className="mt-3 flex items-center gap-3">
                     <div className="flex-1">
@@ -229,7 +245,6 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
                         <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                       </div>
                     </div>
-                    {/* Live cron expression preview */}
                     <div className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
                       <p className="text-[10px] text-slate-400 mb-0.5">pg_cron expression</p>
                       <p className="text-xs font-mono text-slate-700">
@@ -305,7 +320,6 @@ export function ScheduleModal({ open, onClose, onSaved, moduleStatus }: Props) {
                 </div>
               </div>
 
-              {/* NEW — warning banner (non-fatal: config saved but pg_cron had issues) */}
               {warning && (
                 <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-700">
                   <AlertTriangle size={13} className="mt-0.5 shrink-0" /> {warning}
