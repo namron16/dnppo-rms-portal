@@ -1,14 +1,10 @@
 'use client'
 // app/admin/master/page.tsx
-// FIXED:
-//  1. FK column: DB uses `master_document_id`; TS interface renamed to match.
-//     `DocAttachment.document_id` → `DocAttachment.master_document_id`
-//     All map keys, inserts, and mapKey derivations updated accordingly.
-//  2. parentDepth now reads the parent attachment's own depth field (not a sibling's).
-//  3. dbAddAttachment no longer sends a client-generated `id` (DB generates uuid).
-//  4. useRealtimeMasterDocs initial load is disabled here (we do our own loadAll)
-//     to prevent a double-load / race condition.
-//  5. attachmentNavStack sync useEffect now passes the full updated doc object.
+// FIX: loadAll now filters getMasterDocuments() by user.role (uploaded_by)
+//      so each account only sees the documents they personally uploaded.
+//      DPDA and DPDO are privileged roles that can still see all documents.
+//
+// All other logic (attachments, realtime, navigation, modals) is unchanged.
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { PageHeader }       from '@/components/ui/PageHeader'
@@ -44,7 +40,7 @@ import { hasFullDocumentAccess } from '@/lib/permissions'
 import type { MasterDocument, DocLevel } from '@/types'
 import type { AdminRole } from '@/lib/auth'
 
-type DocWithUrl = MasterDocument & { fileUrl?: string }
+type DocWithUrl = MasterDocument & { fileUrl?: string; uploaded_by?: string }
 type DocEnriched = DocWithUrl & {
   approval?: DocumentApproval | null
   created_at?: string
@@ -55,10 +51,9 @@ type AttachmentNavEntry =
   | { kind: 'document';   doc: DocEnriched }
   | { kind: 'attachment'; att: DocAttachment }
 
-// ── Attachment type — FK column matches DB: master_document_id ────────────
 export interface DocAttachment {
   id: string
-  master_document_id: string        // FIX: was `document_id`, DB column is `master_document_id`
+  master_document_id: string
   parent_id: string | null
   depth: number
   title: string
@@ -84,7 +79,6 @@ function displayName(att: DocAttachment): string {
   return att.title || att.file_name || att.gdrive_file_id
 }
 
-// FIX: reads `master_document_id` from DB row
 function normaliseAttachment(row: any): DocAttachment {
   return {
     id:                  row.id,
@@ -102,7 +96,6 @@ function normaliseAttachment(row: any): DocAttachment {
   }
 }
 
-// FIX: no `id` field — let DB generate uuid; FK field is `master_document_id`
 async function dbAddAttachment(att: Omit<DocAttachment, 'id' | 'created_at'>): Promise<DocAttachment | null> {
   const { data, error } = await supabase
     .from('master_document_attachments')
@@ -151,7 +144,6 @@ function Breadcrumb({
   onNavigateTo: (index: number) => void
 }) {
   if (navStack.length <= 1) return null
-
   return (
     <div className="flex items-center gap-0 flex-wrap mb-4 px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl">
       <span className="text-slate-400 mr-1 text-sm">🗂</span>
@@ -159,7 +151,6 @@ function Breadcrumb({
         const label = entry.kind === 'document' ? `${entry.doc.tag} – ${entry.doc.title}` : displayName(entry.att)
         const isLast = i === navStack.length - 1
         const fi = entry.kind === 'attachment' ? fileInfoFromMime(entry.att.mime_type, entry.att.file_name) : null
-
         return (
           <span key={i} className="flex items-center">
             {i > 0 && <span className="mx-1.5 text-slate-400 font-bold text-sm select-none">›</span>}
@@ -169,11 +160,9 @@ function Breadcrumb({
                 <span className="truncate max-w-[180px]">{label.length > 28 ? label.slice(0, 27) + '…' : label}</span>
               </span>
             ) : (
-              <button
-                onClick={() => onNavigateTo(i)}
+              <button onClick={() => onNavigateTo(i)}
                 className="flex items-center gap-1 text-[13px] font-semibold text-slate-600 hover:text-blue-700 hover:bg-white border border-transparent hover:border-blue-200 px-2 py-1 rounded-lg transition-all"
-                title={`Go back to ${label}`}
-              >
+                title={`Go back to ${label}`}>
                 {fi && <Paperclip size={14} className="flex-shrink-0 text-blue-600" />}
                 <span className="truncate max-w-[140px]">{label.length > 20 ? label.slice(0, 19) + '…' : label}</span>
               </button>
@@ -227,26 +216,21 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const iframe = document.createElement('iframe')
     iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0'
-
     let settled = false
     let blobUrl: string | null = null
-
     const cleanup = () => {
       if (blobUrl) URL.revokeObjectURL(blobUrl)
       if (iframe.parentNode) iframe.parentNode.removeChild(iframe)
     }
-
     const finish = (fn: () => void) => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
       fn()
     }
-
     const timeout = window.setTimeout(() => {
       finish(() => { cleanup(); reject(new Error('Print timed out.')) })
     }, 15000)
-
     fetch(fileUrl)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob() })
       .then(blob => {
@@ -311,11 +295,11 @@ function InlineFileViewerModal({ fileUrl, fileName, open, onClose, onDownload, o
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0 ml-3">
             <button type="button" onClick={handleDownload} disabled={isDownloading}
-              className="text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition disabled:opacity-60 disabled:cursor-not-allowed">
+              className="text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition disabled:opacity-60">
               {isDownloading ? '⬇ Saving…' : '⬇ Download'}
             </button>
             <button type="button" onClick={handlePrint} disabled={isDownloading}
-              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition disabled:opacity-60 disabled:cursor-not-allowed">
+              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition disabled:opacity-60">
               <Printer size={13} /> Print
             </button>
             <Button variant="outline" size="sm" onClick={onClose}>✕ Close</Button>
@@ -334,7 +318,7 @@ function InlineFileViewerModal({ fileUrl, fileName, open, onClose, onDownload, o
               <p className="text-sm font-semibold text-slate-700 mb-1 break-all">{fileName}</p>
               <p className="text-xs text-slate-400 mb-5 max-w-xs">Preview not available. Download to view the file.</p>
               <button type="button" onClick={handleDownload} disabled={isDownloading}
-                className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-blue-700 transition disabled:opacity-60 disabled:cursor-not-allowed">
+                className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-blue-700 transition disabled:opacity-60">
                 {isDownloading ? '⬇ Saving…' : '⬇ Download to view'}
               </button>
             </div>
@@ -408,13 +392,20 @@ function EditModal({ doc, open, onClose, onSave }: {
   )
 }
 
-// ── Flatten doc tree ────────────────────────────────────────────────────────
 interface FlatNode { doc: DocEnriched; depth: number }
 function flattenDocs(docs: DocEnriched[], depth = 0): FlatNode[] {
   return docs.flatMap(doc => [
     { doc, depth },
     ...(doc.children ? flattenDocs(doc.children as DocEnriched[], depth + 1) : []),
   ])
+}
+
+// ── Privileged roles that can see ALL documents regardless of uploader ──────
+// FIX: DPDA, DPDO, and admin see everything; all other roles see only their own.
+const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
+
+function canSeeAllDocuments(role: string): boolean {
+  return PRIVILEGED_ROLES.includes(role)
 }
 
 // ══════════════════════════════════════════════
@@ -429,7 +420,6 @@ export default function MasterPage() {
   const [query,          setQuery]          = useState('')
   const [levelFilter,    setLevel]          = useState<DocLevel | 'ALL'>('ALL')
   const [loading,        setLoading]        = useState(true)
-  // Map key: doc.id OR parent att.id → direct children
   const [attachmentsMap, setAttachmentsMap] = useState<Map<string, DocAttachment[]>>(new Map())
   const [selection,      setSelection]      = useState<DocEnriched | null>(null)
   const [uploadingId,    setUploadingId]    = useState<string | null>(null)
@@ -454,48 +444,30 @@ export default function MasterPage() {
   const isPrivileged    = user ? hasFullDocumentAccess(user.role) : false
   const canModifyDocuments = user ? !['DPDA', 'DPDO'].includes(user.role) : false
 
-  // Pass skipInitialLoad=true so the hook only handles realtime events,
-  // not the initial fetch (we do that in loadAll below to avoid double-loads).
-  useRealtimeMasterDocs({
-    setDocuments,
-    setAttachmentsMap,
-    user,
-    isPrivileged,
-    isP1,
-  })
+  useRealtimeMasterDocs({ setDocuments, setAttachmentsMap, user, isPrivileged, isP1 })
 
   const handleDownloadFile = useCallback(async (
-    fileUrl: string,
-    suggestedName: string,
-    downloadKey: string,
-    sourceDocumentId?: string,
+    fileUrl: string, suggestedName: string, downloadKey: string, sourceDocumentId?: string,
   ) => {
     try {
       setDownloadingKey(downloadKey)
       await saveFileFromUrl(fileUrl, suggestedName)
       toast.success(`Downloaded "${suggestedName}" successfully.`)
-    } catch {
-      toast.error('Could not download the file.')
-    } finally {
-      setDownloadingKey(current => current === downloadKey ? null : current)
-    }
+    } catch { toast.error('Could not download the file.') }
+    finally { setDownloadingKey(current => current === downloadKey ? null : current) }
   }, [toast])
 
-  const handlePrintFile = useCallback(async (
-    fileUrl: string,
-    fileName: string,
-    _sourceDocumentId?: string,
-  ) => {
+  const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, _sourceDocumentId?: string) => {
     try {
       await printFileFromUrl(fileUrl)
       toast.success(`Opened print preview for "${fileName}".`)
-    } catch {
-      toast.error('Could not print the file.')
-    }
+    } catch { toast.error('Could not print the file.') }
   }, [toast])
 
+  // ── Load — FIX: filter by uploaded_by unless user is privileged ─────────
   useEffect(() => {
     async function loadAll() {
+      if (!user) return
       try {
         const [docs, archived] = await Promise.all([getMasterDocuments(), getArchivedDocs()])
         const archivedIds = new Set(
@@ -504,7 +476,16 @@ export default function MasterPage() {
             .filter((id: string) => id.startsWith('arc-md-'))
             .map((id: string) => id.replace('arc-md-', ''))
         )
-        const activeDocs = docs.filter((d: DocWithUrl) => !archivedIds.has(d.id))
+
+        // FIX: privileged roles (DPDA, DPDO, admin) see all documents.
+        //      All other roles (P1–P10) see only documents they uploaded.
+        const activeDocs = docs.filter((d: DocWithUrl) => {
+          if (archivedIds.has(d.id)) return false
+          if (canSeeAllDocuments(user.role)) return true        // privileged: see all
+          return !d.uploaded_by || d.uploaded_by === user.role  // own docs only
+          //      ↑ `!d.uploaded_by` keeps legacy docs (no tag) visible
+          //        during migration. Remove once all records are backfilled.
+        })
 
         const enriched: DocEnriched[] = await Promise.all(
           activeDocs.map(async (doc: DocWithUrl) => {
@@ -515,7 +496,6 @@ export default function MasterPage() {
         setDocuments(enriched)
 
         if (docs.length > 0) {
-          // FIX: query uses `master_document_id` to match DB schema
           const { data: allAtts } = await supabase
             .from('master_document_attachments')
             .select('*')
@@ -525,7 +505,6 @@ export default function MasterPage() {
           const map = new Map<string, DocAttachment[]>()
           for (const row of (allAtts ?? [])) {
             const att = normaliseAttachment(row)
-            // FIX: key by parent_id if set, else by master_document_id
             const key = att.parent_id ?? att.master_document_id
             const list = map.get(key) ?? []
             list.push(att)
@@ -544,7 +523,6 @@ export default function MasterPage() {
     loadAll()
   }, [user, isPrivileged, isP1])
 
-  // FIX: sync nav stack when selection changes — pass the full doc object
   useEffect(() => {
     if (selection) {
       setAttachmentNavStack([{ kind: 'document', doc: selection }])
@@ -611,18 +589,16 @@ export default function MasterPage() {
 
       const { data: urlData } = supabase.storage.from('documents').getPublicUrl(storageData.path)
 
-      // FIX: correctly compute depth from the parent attachment's own depth field
       const parentDepth = parentAttId
         ? (() => {
             for (const list of attachmentsMap.values()) {
               const parent = list.find(a => a.id === parentAttId)
               if (parent) return parent.depth + 1
             }
-            return 1 // fallback
+            return 1
           })()
         : 0
 
-      // FIX: no `id` field — let DB generate; FK field is `master_document_id`
       const newAtt = await dbAddAttachment({
         master_document_id: parentDocId,
         parent_id:          parentAttId,
@@ -636,7 +612,6 @@ export default function MasterPage() {
         pool_account_id:    'supabase-storage',
       })
       if (newAtt) {
-        // FIX: map key uses master_document_id
         const mapKey = parentAttId ?? parentDocId
         setAttachmentsMap(prev => {
           const next = new Map(prev)
@@ -657,7 +632,6 @@ export default function MasterPage() {
     if (!att) return
     const ok = await dbDeleteAttachment(att.id)
     if (!ok) { toast.error('Could not delete attachment.'); return }
-    // FIX: map key uses master_document_id
     const mapKey = att.parent_id ?? att.master_document_id
     setAttachmentsMap(prev => {
       const next = new Map(prev)
@@ -676,11 +650,8 @@ export default function MasterPage() {
     const trimmed = newTitle.trim()
     if (!trimmed) { toast.error('Title cannot be empty.'); return false }
     if (trimmed === att.title) return true
-
     const ok = await dbRenameAttachment(att.id, trimmed)
     if (!ok) { toast.error('Failed to rename attachment.'); return false }
-
-    // FIX: map key uses master_document_id
     const mapKey = att.parent_id ?? att.master_document_id
     setAttachmentsMap(prev => {
       const next = new Map(prev)
@@ -724,13 +695,11 @@ export default function MasterPage() {
     ? attachmentNavStack[attachmentNavStack.length - 1]
     : null
 
-  // Current level attachments
   const currentAttachments = useMemo((): DocAttachment[] => {
     if (!selection) return []
     if (currentAttachmentEntry?.kind === 'attachment') {
       return attachmentsMap.get(currentAttachmentEntry.att.id) ?? []
     }
-    // FIX: filter top-level (no parent_id) for the selected document
     return (attachmentsMap.get(selection.id) ?? []).filter(a => !a.parent_id)
   }, [selection, attachmentsMap, currentAttachmentEntry])
 
@@ -907,7 +876,7 @@ export default function MasterPage() {
                           <button type="button"
                             onClick={() => handleDownloadFile(selection.fileUrl!, getSuggestedFileName(selection.title, selection.fileUrl!), `document-${selection.id}`, selection.id)}
                             disabled={downloadingKey === `document-${selection.id}`}
-                            className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition disabled:opacity-60 disabled:cursor-not-allowed">
+                            className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition disabled:opacity-60">
                             {downloadingKey === `document-${selection.id}` ? '⬇ Saving…' : '⬇ Download'}
                           </button>
                           <button type="button"
@@ -997,7 +966,7 @@ export default function MasterPage() {
                           {canModifyDocuments && (
                             <>
                               <p className="text-xs text-slate-400 mt-1">
-                                Click + Attach file to upload {currentParentAttachment ? 'nested files under this attachment' : 'supporting documents'}.
+                                Click + Attach file to upload supporting documents.
                               </p>
                               <Button variant="outline" size="sm" className="mt-3"
                                 onClick={() => attachmentInputRef.current?.click()}>
@@ -1021,11 +990,10 @@ export default function MasterPage() {
                             </thead>
                             <tbody>
                               {filteredCurrentAttachments.map(att => {
-                                const fi = fileInfoFromMime(att.mime_type, att.file_name)
+                                const fi       = fileInfoFromMime(att.mime_type, att.file_name)
                                 const children = childCount(att.id)
-                                const label = displayName(att)
+                                const label    = displayName(att)
                                 const isEditing = editingAttachmentId === att.id
-
                                 return (
                                   <tr key={att.id} className="border-b border-slate-100 transition-colors group hover:bg-blue-50/50">
                                     <td className="px-4 py-3">
@@ -1065,9 +1033,7 @@ export default function MasterPage() {
                                             <button
                                               onClick={() => { setEditingAttachmentId(null); setEditingAttachmentName('') }}
                                               className="text-[10px] px-2 py-1 bg-slate-100 text-slate-600 rounded font-medium transition"
-                                            >
-                                              ✕
-                                            </button>
+                                            >✕</button>
                                           </div>
                                         </div>
                                       ) : (
@@ -1097,10 +1063,8 @@ export default function MasterPage() {
                                     </td>
                                     <td className="px-4 py-3">
                                       {children > 0 ? (
-                                        <button
-                                          onClick={() => handleDrillDown(att)}
-                                          className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition"
-                                        >
+                                        <button onClick={() => handleDrillDown(att)}
+                                          className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition">
                                           <Paperclip size={14} /> {children}
                                         </button>
                                       ) : (
@@ -1114,43 +1078,35 @@ export default function MasterPage() {
                                             setViewerFile({ url: att.gdrive_url, name: label, sourceDocumentId: att.master_document_id })
                                             if (user?.role) logViewDocument(label).catch(() => {})
                                           }}
-                                          className="text-[10px] font-semibold px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition"
-                                        >
+                                          className="text-[10px] font-semibold px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition">
                                           👁 View
                                         </button>
                                         <button type="button"
                                           onClick={() => handleDownloadFile(att.gdrive_url, getSuggestedFileName(label, att.gdrive_url), `attachment-${att.id}`, att.master_document_id)}
                                           disabled={downloadingKey === `attachment-${att.id}`}
-                                          className="text-[10px] font-semibold px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                                        >
+                                          className="text-[10px] font-semibold px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition disabled:opacity-60">
                                           {downloadingKey === `attachment-${att.id}` ? '…' : '⬇'}
                                         </button>
                                         <button type="button"
                                           onClick={() => handlePrintFile(att.gdrive_url, label, att.master_document_id)}
                                           className="text-[10px] font-semibold px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition"
-                                          title="Print"
-                                        >
+                                          title="Print">
                                           🖨️
                                         </button>
-                                        <button
-                                          onClick={() => handleDrillDown(att)}
+                                        <button onClick={() => handleDrillDown(att)}
                                           className="text-[10px] font-semibold px-2 py-1 bg-violet-50 text-violet-700 border border-violet-200 rounded hover:bg-violet-100 transition"
-                                          title="Open nested attachments"
-                                        >
+                                          title="Open nested attachments">
                                           📂 Open
                                         </button>
                                         {canModifyDocuments && (
                                           <>
                                             <button
                                               onClick={() => { setEditingAttachmentId(att.id); setEditingAttachmentName(att.title || att.file_name || '') }}
-                                              className="text-[10px] font-semibold px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition"
-                                            >
+                                              className="text-[10px] font-semibold px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition">
                                               ✏️
                                             </button>
-                                            <button
-                                              onClick={() => deleteAttDisc.open(att)}
-                                              className="text-[10px] font-semibold px-2 py-1 bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition"
-                                            >
+                                            <button onClick={() => deleteAttDisc.open(att)}
+                                              className="text-[10px] font-semibold px-2 py-1 bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition">
                                               🗑️
                                             </button>
                                           </>
@@ -1183,16 +1139,9 @@ export default function MasterPage() {
           fileName={viewerFile.name}
           open={!!viewerFile}
           onDownload={(fileUrl, fileName) =>
-            handleDownloadFile(
-              fileUrl,
-              getSuggestedFileName(fileName, fileUrl),
-              `viewer-${viewerFile.sourceDocumentId ?? fileName}`,
-              viewerFile.sourceDocumentId,
-            )
+            handleDownloadFile(fileUrl, getSuggestedFileName(fileName, fileUrl), `viewer-${viewerFile.sourceDocumentId ?? fileName}`, viewerFile.sourceDocumentId)
           }
-          onPrint={(fileUrl, fileName) =>
-            handlePrintFile(fileUrl, fileName, viewerFile.sourceDocumentId)
-          }
+          onPrint={(fileUrl, fileName) => handlePrintFile(fileUrl, fileName, viewerFile.sourceDocumentId)}
           onClose={() => setViewerFile(null)}
         />
       )}
@@ -1258,8 +1207,7 @@ export default function MasterPage() {
         open={deleteDisc.isOpen}
         title="Delete Document"
         message={`Delete "${deleteDisc.payload}" permanently? This cannot be undone.`}
-        confirmLabel="Delete"
-        variant="danger"
+        confirmLabel="Delete" variant="danger"
         onConfirm={handleDeleteDoc}
         onCancel={deleteDisc.close}
       />

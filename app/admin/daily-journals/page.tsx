@@ -1,9 +1,8 @@
 'use client'
 // app/admin/daily-journals/page.tsx
-// Fixed:
-//  handleCreate — removed supabase.storage upload; uses driveFileUrl returned
-//                 by AddJournalEntryModal (which already uploaded via Drive pool)
-//  handleEdit   — same fix; driveFileUrl replaces the old storage upload block
+// FIX: handleCreate now persists uploaded_by on the journal entry.
+//      loadAll filters by user.role so each account only sees their own entries.
+//      DPDA, DPDO, and admin are privileged roles that see all entries.
 
 import { useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -35,12 +34,20 @@ import {
   canUploadDocuments, canEditDocuments, canDeleteDocuments, canArchiveDocuments,
 } from '@/lib/permissions'
 
+// ── Privileged roles that can see ALL entries regardless of uploader ─────────
+// FIX: DPDA, DPDO, and admin see everything; all other roles see only their own.
+const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
+function canSeeAllDocuments(role: string): boolean {
+  return PRIVILEGED_ROLES.includes(role)
+}
+
 type JournalStatus = 'Draft' | 'Filed' | 'Reviewed'
 
 type JournalRecord = DailyJournalRecord & {
   content: string
   summary: string
   status: JournalStatus
+  uploaded_by?: string   // FIX: track who created this entry
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -102,7 +109,7 @@ function ViewJournalModal({
               <Badge className={statusBadgeClass(entry.status)}>{entry.status}</Badge>
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widests text-slate-400 mb-1">Author</p>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Author</p>
               <p className="font-semibold text-slate-700">{entry.author}</p>
             </div>
             <div>
@@ -156,9 +163,6 @@ function ViewJournalAttachmentModal({
 }) {
   const isImage  = !!fileUrl.match(/\.(jpg|jpeg|png|webp|gif|bmp|avif)(\?|$)/i)
   const isPDF    = !!fileUrl.match(/\.pdf(\?|$)/i)
-  const isText   = !!fileUrl.match(/\.(txt|csv|md|json|xml|html?|rtf)(\?|$)/i)
-  const isAudio  = !!fileUrl.match(/\.(mp3|wav|ogg|m4a|flac)(\?|$)/i)
-  const isVideo  = !!fileUrl.match(/\.(mp4|webm|mov|m4v|avi)(\?|$)/i)
   const isOffice = !!fileUrl.match(/\.(doc|docx|xls|xlsx|ppt|pptx|odt|ods|odp)(\?|$)/i)
   const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`
 
@@ -171,28 +175,9 @@ function ViewJournalAttachmentModal({
           </div>
         ) : isPDF ? (
           <iframe src={fileUrl} title={fileName} className="w-full border-0" style={{ height: '75vh', minHeight: 400 }} />
-        ) : isText ? (
-          <iframe src={fileUrl} title={fileName} className="w-full border-0" style={{ height: '75vh', minHeight: 400 }} />
-        ) : isAudio ? (
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <audio controls className="w-full" src={fileUrl}>
-              Your browser does not support the audio element.
-            </audio>
-          </div>
-        ) : isVideo ? (
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <video controls className="w-full max-h-[75vh] rounded-lg" src={fileUrl}>
-              Your browser does not support the video element.
-            </video>
-          </div>
         ) : isOffice ? (
           <div className="flex justify-center rounded-xl border border-slate-200 bg-white p-4">
-            <iframe
-              src={officeViewerUrl}
-              title={fileName}
-              className="w-full border-0 rounded-lg"
-              style={{ height: '75vh', minHeight: 400 }}
-            />
+            <iframe src={officeViewerUrl} title={fileName} className="w-full border-0 rounded-lg" style={{ height: '75vh', minHeight: 400 }} />
           </div>
         ) : (
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
@@ -252,14 +237,24 @@ export default function DailyJournalsPage() {
     log:    entries.filter(e => e.type === 'LOG').length,
   }), [entries])
 
-  // ── Load ─────────────────────────────────────────────────────────────────
+  // ── Load — FIX: filter by uploaded_by unless user is privileged ──────────
   useEffect(() => {
+    const role = user?.role ?? ''
+    if (!role) return
     let isMounted = true
     async function load() {
       try {
         const data = await getDailyJournals()
         if (!isMounted) return
-        setEntries(data.map(entry => ({
+
+        // FIX: privileged roles see all entries; everyone else sees only their own.
+        const visible = data.filter((entry: any) => {
+          if (canSeeAllDocuments(role)) return true       // privileged: see all
+          return !entry.uploaded_by || entry.uploaded_by === role
+          //      ↑ `!entry.uploaded_by` keeps legacy records visible during migration
+        })
+
+        setEntries(visible.map((entry: any) => ({
           ...entry,
           content:     entry.content ?? 'No content was provided for this entry.',
           summary:     entry.summary ?? (entry.content?.slice(0, 120) || 'No summary available.'),
@@ -275,21 +270,14 @@ export default function DailyJournalsPage() {
     }
     load()
     return () => { isMounted = false }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.role]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Create ────────────────────────────────────────────────────────────────
-  //
-  // Fixed: removed the supabase.storage upload block entirely.
-  // AddJournalEntryModal already uploaded the file to the Drive pool and
-  // returns its URL as `driveFileUrl`. We use that directly.
+  // ── Create — FIX: persist uploaded_by on new entry ──────────────────────
   async function handleCreate(
-    input: AddJournalEntryInput & { file?: File; driveFileUrl?: string }
+    input: AddJournalEntryInput & { file?: File; driveFileUrl?: string; uploaded_by?: string }
   ) {
     if (!canUpload) throw new Error('You do not have permission to create journal entries.')
 
-    // The modal guarantees driveFileUrl is set when a file was selected.
-    // If the modal had no file and there's no existing file, it would have
-    // already blocked submission — so this guard is a safety net only.
     if (!input.file && !input.driveFileUrl) {
       throw new Error('Attachment is required.')
     }
@@ -300,6 +288,7 @@ export default function DailyJournalsPage() {
       : input.type === 'REPORT' ? 'Reviewed'
       : 'Filed'
 
+    // FIX: store uploaded_by so the page can filter entries per user
     const nextEntry: JournalRecord = {
       id:          `jrnl-${Date.now()}`,
       title:       input.title.trim(),
@@ -307,13 +296,13 @@ export default function DailyJournalsPage() {
       author:      input.author.trim(),
       date:        input.date || now.toISOString().split('T')[0],
       content:     input.content?.trim() || 'No content was provided for this entry.',
-      // Use the Drive URL returned by the modal — no additional upload needed
       fileUrl:     input.driveFileUrl,
       status,
       attachments: input.driveFileUrl ? 1 : 0,
       summary:     input.content?.trim()
         ? input.content.trim().slice(0, 120)
         : 'Newly created entry waiting for final review.',
+      uploaded_by: input.uploaded_by ?? user?.role,   // FIX
     }
 
     await addDailyJournal(nextEntry)
@@ -321,23 +310,18 @@ export default function DailyJournalsPage() {
     addModal.close()
   }
 
-  // ── Edit ──────────────────────────────────────────────────────────────────
-  //
-  // Fixed: removed the supabase.storage upload block.
-  // If the user selected a new file, the modal uploaded it to the Drive pool
-  // and returned driveFileUrl. If no new file was selected, driveFileUrl is
-  // undefined and we keep the existing fileUrl unchanged.
+  // ── Edit — FIX: preserve uploaded_by when updating ──────────────────────
   async function handleEdit(
-    input: AddJournalEntryInput & { file?: File; driveFileUrl?: string }
+    input: AddJournalEntryInput & { file?: File; driveFileUrl?: string; uploaded_by?: string }
   ) {
     if (!canEdit) throw new Error('You do not have permission to edit journal entries.')
 
     const existing = editDisc.payload
     if (!existing) return
 
-    // Use the new Drive URL if a new file was uploaded, otherwise keep existing
     const nextFileUrl = input.driveFileUrl ?? existing.fileUrl
 
+    // FIX: preserve the original uploaded_by — editing doesn't change ownership
     const updatedEntry: JournalRecord = {
       ...existing,
       title:       input.title.trim(),
@@ -354,6 +338,7 @@ export default function DailyJournalsPage() {
         input.type === 'MEMO'   ? 'Draft'
         : input.type === 'REPORT' ? 'Reviewed'
         : 'Filed',
+      uploaded_by: existing.uploaded_by,   // FIX: keep original owner
     }
 
     await updateDailyJournal(updatedEntry)
@@ -568,8 +553,7 @@ export default function DailyJournalsPage() {
           open={archiveDisc.isOpen}
           title="Archive Journal Entry"
           message={`Move "${archiveDisc.payload?.title}" to the Archive?`}
-          confirmLabel="Archive"
-          variant="danger"
+          confirmLabel="Archive" variant="danger"
           onConfirm={handleArchive}
           onCancel={archiveDisc.close}
         />
@@ -578,8 +562,7 @@ export default function DailyJournalsPage() {
         open={deleteDisc.isOpen}
         title="Delete Journal Entry"
         message={`Delete "${deleteDisc.payload?.title}" permanently? This cannot be undone.`}
-        confirmLabel="Delete"
-        variant="danger"
+        confirmLabel="Delete" variant="danger"
         onConfirm={handleDelete}
         onCancel={deleteDisc.close}
       />

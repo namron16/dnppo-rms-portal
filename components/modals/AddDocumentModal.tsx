@@ -1,7 +1,7 @@
 'use client'
 // components/modals/AddDocumentModal.tsx
-// Uses useDriveUpload() — now receives full DriveUploadResult (not just a URL string)
-// so gdriveFileId, poolAccountId, recordId, and downloadUrl are all persisted.
+// FIX: stores uploaded_by (user.role) on the document record so each user
+//      only sees their own documents when the page filters by uploaded_by.
 
 import { useState, useRef } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -15,12 +15,12 @@ import type { MasterDocument } from '@/types'
 import type { AdminRole } from '@/lib/auth'
 
 type DocWithUrl = MasterDocument & {
-  fileUrl?: string
-  // Drive metadata — persisted to Supabase so the record is complete
+  fileUrl?:         string
   gdrive_file_id?:  string
   gdrive_url?:      string
   pool_account_id?: string
   download_url?:    string
+  uploaded_by?:     string   // FIX: track who uploaded this document
 }
 
 interface AddDocumentModalProps {
@@ -35,7 +35,6 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
   const fileInputRef = useRef<HTMLInputElement>(null)
   const today = new Date().toISOString().split('T')[0]
 
-  // ── Drive Pool hook ──────────────────────────────────────────────────────
   const { uploadToDrive, uploading, error: uploadError } = useDriveUpload()
 
   const [file, setFile]           = useState<File | null>(null)
@@ -95,7 +94,6 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
     try {
       const newDocId = `md-${Date.now()}`
 
-      // ── Drive Pool upload — returns full metadata or null on failure ───
       const driveResult = await uploadToDrive(file, 'master_documents', {
         uploadedBy: user.role,
         entityId:   newDocId,
@@ -103,14 +101,13 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
       })
 
       if (!driveResult) {
-        // uploadToDrive already set its internal error state; surface it
         toast.error(uploadError ?? 'File upload failed. Please try again.')
         return
       }
 
       const fileSize = (file.size / 1024 / 1024).toFixed(1) + ' MB'
 
-      // Build the full document record including all Drive metadata
+      // FIX: include uploaded_by so the page can filter documents per user
       const newDoc: DocWithUrl = {
         id:      newDocId,
         title:   result.data.title,
@@ -120,18 +117,17 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
         size:    fileSize,
         tag:     result.data.tag,
 
-        // Drive metadata — stored on the record so the detail panel
-        // can render the View / Download / Print buttons immediately
         fileUrl:          driveResult.fileUrl,
         gdrive_file_id:   driveResult.gdriveFileId,
         gdrive_url:       driveResult.fileUrl,
         pool_account_id:  driveResult.poolAccountId,
         download_url:     driveResult.downloadUrl,
+
+        // FIX: tag the document with the uploader's role/username
+        uploaded_by: user.role,
       }
 
       if (onAdd) await onAdd(newDoc)
-
-      
 
       toast.success(`"${result.data.title}" uploaded successfully.`)
       resetAndClose()
@@ -180,7 +176,7 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
             </select>
           </div>
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Tag</label>
+            <label className="block text-[11px] font-semibold uppercase tracking-widests text-slate-500 mb-1.5">Tag</label>
             <select className={cls('tag')} value={form.tag} onChange={e => handleChange('tag', e.target.value)} disabled={uploading}>
               <option value="COMPLIANCE">Compliance</option>
               <option value="DIRECTIVE">Directive</option>

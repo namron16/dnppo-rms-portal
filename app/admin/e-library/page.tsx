@@ -1,5 +1,8 @@
 'use client'
-// app/admin/e-library/page.tsx (v3 — Drive Pool upload, Option A)
+// app/admin/e-library/page.tsx
+// FIX: loadAll filters library items by user.role (uploaded_by) so each
+//      account only sees the items they personally added.
+//      DPDA, DPDO, and admin are privileged roles that see all items.
 
 import { useState, useEffect, useCallback } from 'react'
 import { PageHeader }            from '@/components/ui/PageHeader'
@@ -33,14 +36,23 @@ import {
 import { isDocumentUnrestricted } from '@/lib/rbac'
 import type { LibraryItem, LibraryCategory } from '@/types'
 
-type LibraryItemWithUrl = LibraryItem & { fileUrl?: string; description?: string }
+// ── Privileged roles that can see ALL items regardless of uploader ────────────
+// FIX: DPDA, DPDO, and admin see everything; all other roles see only their own.
+const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
+function canSeeAllDocuments(role: string): boolean {
+  return PRIVILEGED_ROLES.includes(role)
+}
 
-// ── View Item Modal ───────────────────────────
+type LibraryItemWithUrl = LibraryItem & {
+  fileUrl?:     string
+  description?: string
+  uploaded_by?: string   // FIX: track who added this item
+}
+
+// ── View Item Modal ───────────────────────────────────────────────────────────
+
 function ViewItemModal({
-  item,
-  open,
-  onClose,
-  onPrint,
+  item, open, onClose, onPrint,
 }: {
   item: LibraryItemWithUrl | null
   open: boolean
@@ -69,11 +81,11 @@ function ViewItemModal({
               <Badge className={libraryBadgeClass(item.category)}>{item.category}</Badge>
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widests text-slate-400 mb-1">Added</p>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Added</p>
               <p className="text-xs text-slate-600">{item.dateAdded}</p>
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widests text-slate-400 mb-1">Size</p>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Size</p>
               <p className="text-xs text-slate-600">{item.size}</p>
             </div>
           </div>
@@ -90,12 +102,8 @@ function ViewItemModal({
                 >
                   🖨️ Print
                 </button>
-                <a
-                  href={item.fileUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md font-medium transition"
-                >
+                <a href={item.fileUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-xs px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md font-medium transition">
                   {item.size === 'Link' ? '🔗 Open link' : '⬇ Download'}
                 </a>
               </div>
@@ -108,11 +116,8 @@ function ViewItemModal({
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <span className="text-4xl mb-3">📗</span>
                 <p className="text-sm text-slate-500 mb-3">Preview not available for this file type.</p>
-                <a
-                  href={item.fileUrl}
-                  download
-                  className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition"
-                >
+                <a href={item.fileUrl} download
+                  className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition">
                   ⬇ Download to view
                 </a>
               </div>
@@ -133,12 +138,10 @@ function ViewItemModal({
   )
 }
 
-// ── Edit Library Item Modal ───────────────────
+// ── Edit Library Item Modal ───────────────────────────────────────────────────
+
 function EditLibraryItemModal({
-  item,
-  open,
-  onClose,
-  onSave,
+  item, open, onClose, onSave,
 }: {
   item: LibraryItemWithUrl | null
   open: boolean
@@ -171,21 +174,12 @@ function EditLibraryItemModal({
       <div className="p-6 space-y-4">
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Title</label>
-          <input
-            className={cls}
-            value={form.title}
-            onChange={e => setForm(prev => ({ ...prev, title: e.target.value }))}
-          />
+          <input className={cls} value={form.title} onChange={e => setForm(prev => ({ ...prev, title: e.target.value }))} />
         </div>
-
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Category</label>
-            <select
-              className={cls}
-              value={form.category}
-              onChange={e => setForm(prev => ({ ...prev, category: e.target.value as LibraryCategory }))}
-            >
+            <select className={cls} value={form.category} onChange={e => setForm(prev => ({ ...prev, category: e.target.value as LibraryCategory }))}>
               <option value="MANUAL">Manual</option>
               <option value="GUIDELINE">Guideline</option>
               <option value="TEMPLATE">Template</option>
@@ -193,25 +187,14 @@ function EditLibraryItemModal({
           </div>
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Date Added</label>
-            <input
-              type="date"
-              className={cls}
-              value={form.dateAdded}
-              onChange={e => setForm(prev => ({ ...prev, dateAdded: e.target.value }))}
-            />
+            <input type="date" className={cls} value={form.dateAdded} onChange={e => setForm(prev => ({ ...prev, dateAdded: e.target.value }))} />
           </div>
         </div>
-
         <div>
-          <label className="block text-[11px] font-semibold uppercase tracking-widests text-slate-500 mb-1.5">Description</label>
-          <textarea
-            rows={3}
-            className={`${cls} resize-none`}
-            value={form.description}
-            onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))}
-          />
+          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Description</label>
+          <textarea rows={3} className={`${cls} resize-none`} value={form.description}
+            onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))} />
         </div>
-
         <div className="flex justify-end gap-2.5 pt-1">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
@@ -234,7 +217,8 @@ function EditLibraryItemModal({
   )
 }
 
-// ── Print helper ──────────────────────────────
+// ── Print helper ──────────────────────────────────────────────────────────────
+
 async function printFileFromUrl(fileUrl: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const iframe = document.createElement('iframe')
@@ -253,14 +237,12 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
       if (blobUrl) URL.revokeObjectURL(blobUrl)
       if (iframe.parentNode) iframe.parentNode.removeChild(iframe)
     }
-
     const finish = (fn: () => void) => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
       fn()
     }
-
     const timeout = window.setTimeout(() => {
       finish(() => { cleanup(); reject(new Error('Print timed out.')) })
     }, 15000)
@@ -273,7 +255,6 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
       .then(blob => {
         blobUrl = URL.createObjectURL(blob)
         iframe.src = blobUrl
-
         iframe.onload = () => {
           const target = iframe.contentWindow
           if (!target) {
@@ -282,23 +263,15 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
           }
           window.setTimeout(() => {
             finish(() => {
-              try {
-                target.focus()
-                target.print()
-                resolve()
-              } catch (error) {
-                reject(error instanceof Error ? error : new Error('Print failed.'))
-              } finally {
-                window.setTimeout(cleanup, 1200)
-              }
+              try { target.focus(); target.print(); resolve() }
+              catch (error) { reject(error instanceof Error ? error : new Error('Print failed.')) }
+              finally { window.setTimeout(cleanup, 1200) }
             })
           }, 500)
         }
-
         iframe.onerror = () => {
           finish(() => { cleanup(); reject(new Error('Could not load file for printing.')) })
         }
-
         document.body.appendChild(iframe)
       })
       .catch(error => {
@@ -310,7 +283,8 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
   })
 }
 
-// ── Main Page ─────────────────────────────────
+// ── Main Page ─────────────────────────────────────────────────────────────────
+
 export default function LibraryPage() {
   const { toast }  = useToast()
   const { user }   = useAuth()
@@ -339,8 +313,9 @@ export default function LibraryPage() {
   )
   const filtered = searched.filter(i => catFilter === 'ALL' || i.category === catFilter)
 
-  // ── Load items ──────────────────────────────────────────────────────────
+  // ── Load — FIX: filter by uploaded_by unless user is privileged ──────────
   useEffect(() => {
+    if (!user) return
     Promise.all([getLibraryItems(), getArchivedDocs()]).then(([data, archived]) => {
       const archivedIds = new Set(
         (archived ?? [])
@@ -348,13 +323,21 @@ export default function LibraryPage() {
           .filter((id: string) => id.startsWith('arc-lib-'))
           .map((id: string) => id.replace('arc-lib-', ''))
       )
-      setItems((data as LibraryItemWithUrl[]).filter(item => !archivedIds.has(item.id)))
+
+      // FIX: privileged roles see all items; everyone else sees only their own.
+      const visible = (data as LibraryItemWithUrl[]).filter(item => {
+        if (archivedIds.has(item.id)) return false
+        if (canSeeAllDocuments(user.role)) return true        // privileged: see all
+        return !item.uploaded_by || item.uploaded_by === user.role
+        //      ↑ `!item.uploaded_by` keeps legacy records visible during migration
+      })
+
+      setItems(visible)
       setLoading(false)
     })
-  }, [])
+  }, [user])
 
-  // ── Called by AddLibraryItemModal via onAdd callback ────────────────────
-  // The modal now handles the Drive upload AND the DB persist internally.
+  // The modal already handles Drive upload + DB persist internally.
   // This function just appends the returned item to local state.
   function handleAdd(newItem: LibraryItemWithUrl) {
     if (!canUploadLibrary) {
@@ -365,20 +348,11 @@ export default function LibraryPage() {
   }
 
   async function handleArchive() {
-    if (!canArchive) {
-      toast.error('You do not have permission to archive e-Library items.')
-      return
-    }
+    if (!canArchive) { toast.error('You do not have permission to archive e-Library items.'); return }
     const item = archiveDisc.payload
     if (!item) return
     const today = new Date().toISOString().split('T')[0]
-    await addArchivedDoc({
-      id:           `arc-lib-${item.id}`,
-      title:        item.title,
-      type:         'Library Item',
-      archivedDate: today,
-      archivedBy:   'Admin',
-    })
+    await addArchivedDoc({ id: `arc-lib-${item.id}`, title: item.title, type: 'Library Item', archivedDate: today, archivedBy: 'Admin' })
     await archiveLibraryItem(item.id)
     setItems(prev => prev.filter(i => i.id !== item.id))
     toast.success(`"${item.title}" has been archived.`)
@@ -386,10 +360,7 @@ export default function LibraryPage() {
   }
 
   async function handleSave(updated: LibraryItemWithUrl) {
-    if (!canEdit) {
-      toast.error('You do not have permission to edit e-Library items.')
-      return
-    }
+    if (!canEdit) { toast.error('You do not have permission to edit e-Library items.'); return }
     await updateLibraryItem(updated)
     await logEditLibraryItem(updated.title)
     setItems(prev => prev.map(item => item.id === updated.id ? updated : item))
@@ -401,10 +372,7 @@ export default function LibraryPage() {
   async function handleDelete() {
     const item = deleteDisc.payload
     if (!item) return
-    if (!canDelete) {
-      toast.error('You do not have permission to delete e-Library items.')
-      return
-    }
+    if (!canDelete) { toast.error('You do not have permission to delete e-Library items.'); return }
     await deleteLibraryItem(item.id)
     await logDeleteDocument(item.title, 'library item')
     setItems(prev => prev.filter(i => i.id !== item.id))
@@ -415,16 +383,11 @@ export default function LibraryPage() {
   }
 
   const handlePrintFile = useCallback(async (
-    fileUrl: string,
-    fileName: string,
-    sourceDocumentId?: string,
+    fileUrl: string, fileName: string, sourceDocumentId?: string,
   ) => {
     try {
       if (user && !isSuperAdmin) {
-        if (!sourceDocumentId) {
-          toast.error('Printing is only allowed for files approved by P1.')
-          return
-        }
+        if (!sourceDocumentId) { toast.error('Printing is only allowed for files approved by P1.'); return }
         await isDocumentUnrestricted(sourceDocumentId, 'library')
       }
       await printFileFromUrl(fileUrl)
@@ -470,12 +433,7 @@ export default function LibraryPage() {
         <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-hidden">
 
           <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50">
-            <SearchInput
-              value={query}
-              onChange={setQuery}
-              placeholder="Search library…"
-              className="max-w-xs flex-1"
-            />
+            <SearchInput value={query} onChange={setQuery} placeholder="Search library…" className="max-w-xs flex-1" />
             <ToolbarSelect
               onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
                 setCat(e.target.value as LibraryCategory | 'ALL')
@@ -557,15 +515,9 @@ export default function LibraryPage() {
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              viewDisc.open(item)
-                              logViewDocument(item.title).catch(() => {})
-                            }}
-                            title="View item details"
-                          >
+                          <Button variant="ghost" size="sm"
+                            onClick={() => { viewDisc.open(item); logViewDocument(item.title).catch(() => {}) }}
+                            title="View item details">
                             <Eye size={16} className="text-slate-600" />
                           </Button>
                           {canEdit && (
@@ -601,19 +553,9 @@ export default function LibraryPage() {
         </div>
       </div>
 
-      {/* ── Modals ── */}
-
-      {/*
-        Option A: using the migrated component from components/modals/AddLibraryItemModal.tsx
-        The modal handles Drive upload + DB persist internally.
-        onAdd receives the completed item and we append it to local state.
-      */}
+      {/* Modals */}
       {canUploadLibrary && (
-        <AddLibraryItemModal
-          open={newModal.isOpen}
-          onClose={newModal.close}
-          onAdd={handleAdd}
-        />
+        <AddLibraryItemModal open={newModal.isOpen} onClose={newModal.close} onAdd={handleAdd} />
       )}
 
       <ViewItemModal
@@ -637,8 +579,7 @@ export default function LibraryPage() {
           open={deleteDisc.isOpen}
           title="Delete Library Item"
           message={`Permanently delete "${deleteDisc.payload?.title}"? This action cannot be undone.`}
-          confirmLabel="Delete"
-          variant="danger"
+          confirmLabel="Delete" variant="danger"
           onConfirm={handleDelete}
           onCancel={deleteDisc.close}
         />
@@ -648,9 +589,8 @@ export default function LibraryPage() {
         <ConfirmDialog
           open={archiveDisc.isOpen}
           title="Archive Library Item"
-          message={`Archive "${archiveDisc.payload?.title}"? It will be moved to the Archive page and can be restored from there.`}
-          confirmLabel="Archive"
-          variant="danger"
+          message={`Archive "${archiveDisc.payload?.title}"? It will be moved to the Archive page.`}
+          confirmLabel="Archive" variant="danger"
           onConfirm={handleArchive}
           onCancel={archiveDisc.close}
         />

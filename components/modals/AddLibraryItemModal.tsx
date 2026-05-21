@@ -1,5 +1,7 @@
 'use client'
-// components/modals/AddLibraryItemModal.tsx (v3 — Drive Pool upload + DB persist)
+// components/modals/AddLibraryItemModal.tsx
+// FIX: stores uploaded_by (user.role) on the library item so each user
+//      only sees their own items when the page filters by uploaded_by.
 
 import { useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -12,14 +14,15 @@ import { addLibraryItem } from '@/lib/data'
 import type { LibraryCategory } from '@/types'
 
 type LibraryItemWithUrl = {
-  id: string
-  title: string
-  category: LibraryCategory
-  size: string
-  dateAdded: string
-  fileUrl?: string
+  id:           string
+  title:        string
+  category:     LibraryCategory
+  size:         string
+  dateAdded:    string
+  fileUrl?:     string
   description?: string
-  created_at?: string
+  created_at?:  string
+  uploaded_by?: string   // FIX: track who uploaded this item
 }
 
 interface Props {
@@ -33,7 +36,6 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
   const { user }  = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // ── Drive Pool hook ──────────────────────────────────────────────────────
   const { uploadToDrive, uploading, error: uploadError } = useDriveUpload()
 
   const [errors,   setErrors]   = useState<Record<string, string>>({})
@@ -86,18 +88,18 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
     setErrors({})
 
     try {
-      const itemId  = `lib-${Date.now()}`
-      const today   = new Date().toISOString().split('T')[0]
-      const now     = new Date().toISOString()
+      const itemId = `lib-${Date.now()}`
+      const today  = new Date().toISOString().split('T')[0]
+      const now    = new Date().toISOString()
 
-      // ── 1. Upload file to Google Drive ───────────────────────────────
-      const fileUrl = await uploadToDrive(file!, 'library_items', {
+      // Upload file to Google Drive
+      const uploadResult = await uploadToDrive(file!, 'library_items', {
         uploadedBy: user?.role ?? 'unknown',
         entityId:   itemId,
         entityType: 'library_item',
       })
 
-      if (!fileUrl) {
+      if (!uploadResult) {
         toast.error(uploadError ?? 'File upload failed. Please try again.')
         return
       }
@@ -106,16 +108,17 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
         ? `${(file!.size / 1024).toFixed(1)} KB`
         : `${(file!.size / 1024 / 1024).toFixed(1)} MB`
 
-      // ── 2. Persist metadata to Supabase ─────────────────────────────
+      // FIX: include uploaded_by so the page can filter items per user
       const newItem: LibraryItemWithUrl = {
         id:          itemId,
         title:       result.data.title.trim(),
         category:    result.data.category as LibraryCategory,
         size:        fileSize,
         dateAdded:   today,
-        fileUrl,
+        fileUrl:     uploadResult.fileUrl,
         description: form.description.trim() || undefined,
         created_at:  now,
+        uploaded_by: user?.role,   // FIX: tag with uploader's role/username
       }
 
       await addLibraryItem(newItem)

@@ -1,5 +1,7 @@
 'use client'
-// components/modals/AddJournalEntryModal.tsx (v2 — Drive Pool upload)
+// components/modals/AddJournalEntryModal.tsx
+// FIX: passes uploaded_by (user.role) back through onSubmit so the page
+//      can tag the journal entry and filter by user on next load.
 
 import { useEffect, useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -20,7 +22,7 @@ type JournalFormState = {
 }
 
 const OFFICE_FILE_PATTERN = /\.(doc|docx|xls|xlsx|ppt|pptx|odt|ods|odp)(\?|$)/i
-const TEXT_FILE_PATTERN = /\.(txt|csv|md|json|xml|html?|rtf)(\?|$)/i
+const TEXT_FILE_PATTERN   = /\.(txt|csv|md|json|xml|html?|rtf)(\?|$)/i
 
 function getFilePreviewKind(fileName: string, mimeType = '') {
   if (mimeType.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp|avif)(\?|$)/i.test(fileName)) return 'image'
@@ -38,7 +40,8 @@ interface Props {
   title?: string
   submitLabel?: string
   initialValue?: Partial<AddJournalEntryInput> & { content?: string; fileUrl?: string }
-  onSubmit?: (entry: JournalEntryFormInput & { driveFileUrl?: string }) => void | Promise<void>
+  // FIX: onSubmit now also receives uploaded_by so the page can persist it
+  onSubmit?: (entry: JournalEntryFormInput & { driveFileUrl?: string; uploaded_by?: string }) => void | Promise<void>
 }
 
 const getTodayDate = () => new Date().toISOString().split('T')[0]
@@ -56,22 +59,17 @@ export function AddJournalEntryModal({
   const { user }  = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // ── Drive Pool hook ──────────────────────────────────────────────────────
   const { uploadToDrive, uploading, error: uploadError } = useDriveUpload()
 
-  const [errors, setErrors]         = useState<Record<string, string>>({})
-  const [form, setForm]             = useState<JournalFormState>(EMPTY_FORM)
-  const [file, setFile]             = useState<File | null>(null)
-  const [previewUrl, setPreviewUrl] = useState('')
+  const [errors, setErrors]           = useState<Record<string, string>>({})
+  const [form, setForm]               = useState<JournalFormState>(EMPTY_FORM)
+  const [file, setFile]               = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl]   = useState('')
   const [previewOpen, setPreviewOpen] = useState(false)
-  const hasExistingFile = !!initialValue?.fileUrl
+  const hasExistingFile               = !!initialValue?.fileUrl
 
   useEffect(() => {
-    if (!file) {
-      setPreviewUrl('')
-      setPreviewOpen(false)
-      return
-    }
+    if (!file) { setPreviewUrl(''); setPreviewOpen(false); return }
     const objectUrl = URL.createObjectURL(file)
     setPreviewUrl(objectUrl)
     return () => { URL.revokeObjectURL(objectUrl) }
@@ -82,10 +80,10 @@ export function AddJournalEntryModal({
     setErrors({})
     setFile(null)
     setForm({
-      title: initialValue?.title ?? '',
-      type: initialValue?.type ?? 'MEMO',
-      author: initialValue?.author ?? '',
-      date: initialValue?.date ?? getTodayDate(),
+      title:   initialValue?.title   ?? '',
+      type:    initialValue?.type    ?? 'MEMO',
+      author:  initialValue?.author  ?? '',
+      date:    initialValue?.date    ?? getTodayDate(),
       content: initialValue?.content ?? '',
     })
   }, [initialValue, open])
@@ -125,26 +123,31 @@ export function AddJournalEntryModal({
     try {
       let driveFileUrl: string | undefined
 
-      // Only upload if a new file was selected
       if (file) {
         const journalId = `jnl-${Date.now()}`
 
-        // ── Drive Pool upload (replaces supabase.storage) ───────────────
-        const fileUrl = await uploadToDrive(file, 'daily_journals', {
+        const uploadResult = await uploadToDrive(file, 'daily_journals', {
           uploadedBy: user?.role ?? 'unknown',
           entityId:   journalId,
           entityType: 'daily_journal',
         })
 
-        if (!fileUrl) {
+        if (!uploadResult) {
           toast.error(uploadError ?? 'File upload failed. Please try again.')
           return
         }
 
-        driveFileUrl = fileUrl
+        driveFileUrl = uploadResult.fileUrl
       }
 
-      await onSubmit?.({ ...result.data, file: file ?? undefined, driveFileUrl })
+      // FIX: pass uploaded_by so the page can persist and filter by it
+      await onSubmit?.({
+        ...result.data,
+        file:         file ?? undefined,
+        driveFileUrl,
+        uploaded_by:  user?.role,
+      })
+
       toast.success(`Journal entry "${result.data.title}" saved.`)
       resetAndClose()
     } catch (error) {
@@ -153,7 +156,11 @@ export function AddJournalEntryModal({
     }
   }
 
-  const hasMissingRequired = !form.title.trim() || !form.author.trim() || !form.date.trim() || (!file && !hasExistingFile)
+  const hasMissingRequired =
+    !form.title.trim()  ||
+    !form.author.trim() ||
+    !form.date.trim()   ||
+    (!file && !hasExistingFile)
 
   const cls = (f: string) =>
     `w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition ${

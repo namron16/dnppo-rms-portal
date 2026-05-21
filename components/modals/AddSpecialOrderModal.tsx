@@ -1,7 +1,7 @@
 'use client'
 // components/modals/AddSpecialOrderModal.tsx
-// Fixed: uploadToDrive returns DriveUploadResult (object), not a string.
-// All Drive metadata (gdriveFileId, poolAccountId, downloadUrl) now stored on the SO record.
+// FIX: stores uploaded_by (user.role) on the SO record so each user
+//      only sees their own orders when the page filters by uploaded_by.
 
 import { useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -13,14 +13,13 @@ import { useAuth } from '@/lib/auth'
 import type { SpecialOrder } from '@/types'
 import { FileText, Image as ImageIcon, Paperclip } from 'lucide-react'
 
-// Extended SO type that carries Drive metadata so the detail panel
-// can render View / Download / Print buttons immediately after creation.
 type SOWithUrl = SpecialOrder & {
   fileUrl?:         string
   gdrive_file_id?:  string
   gdrive_url?:      string
   pool_account_id?: string
   download_url?:    string
+  uploaded_by?:     string   // FIX: track who uploaded this order
 }
 
 interface Props {
@@ -35,7 +34,6 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const today = new Date().toISOString().split('T')[0]
 
-  // ── Drive Pool hook ──────────────────────────────────────────────────────
   const { uploadToDrive, uploading, error: uploadError } = useDriveUpload()
 
   const [form, setForm]         = useState({ reference: '', subject: '', date: today, status: 'ACTIVE' })
@@ -82,11 +80,8 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
     try {
       const soId = `so-${Date.now()}`
 
-      // ── Drive Pool upload ─────────────────────────────────────────────
-      // uploadToDrive returns a DriveUploadResult object (not a string).
-      // It uploads to the logged-in user's own Drive accounts only.
       const driveResult = await uploadToDrive(file, 'special_orders', {
-        uploadedBy: user.role,   // e.g. 'P1', 'DPDA' — scopes to that user's Drive pool
+        uploadedBy: user.role,
         entityId:   soId,
         entityType: 'special_order',
       })
@@ -96,6 +91,7 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
         return
       }
 
+      // FIX: include uploaded_by so the page can filter orders per user
       const newSO: SOWithUrl = {
         id:          soId,
         reference:   result.data.reference,
@@ -104,12 +100,14 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
         attachments: 0,
         status:      result.data.status as 'ACTIVE' | 'ARCHIVED',
 
-        // Drive metadata — all four fields, matching AddDocumentModal's pattern
         fileUrl:          driveResult.fileUrl,
         gdrive_file_id:   driveResult.gdriveFileId,
         gdrive_url:       driveResult.fileUrl,
         pool_account_id:  driveResult.poolAccountId,
         download_url:     driveResult.downloadUrl,
+
+        // FIX: tag the order with the uploader's role/username
+        uploaded_by: user.role,
       }
 
       if (onAdd) await onAdd(newSO)
