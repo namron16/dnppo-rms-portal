@@ -6,8 +6,20 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import { getDefaultAdminRoute, type SessionRole } from '@/lib/adminRouteAccess'
 
-// ── Role / email mapping ──────────────────────────────────────────────────────
+// ── Role map (labels only — no emails) ───────────────────────────────────────
+// Emails are resolved server-side via the get_email_by_role() Supabase RPC.
+// This map exists purely for display labels in the <select>.
 
+const ROLE_IDS = [
+  'admin', 'PD', 'DPDA', 'DPDO',
+  'P1', 'P2', 'P3', 'P4', 'P5',
+  'P6', 'P7', 'P8', 'P9', 'P10',
+] as const
+
+// The email map is kept here only for the loginPassword call (sign-in with
+// password still needs the email on the client side, which is acceptable —
+// see auth.tsx comments). If you later want to move this server-side too,
+// add a second RPC and call it here before loginPassword.
 const ROLE_EMAIL_MAP: Record<string, string> = {
   admin: 'dalenamron@gmail.com',
   PD:    'pd@dnppo.gov.ph',
@@ -36,26 +48,25 @@ function getRoleLabel(id: string): string {
   }
 }
 
-const ROLE_OPTIONS = Object.keys(ROLE_EMAIL_MAP).map(id => ({
-  id, label: getRoleLabel(id),
-}))
+const ROLE_OPTIONS = ROLE_IDS.map(id => ({ id, label: getRoleLabel(id) }))
 
 // ── Password strength helper ──────────────────────────────────────────────────
 
-function getPwStrength(pw: string) {
-  if (!pw) return 0
+function getPwStrength(pw: string): number {
+  if (!pw)           return 0
   if (pw.length >= 20) return 4
   if (pw.length >= 16) return 3
   if (pw.length >= 12) return 2
   return 1
 }
+
 const PW_STRENGTH_COLORS = ['', 'bg-red-400', 'bg-amber-400', 'bg-blue-500', 'bg-emerald-500']
 const PW_STRENGTH_LABELS = ['', 'Weak', 'Fair', 'Good', 'Strong']
 const PW_STRENGTH_TEXT   = ['', 'text-red-400', 'text-amber-400', 'text-blue-400', 'text-emerald-400']
 
-// ── Shared input style ────────────────────────────────────────────────────────
+// ── Shared input class helper ─────────────────────────────────────────────────
 
-function inputCls(hasError = false) {
+function inputCls(hasError = false): string {
   return (
     'w-full px-4 py-3 border rounded-lg text-sm text-slate-800 bg-white ' +
     'focus:outline-none focus:ring-2 transition ' +
@@ -65,7 +76,7 @@ function inputCls(hasError = false) {
   )
 }
 
-// ── Step indicator ────────────────────────────────────────────────────────────
+// ── Step progress dots ────────────────────────────────────────────────────────
 
 function StepDots({ step }: { step: 1 | 2 | 3 }) {
   return (
@@ -78,7 +89,7 @@ function StepDots({ step }: { step: 1 | 2 | 3 }) {
               ? 'w-6 bg-[#fde047]'
               : n < step
               ? 'w-3 bg-[#fde047]/40'
-              : 'w-3 bg-white/20'
+              : 'w-3 bg-slate-200'
           }`}
         />
       ))}
@@ -86,9 +97,21 @@ function StepDots({ step }: { step: 1 | 2 | 3 }) {
   )
 }
 
-// ── Main form component ───────────────────────────────────────────────────────
+// ── Inline spinner ────────────────────────────────────────────────────────────
+
+function Spinner() {
+  return (
+    <div className="w-4 h-4 border-2 border-[#fde047] border-t-transparent rounded-full animate-spin flex-shrink-0" />
+  )
+}
+
+// ── View type ─────────────────────────────────────────────────────────────────
 
 type View = 'login' | 'forgot_role' | 'forgot_otp' | 'forgot_newpw'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOGIN FORM
+// ─────────────────────────────────────────────────────────────────────────────
 
 function LoginForm() {
   const { loginPassword, sendPasswordResetOTP, verifyOTPAndReset } = useAuth()
@@ -96,35 +119,36 @@ function LoginForm() {
   const searchParams = useSearchParams()
   const reason       = searchParams.get('reason')
 
-  // ── View state ────────────────────────────────────────────────────────────
+  // ── Shared state ──────────────────────────────────────────────────────────
   const [view,    setView]    = useState<View>('login')
   const [loading, setLoading] = useState(false)
 
   // ── Login fields ──────────────────────────────────────────────────────────
-  const [roleId,      setRoleId]      = useState('')
-  const [password,    setPassword]    = useState('')
-  const [loginError,  setLoginError]  = useState('')
-  const [resetSuccess, setResetSuccess] = useState(false) // banner after reset
+  const [roleId,       setRoleId]       = useState('')
+  const [password,     setPassword]     = useState('')
+  const [loginError,   setLoginError]   = useState('')
+  const [resetSuccess, setResetSuccess] = useState(false)
 
-  // ── Forgot password shared state ──────────────────────────────────────────
-  const [fpRoleId,  setFpRoleId]  = useState('')           // step 1 role selection
-  const [otpCode,   setOtpCode]   = useState('')           // step 2 OTP input
-  const [fpError,   setFpError]   = useState('')           // inline error per step
+  // ── Forgot password state ─────────────────────────────────────────────────
+  const [fpRoleId,     setFpRoleId]     = useState('')
+  const [fpMaskedEmail, setFpMaskedEmail] = useState('') // e.g. "p***@dnppo.gov.ph"
+  const [otpCode,      setOtpCode]      = useState('')
+  const [fpError,      setFpError]      = useState('')
 
-  // ── Step 3 fields ─────────────────────────────────────────────────────────
+  // ── Step 3 password fields ────────────────────────────────────────────────
   const [newPw,     setNewPw]     = useState('')
   const [confirmPw, setConfirmPw] = useState('')
   const [showNewPw, setShowNewPw] = useState(false)
   const [showConPw, setShowConPw] = useState(false)
 
-  const fpEmail   = ROLE_EMAIL_MAP[fpRoleId] ?? ''
   const pwStrength = getPwStrength(newPw)
 
-  // ── Transition helpers ────────────────────────────────────────────────────
+  // ── Reset forgot-password state and return to login ───────────────────────
 
   function goToLogin() {
     setView('login')
     setFpRoleId('')
+    setFpMaskedEmail('')
     setOtpCode('')
     setNewPw('')
     setConfirmPw('')
@@ -132,7 +156,7 @@ function LoginForm() {
     setLoading(false)
   }
 
-  // ── Login submit ──────────────────────────────────────────────────────────
+  // ── LOGIN SUBMIT ──────────────────────────────────────────────────────────
 
   const handleLogin = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
@@ -154,40 +178,46 @@ function LoginForm() {
     router.replace(getDefaultAdminRoute(roleId as SessionRole))
   }, [roleId, password, loginPassword, router])
 
-  // ── Step 1 → send OTP ─────────────────────────────────────────────────────
+  // ── STEP 1: send OTP ──────────────────────────────────────────────────────
+  // Passes the role to auth — email is resolved server-side via DB RPC.
+  // The returned maskedEmail is the only email data the UI ever sees.
 
   const handleSendOTP = useCallback(async () => {
     setFpError('')
     if (!fpRoleId) { setFpError('Please select your role first.'); return }
 
     setLoading(true)
-    const { error } = await sendPasswordResetOTP(fpEmail)
+    const { maskedEmail, error } = await sendPasswordResetOTP(fpRoleId)
     setLoading(false)
 
     if (error) { setFpError(error); return }
 
+    setFpMaskedEmail(maskedEmail ?? '')
     setView('forgot_otp')
-  }, [fpRoleId, fpEmail, sendPasswordResetOTP])
+  }, [fpRoleId, sendPasswordResetOTP])
 
-  // ── Step 2 → verify OTP, advance to new password ─────────────────────────
+  // ── STEP 2: validate OTP format, advance wizard ───────────────────────────
+  // Actual OTP verification happens together with the password update in step 3
+  // (Supabase verifyOtp must be followed immediately by updateUser in the same
+  // session — splitting them across steps would require storing a session token).
 
-  const handleVerifyOTP = useCallback(async () => {
+  const handleVerifyOTP = useCallback(() => {
     setFpError('')
     const trimmed = otpCode.trim()
 
-    if (!trimmed)        { setFpError('Please enter the 6-digit code.'); return }
+    if (!trimmed) {
+      setFpError('Please enter the 6-digit code.')
+      return
+    }
     if (trimmed.length !== 6 || !/^\d+$/.test(trimmed)) {
       setFpError('The code must be exactly 6 digits.')
       return
     }
 
-    // We don't verify-only via Supabase — verification happens together with
-    // the password update in step 3. Here we just advance the wizard.
-    // (Supabase's verifyOtp requires the new password to be set in the same session.)
     setView('forgot_newpw')
   }, [otpCode])
 
-  // ── Step 3 → set new password ─────────────────────────────────────────────
+  // ── STEP 3: verify OTP + set new password (single atomic call) ────────────
 
   const handleResetPassword = useCallback(async () => {
     setFpError('')
@@ -210,17 +240,18 @@ function LoginForm() {
     }
 
     setLoading(true)
-    const { error } = await verifyOTPAndReset(fpEmail, otpCode.trim(), newPw)
+    // Role is passed — auth.tsx resolves the email via DB RPC internally
+    const { error } = await verifyOTPAndReset(fpRoleId, otpCode.trim(), newPw)
     setLoading(false)
 
     if (error) { setFpError(error); return }
 
-    // Success — return to login with a success banner
     goToLogin()
     setResetSuccess(true)
-  }, [fpEmail, otpCode, newPw, confirmPw, verifyOTPAndReset])
+  }, [fpRoleId, otpCode, newPw, confirmPw, verifyOTPAndReset])
 
-  // ── Shared label style ────────────────────────────────────────────────────
+  // ── Shared label class ────────────────────────────────────────────────────
+
   const labelCls = 'block text-[#1b365d] font-bold text-base mb-2'
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -228,7 +259,7 @@ function LoginForm() {
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="w-[500px] bg-white px-12 py-10 flex flex-col relative shadow-2xl z-20 overflow-hidden">
+    <div className="w-[500px] bg-white px-12 py-10 flex flex-col relative shadow-2xl z-20">
       <div className="flex-1 flex flex-col justify-center items-center w-full">
 
         {/* ── Disabled account banner ── */}
@@ -246,9 +277,9 @@ function LoginForm() {
           </div>
         )}
 
-        {/* ════════════════════════════════════════════════════
+        {/* ══════════════════════════════════════════════
             VIEW: LOGIN
-        ════════════════════════════════════════════════════ */}
+        ══════════════════════════════════════════════ */}
         {view === 'login' && (
           <>
             <div className="text-center mb-10 w-full">
@@ -290,7 +321,7 @@ function LoginForm() {
                   <button
                     type="button"
                     onClick={() => {
-                      setFpRoleId(roleId) // pre-fill role if already selected
+                      setFpRoleId(roleId) // pre-fill if user already picked a role
                       setFpError('')
                       setView('forgot_role')
                     }}
@@ -327,13 +358,12 @@ function LoginForm() {
           </>
         )}
 
-        {/* ════════════════════════════════════════════════════
+        {/* ══════════════════════════════════════════════
             VIEW: FORGOT — STEP 1 (select role)
-        ════════════════════════════════════════════════════ */}
+        ══════════════════════════════════════════════ */}
         {view === 'forgot_role' && (
           <div className="w-full">
 
-            {/* Back button */}
             <button
               onClick={goToLogin}
               className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-[#1b365d] transition font-medium mb-6"
@@ -379,11 +409,8 @@ function LoginForm() {
                     <option key={r.id} value={r.id}>{r.label}</option>
                   ))}
                 </select>
-                {fpRoleId && (
-                  <p className="text-[11px] text-slate-400 mt-1.5">
-                    Code will be sent to <span className="font-semibold text-slate-600">{fpEmail}</span>
-                  </p>
-                )}
+                {/* No email hint shown here — it will appear on the next step
+                    as a masked address after the server resolves it */}
               </div>
 
               <button
@@ -394,17 +421,15 @@ function LoginForm() {
                            py-3.5 rounded-lg transition text-base disabled:opacity-70 shadow-md
                            flex items-center justify-center gap-2"
               >
-                {loading
-                  ? <><Spinner /> Sending code…</>
-                  : 'Send Verification Code'}
+                {loading ? <><Spinner /> Sending code…</> : 'Send Verification Code'}
               </button>
             </div>
           </div>
         )}
 
-        {/* ════════════════════════════════════════════════════
+        {/* ══════════════════════════════════════════════
             VIEW: FORGOT — STEP 2 (enter OTP)
-        ════════════════════════════════════════════════════ */}
+        ══════════════════════════════════════════════ */}
         {view === 'forgot_otp' && (
           <div className="w-full">
 
@@ -428,10 +453,11 @@ function LoginForm() {
                 </svg>
               </div>
               <h2 className="font-serif text-2xl text-[#1b365d] font-bold mb-1">Check Your Email</h2>
-              <p className="text-slate-500 text-sm">
-                A 6-digit code was sent to
-              </p>
-              <p className="text-[#1b365d] font-semibold text-sm mt-0.5">{fpEmail}</p>
+              <p className="text-slate-500 text-sm">A 6-digit code was sent to</p>
+              {/* Only the masked address is shown — never the raw email */}
+              {fpMaskedEmail && (
+                <p className="text-[#1b365d] font-semibold text-sm mt-0.5">{fpMaskedEmail}</p>
+              )}
             </div>
 
             {fpError && (
@@ -449,9 +475,7 @@ function LoginForm() {
                   maxLength={6}
                   value={otpCode}
                   onChange={e => {
-                    // digits only
-                    const val = e.target.value.replace(/\D/g, '').slice(0, 6)
-                    setOtpCode(val)
+                    setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
                     setFpError('')
                   }}
                   placeholder="Enter 6-digit code"
@@ -463,11 +487,7 @@ function LoginForm() {
                   Didn't receive it?{' '}
                   <button
                     type="button"
-                    onClick={() => {
-                      setOtpCode('')
-                      setFpError('')
-                      handleSendOTP()
-                    }}
+                    onClick={() => { setOtpCode(''); setFpError(''); handleSendOTP() }}
                     className="text-[#1b365d] underline underline-offset-2 hover:opacity-70 transition font-semibold"
                     disabled={loading}
                   >
@@ -484,9 +504,7 @@ function LoginForm() {
                            py-3.5 rounded-lg transition text-base disabled:opacity-70 shadow-md
                            flex items-center justify-center gap-2"
               >
-                {loading
-                  ? <><Spinner /> Verifying…</>
-                  : 'Verify Code'}
+                {loading ? <><Spinner /> Verifying…</> : 'Verify Code'}
               </button>
             </div>
 
@@ -498,9 +516,9 @@ function LoginForm() {
           </div>
         )}
 
-        {/* ════════════════════════════════════════════════════
+        {/* ══════════════════════════════════════════════
             VIEW: FORGOT — STEP 3 (set new password)
-        ════════════════════════════════════════════════════ */}
+        ══════════════════════════════════════════════ */}
         {view === 'forgot_newpw' && (
           <div className="w-full">
 
@@ -535,6 +553,7 @@ function LoginForm() {
             )}
 
             <div className="space-y-4">
+
               {/* New password */}
               <div>
                 <label className={labelCls}>New Password</label>
@@ -560,7 +579,12 @@ function LoginForm() {
                   <div className="mt-2 space-y-1">
                     <div className="flex gap-1">
                       {[1,2,3,4].map(i => (
-                        <div key={i} className={`h-1 flex-1 rounded-full transition-colors ${pwStrength >= i ? PW_STRENGTH_COLORS[pwStrength] : 'bg-slate-200'}`} />
+                        <div
+                          key={i}
+                          className={`h-1 flex-1 rounded-full transition-colors ${
+                            pwStrength >= i ? PW_STRENGTH_COLORS[pwStrength] : 'bg-slate-200'
+                          }`}
+                        />
                       ))}
                     </div>
                     <p className={`text-[10px] font-semibold ${PW_STRENGTH_TEXT[pwStrength]}`}>
@@ -604,9 +628,7 @@ function LoginForm() {
                            py-3.5 rounded-lg transition text-base disabled:opacity-70 shadow-md
                            flex items-center justify-center gap-2 mt-2"
               >
-                {loading
-                  ? <><Spinner /> Resetting password…</>
-                  : '🔑 Reset Password'}
+                {loading ? <><Spinner /> Resetting password…</> : '🔑 Reset Password'}
               </button>
             </div>
           </div>
@@ -614,7 +636,7 @@ function LoginForm() {
 
       </div>
 
-      {/* ── STI Footer (shown on all views) ── */}
+      {/* ── STI Footer ── */}
       <div className="mt-auto pt-6 flex items-center justify-center gap-3 w-full border-t border-slate-100">
         <p className="text-[10px] text-slate-700 font-medium leading-tight text-center max-w-[250px]">
           This Record Management System was developed in collaboration with the 4th-year BSIS students, Class 2026 of STI College Tagum.
@@ -636,21 +658,15 @@ function LoginForm() {
   )
 }
 
-// ── Spinner ───────────────────────────────────────────────────────────────────
-
-function Spinner() {
-  return (
-    <div className="w-4 h-4 border-2 border-[#fde047] border-t-transparent rounded-full animate-spin flex-shrink-0" />
-  )
-}
-
-// ── Page shell ────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PAGE SHELL
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function LoginPage() {
   return (
     <div className="min-h-screen flex font-sans">
 
-      {/* Left: Branding */}
+      {/* Left: Branding panel */}
       <div
         className="flex-1 relative overflow-hidden flex flex-col justify-center px-16"
         style={{ backgroundColor: '#2e4769' }}
@@ -683,7 +699,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Right: Login / Reset form */}
+      {/* Right: Login / Reset wizard */}
       <Suspense fallback={
         <div className="w-[500px] bg-white flex items-center justify-center">
           <div className="w-6 h-6 border-2 border-[#1b365d] border-t-transparent rounded-full animate-spin" />
