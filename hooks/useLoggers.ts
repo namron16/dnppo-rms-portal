@@ -31,7 +31,7 @@ export function useLogger() {
   const log = useCallback(
     (action: LogActionType, description: string) => {
       if (!user) return
-      logAction(action, description, user.role)
+      logAction(action, description)
     },
     [user]
   )
@@ -53,7 +53,7 @@ export function useLogger() {
 
     // Contextual wrappers that auto-include the current user
     logRequestAccess: (docTitle: string) => {
-      if (user) logRequestAccess(user.role as AdminRole, docTitle)
+      if (user) logRequestAccess(user.role as AdminRole)
     },
     logApproveRequest: (requesterId: string, docTitle: string) => {
       logApproveRequest(requesterId, docTitle)

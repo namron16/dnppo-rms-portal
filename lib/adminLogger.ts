@@ -25,17 +25,20 @@ export function setCurrentLogger(role: AdminRole | null, userId?: string | null)
 }
 
 export async function logAction(
-  action: LogActionType,
-  description: string,
+  action: LogActionType | string,
+  description: string | Record<string, any>,
 ): Promise<void> {
   if (!_currentUserId || !_currentRole) return
 
   const supabase = createClient()
+  const descriptionValue =
+    typeof description === 'string' ? description : JSON.stringify(description)
+
   const { error } = await supabase.from('admin_logs').insert({
-    user_id:     _currentUserId,
-    role:        _currentRole,
+    user_id: _currentUserId,
+    role: _currentRole,
     action,
-    description,
+    description: descriptionValue,
   })
 
   if (error) console.warn('[adminLogger] Failed to write log:', error.message)
@@ -108,3 +111,19 @@ export const logPasswordChange = () =>
 
 export const logSaveForwardedDocument = (docTitle: string, fromRole: string, targetTable: string) =>
   logAction('save_forwarded_document', `Saved forwarded "${docTitle}" from ${fromRole} to ${targetTable}`)
+
+// Additional convenience loggers
+export const logForwardAttachment = (attachmentTitle: string, recipient: string) =>
+  logAction('forward_attachment', `Forwarded attachment "${attachmentTitle}" to ${recipient}`)
+
+export const logAddAttachment = (attachmentTitle: string, docTitle?: string) =>
+  logAction('add_attachment', `Added attachment "${attachmentTitle}"${docTitle ? ` to "${docTitle}"` : ''}`)
+
+export const logReviewDocument = (docTitle: string) =>
+  logAction('review_document', `Reviewed document "${docTitle}"`)
+
+export const logApproveDocument = (docTitle: string) =>
+  logAction('approve_document', `Approved document "${docTitle}"`)
+
+export const logRejectDocument = (docTitle: string) =>
+  logAction('reject_document', `Rejected document "${docTitle}"`)
