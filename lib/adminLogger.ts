@@ -103,6 +103,9 @@ export const logUpdatePersonnel = (personName: string) =>
 export const logEditLibraryItem = (itemTitle: string) =>
   logAction('edit_document', `Edited library item "${itemTitle}"`)
 
+export const logAddLibraryItem = (itemTitle: string) =>
+  logAction('add_library_item', `Added library item "${itemTitle}"`)
+
 export const logRenameAttachment = (oldName: string, newName: string) =>
   logAction('edit_document', `Renamed attachment "${oldName}" to "${newName}"`)
 
@@ -127,3 +130,25 @@ export const logApproveDocument = (docTitle: string) =>
 
 export const logRejectDocument = (docTitle: string) =>
   logAction('reject_document', `Rejected document "${docTitle}"`)
+
+export const logCreateJournal = (entryTitle: string) =>
+  logAction('create_journal', `Created journal entry "${entryTitle}"`)
+
+export const logArchiveJournal = (entryTitle: string) =>
+  logAction('archive_journal', `Archived journal entry "${entryTitle}"`)
+
+export const logArchiveLibraryItem = (itemTitle: string) =>
+  logAction('archive_library_item', `Archived library item "${itemTitle}"`)
+
+export const logAddUser = (userName: string, email: string) =>
+  logAction('add_org_member', `Added new user "${userName}" (${email})`)
+
+export const logDeleteOrgMember = (memberName: string) =>
+  logAction('remove_org_member', `Removed organization member "${memberName}"`)
+
+// Personnel (201) convenience loggers
+export const logCreatePersonnel = (personName: string) =>
+  logAction('create_personnel', `Created 201 file for "${personName}"`)
+
+export const logArchivePersonnel = (personName: string) =>
+  logAction('archive_document', `Archived personnel record "${personName}"`)

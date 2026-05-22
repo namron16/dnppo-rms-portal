@@ -9,7 +9,7 @@ import { Button }     from '@/components/ui/Button'
 import { useToast }   from '@/components/ui/Toast'
 import { useRealtimeOrgMembers } from '@/hooks/useRealtimeCollections'
 import { useAuth }    from '@/lib/auth'
-import { logAddOrgMember, logEditOrgMember } from '@/lib/adminLogger'
+import { logAddOrgMember, logEditOrgMember, logDeleteOrgMember } from '@/lib/adminLogger'
 import { supabase }   from '@/lib/supabase'
 
 // ── Types ──────────────────────────────────────
@@ -1013,8 +1013,10 @@ export default function OrganizationPage() {
       return
     }
 
+    const memberToDelete = members.find(m => m.id === id)
     setMembers(prev => prev.filter(m => m.id !== id).map(m => m.parentId === id ? { ...m, parentId: undefined } : m))
     setSelected(null)
+    if (memberToDelete) logDeleteOrgMember(memberToDelete.name)
     toast.success('Member removed.')
   }
 

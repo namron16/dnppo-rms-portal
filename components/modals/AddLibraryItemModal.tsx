@@ -11,6 +11,7 @@ import { AddLibraryItemSchema, zodErrors } from '@/lib/validations'
 import { useDriveUpload } from '@/hooks/useGDriveTool'
 import { useAuth } from '@/lib/auth'
 import { addLibraryItem } from '@/lib/data'
+import { logAddLibraryItem } from '@/lib/adminLogger'
 import type { LibraryCategory } from '@/types'
 
 type LibraryItemWithUrl = {
@@ -122,6 +123,7 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
       }
 
       await addLibraryItem(newItem)
+      await logAddLibraryItem(result.data.title)
 
       toast.success(`"${result.data.title}" added to the Library.`)
       onAdd?.(newItem)

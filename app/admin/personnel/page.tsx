@@ -21,7 +21,7 @@ import {
   CATEGORY_LABELS,
 } from '@/lib/data201'
 import { useAuth } from '@/lib/auth'
-import { logUpdatePersonnel } from '@/lib/adminLogger'
+import { logUpdatePersonnel, logCreatePersonnel, logUploadDocument } from '@/lib/adminLogger'
 import { supabase } from '@/lib/supabase'
 import { status201BadgeClass, status201Icon, formatDate } from '@/lib/utils'
 import type { Personnel201, Doc201Item, Doc201Status, Doc201Category } from '@/types'
@@ -1214,6 +1214,7 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
           ? ` (${separatedReason})`
           : ''
       toast.success(`201 file for ${form.rank} ${fullName} created — ${statusVal}${subNote}.`)
+      await logCreatePersonnel(fullName)
       onAdd(result)
       setForm({ lastName: '', firstName: '', rank: '', serialNo: '', unit: '' })
       setStatusVal('In Service')
@@ -1496,6 +1497,13 @@ export default function PersonnelFilesPage() {
       .then(({ error }) => {
         if (error) console.warn('last_updated update warning:', error.message)
       })
+
+    // Log upload events when a file URL is provided and status is COMPLETE
+    if (fileUrl && status === 'COMPLETE') {
+      const personObj = personnel.find(p => p.id === personId)
+      const docItem = personObj?.documents.find(d => d.id === docId)
+      void logUploadDocument(`${docItem?.label ?? docId} (${personObj?.name ?? personId})`)
+    }
   }
 
   function handleProfileSave(personId: string, updates: Partial<Personnel201> & {

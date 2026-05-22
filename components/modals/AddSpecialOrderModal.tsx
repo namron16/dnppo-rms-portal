@@ -12,6 +12,7 @@ import { useDriveUpload } from '@/hooks/useGDriveTool'
 import { useAuth } from '@/lib/auth'
 import type { SpecialOrder } from '@/types'
 import { FileText, Image as ImageIcon, Paperclip } from 'lucide-react'
+import { logUploadDocument } from '@/lib/adminLogger'
 
 type SOWithUrl = SpecialOrder & {
   fileUrl?:         string
@@ -111,6 +112,7 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
       }
 
       if (onAdd) await onAdd(newSO)
+      await logUploadDocument(result.data.subject)
       toast.success(`Special Order "${result.data.reference}" created.`)
       resetAndClose()
     } catch (err) {

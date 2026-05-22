@@ -7,6 +7,7 @@ import { Button }   from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { AddUserSchema, zodErrors } from '@/lib/validations'
 import { useAuth } from '@/lib/auth'
+import { logAddUser } from '@/lib/adminLogger'
 
 interface CreatedUser {
   id: string
@@ -156,6 +157,7 @@ export function AddUserModal({ open, onClose, onAdd }: Props) {
         }
       }
 
+      await logAddUser(fullName, result.data.email)
       toast.success(`User "${fullName}" created. A temporary password has been sent to ${result.data.email}.`)
       onAdd?.(newUser)
       resetAndClose()

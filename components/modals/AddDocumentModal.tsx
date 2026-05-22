@@ -11,6 +11,7 @@ import { AddDocumentSchema, zodErrors } from '@/lib/validations'
 import { assertCanUpload } from '@/lib/rbac'
 import { useAuth } from '@/lib/auth'
 import { useDriveUpload } from '@/hooks/useGDriveTool'
+import { logUploadDocument } from '@/lib/adminLogger'
 import type { MasterDocument } from '@/types'
 import type { AdminRole } from '@/lib/auth'
 
@@ -128,6 +129,7 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
       }
 
       if (onAdd) await onAdd(newDoc)
+      await logUploadDocument(result.data.title)
 
       toast.success(`"${result.data.title}" uploaded successfully.`)
       resetAndClose()

@@ -4,6 +4,7 @@
 // All supabase.from() table operations are unchanged.
 
 import { supabase } from '@/lib/supabase'
+import { logArchivePersonnel } from '@/lib/adminLogger'
 import type { Personnel201, Doc201Item, Doc201Status, Doc201Category } from '@/types'
 
 // ── Category display labels ────────────────────────────────────────────────
@@ -205,6 +206,16 @@ export async function archiveExpiredPersonnel201Records(
   }
 
   ids.forEach(id => archivedIds.add(id))
+  // Write audit logs for newly archived personnel records (if name available)
+  try {
+    expired.forEach(rec => {
+      const name = (rec as any).name ?? rec.id
+      void logArchivePersonnel(name)
+    })
+  } catch (err) {
+    // logging should not break the archive flow
+    console.warn('archiveExpiredPersonnel201Records: logging error', err)
+  }
   return archivedIds
 }
 

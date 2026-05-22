@@ -35,7 +35,7 @@ import {
   createApproval,
   type DocumentApproval,
 } from '@/lib/rbac'
-import { logDeleteDocument, logEditDocument, logRenameAttachment, logViewDocument } from '@/lib/adminLogger'
+import { logDeleteDocument, logEditDocument, logRenameAttachment, logViewDocument, logArchiveDocument, logDownloadDocument } from '@/lib/adminLogger'
 import { hasFullDocumentAccess } from '@/lib/permissions'
 import type { MasterDocument, DocLevel } from '@/types'
 import type { AdminRole } from '@/lib/auth'
@@ -452,6 +452,7 @@ export default function MasterPage() {
     try {
       setDownloadingKey(downloadKey)
       await saveFileFromUrl(fileUrl, suggestedName)
+      await logDownloadDocument(suggestedName)
       toast.success(`Downloaded "${suggestedName}" successfully.`)
     } catch { toast.error('Could not download the file.') }
     finally { setDownloadingKey(current => current === downloadKey ? null : current) }
@@ -460,6 +461,7 @@ export default function MasterPage() {
   const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, _sourceDocumentId?: string) => {
     try {
       await printFileFromUrl(fileUrl)
+      await logViewDocument(fileName)
       toast.success(`Opened print preview for "${fileName}".`)
     } catch { toast.error('Could not print the file.') }
   }, [toast])
@@ -558,6 +560,7 @@ export default function MasterPage() {
     const date = new Date().toISOString().split('T')[0]
     await addArchivedDoc({ id: `arc-md-${doc.id}`, title: doc.title, type: 'Master Document', archivedDate: date, archivedBy: user?.role ?? 'P1' })
     await archiveMasterDocument(doc.id)
+    await logArchiveDocument(doc.title, 'master document')
     setDocuments(prev => prev.filter(d => d.id !== doc.id))
     setSelection(null)
     toast.success('Document archived.')

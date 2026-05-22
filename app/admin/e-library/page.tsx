@@ -18,7 +18,7 @@ import { useSearch, useModal, useDisclosure } from '@/hooks'
 import { useRealtimeLibraryItems } from '@/hooks/useRealtimeCollections'
 import { useToast }              from '@/components/ui/Toast'
 import { Paperclip, Eye, PencilLine, Trash2, Download } from 'lucide-react'
-import { logDeleteDocument, logEditLibraryItem, logViewDocument } from '@/lib/adminLogger'
+import { logDeleteDocument, logEditLibraryItem, logViewDocument, logAddLibraryItem, logArchiveLibraryItem } from '@/lib/adminLogger'
 import {
   getLibraryItems,
   updateLibraryItem,
@@ -354,6 +354,7 @@ export default function LibraryPage() {
     const today = new Date().toISOString().split('T')[0]
     await addArchivedDoc({ id: `arc-lib-${item.id}`, title: item.title, type: 'Library Item', archivedDate: today, archivedBy: 'Admin' })
     await archiveLibraryItem(item.id)
+    await logArchiveLibraryItem(item.title)
     setItems(prev => prev.filter(i => i.id !== item.id))
     toast.success(`"${item.title}" has been archived.`)
     archiveDisc.close()
@@ -391,6 +392,7 @@ export default function LibraryPage() {
         await isDocumentUnrestricted(sourceDocumentId, 'library')
       }
       await printFileFromUrl(fileUrl)
+      await logViewDocument(fileName)
       toast.success(`Opened print preview for "${fileName}".`)
     } catch (error) {
       console.error('print error:', error)

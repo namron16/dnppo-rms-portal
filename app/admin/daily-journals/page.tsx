@@ -17,7 +17,7 @@ import { useToast } from '@/components/ui/Toast'
 import { AddJournalEntryModal } from '@/components/modals/AddJournalEntryModal'
 import { useDisclosure, useModal, useSearch } from '@/hooks'
 import { useRealtimeDailyJournals } from '@/hooks/useRealtimeCollections'
-import { logDeleteDocument, logEditJournal, logViewDocument } from '@/lib/adminLogger'
+import { logDeleteDocument, logEditJournal, logViewDocument, logCreateJournal, logArchiveJournal } from '@/lib/adminLogger'
 import { useAuth } from '@/lib/auth'
 import type { AddJournalEntryInput } from '@/lib/validations'
 import type { JournalEntry } from '@/types'
@@ -306,6 +306,7 @@ export default function DailyJournalsPage() {
     }
 
     await addDailyJournal(nextEntry)
+    await logCreateJournal(nextEntry.title)
     setEntries(prev => [nextEntry, ...prev])
     addModal.close()
   }
@@ -356,6 +357,7 @@ export default function DailyJournalsPage() {
     const today = new Date().toISOString().split('T')[0]
     await archiveDailyJournal(item.id)
     await addArchivedDoc({ id: `arc-dj-${item.id}`, title: item.title, type: 'Daily Journal', archivedDate: today, archivedBy: 'Admin' })
+    await logArchiveJournal(item.title)
     setEntries(prev => prev.filter(e => e.id !== item.id))
     if (viewDisc.payload?.id === item.id) viewDisc.close()
     archiveDisc.close()

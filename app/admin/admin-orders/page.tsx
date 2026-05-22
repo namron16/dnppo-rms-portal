@@ -29,7 +29,7 @@ import {
 } from '@/lib/data'
 import { supabase }             from '@/lib/supabase'
 import { statusBadgeClass }     from '@/lib/utils'
-import { logAction, logDeleteDocument, logRenameAttachment, logViewDocument } from '@/lib/adminLogger'
+import { logAction, logDeleteDocument, logRenameAttachment, logViewDocument, logDownloadDocument } from '@/lib/adminLogger'
 import { useAuth } from '@/lib/auth'
 import type { AdminRole } from '@/lib/auth'
 import { useRealtimeSpecialOrders } from '@/hooks/useRealtimeSpecialOrders'
@@ -1109,6 +1109,7 @@ export default function AdminOrdersPage() {
   const handleDownloadFile = useCallback(async (fileUrl: string, fileName: string) => {
     try {
       await saveFileFromUrl(fileUrl, getSuggestedFileName(fileName, fileUrl))
+      await logDownloadDocument(fileName)
       toast.success(`Downloaded "${fileName}" successfully.`)
     } catch { toast.error('Could not download the file.') }
   }, [toast])
@@ -1116,6 +1117,7 @@ export default function AdminOrdersPage() {
   const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, _sourceDocumentId?: string) => {
     try {
       await printFileFromUrl(fileUrl)
+      await logViewDocument(fileName)
       toast.success(`Opened print preview for "${fileName}".`)
     } catch { toast.error('Could not print the file.') }
   }, [toast])
