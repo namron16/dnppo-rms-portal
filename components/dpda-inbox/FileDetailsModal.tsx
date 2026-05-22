@@ -21,7 +21,7 @@ import {
 import { DPDAStatusBadge } from '@/components/ui/DPDAStatusBadge'
 import { PriorityBadge } from '@/components/ui/PriorityBadge'
 
-interface ForwardedDocument {
+export interface ForwardedDocument {
   id: string
   sender_role: string
   document_type: string
@@ -49,7 +49,7 @@ interface ForwardedDocument {
   }>
 }
 
-interface FileDetailsModalProps {
+export interface FileDetailsModalProps {
   document: ForwardedDocument | null
   isOpen: boolean
   onClose: () => void

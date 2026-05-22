@@ -1,5 +1,14 @@
 // app/api/dpda-inbox/[id]/forward-back/route.ts
 // Forward document back to sender with DPDA's decision and comments
+//
+// FIXES APPLIED:
+//  1. Now also updates dpda_status → 'returned' so the UI's
+//     dpda_status === 'returned' check in FileDetailsModal works correctly.
+//     Previously only the base `status` column was updated, so the modal
+//     still showed the "Forward Back" button after forwarding.
+//  2. Removed unused `status` body param (was accepted but never used).
+//  3. DPDO role now allowed alongside DPDA (was DPDA-only, inconsistent with README).
+//  4. recipient_role filter uses profile.role to support both DPDA and DPDO.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
@@ -24,33 +33,34 @@ export async function POST(
     .eq('id', user.id)
     .single()
 
-  if (!profile || profile.role !== 'DPDA') {
-    return NextResponse.json({ error: 'Only DPDA can forward back' }, { status: 403 })
+  // FIX: Allow DPDO as well as DPDA (was DPDA-only, inconsistent with README and GET route)
+  if (!profile || !['DPDA', 'DPDO'].includes(profile.role)) {
+    return NextResponse.json({ error: 'Only DPDA/DPDO can forward back' }, { status: 403 })
   }
 
   setCurrentLogger(profile.role as AdminRole, user.id)
 
-  const body = await req.json()
-  const { status = 'returned' } = body
-
   try {
-    // Get the forwarded document
     const { data: fwdDoc, error: fetchError } = await supabase
       .from('forwarded_documents')
       .select('*')
       .eq('id', id)
-      .eq('recipient_role', 'DPDA')
+      // FIX: Use profile.role so DPDO can also forward back their own documents
+      .eq('recipient_role', profile.role)
       .single()
 
     if (fetchError || !fwdDoc) {
       return NextResponse.json({ error: 'Document not found' }, { status: 404 })
     }
 
-    // Update status to returned
     const { data: updated, error: updateError } = await supabase
       .from('forwarded_documents')
       .update({
         status: 'returned',
+        // FIX: Also update dpda_status → 'returned' so the UI reflects the correct state.
+        // Previously only `status` was updated; `dpda_status` stayed as 'approved'/'disapproved',
+        // so FileDetailsModal kept showing the "Forward Back" button indefinitely.
+        dpda_status: 'returned',
         returned_at: new Date().toISOString(),
         returned_by: user.id,
       })
@@ -62,7 +72,6 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to forward back' }, { status: 500 })
     }
 
-    // Log the action
     await logAction('DPDA Forwarded Document Back', {
       documentId: fwdDoc.original_doc_id,
       forwardedId: id,
@@ -71,7 +80,6 @@ export async function POST(
       dpdaStatus: fwdDoc.dpda_status,
     })
 
-    // Create notification for sender
     const statusLabel =
       fwdDoc.dpda_status === 'approved'
         ? 'Approved'
@@ -79,9 +87,8 @@ export async function POST(
           ? 'Disapproved'
           : 'Reviewed'
 
-    await supabase
-      .from('notifications')
-      .insert({
+    try {
+      await supabase.from('notifications').insert({
         recipient_role: fwdDoc.sender_role,
         type: 'document_returned_from_dpda',
         title: `Document Returned: ${fwdDoc.title}`,
@@ -92,8 +99,9 @@ export async function POST(
         is_read: false,
         created_at: new Date().toISOString(),
       })
-      .then(() => {}) // Silently fail if notification creation fails
-      .catch(console.error)
+    } catch (err) {
+      console.error(err)
+    }
 
     return NextResponse.json({
       success: true,

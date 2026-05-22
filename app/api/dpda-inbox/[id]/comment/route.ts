@@ -1,5 +1,10 @@
 // app/api/dpda-inbox/[id]/comment/route.ts
 // Add comments to a forwarded document
+//
+// FIXES APPLIED:
+//  1. DPDO role now allowed alongside DPDA in both POST and GET handlers
+//     (was blocked despite README and GET /api/dpda-inbox allowing it).
+//  2. recipient_role filter in GET uses profile.role so DPDO can read their own docs.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
@@ -24,8 +29,9 @@ export async function POST(
     .eq('id', user.id)
     .single()
 
-  if (!profile || profile.role !== 'DPDA') {
-    return NextResponse.json({ error: 'Only DPDA can add comments' }, { status: 403 })
+  // FIX: Allow DPDO as well as DPDA (was DPDA-only, inconsistent with README and GET route)
+  if (!profile || !['DPDA', 'DPDO'].includes(profile.role)) {
+    return NextResponse.json({ error: 'Only DPDA/DPDO can add comments' }, { status: 403 })
   }
 
   setCurrentLogger(profile.role as AdminRole, user.id)
@@ -38,30 +44,35 @@ export async function POST(
   }
 
   try {
-    // Get the forwarded document
     const { data: fwdDoc } = await supabase
       .from('forwarded_documents')
       .select('dpda_comments')
       .eq('id', id)
-      .eq('recipient_role', 'DPDA')
+      .eq('recipient_role', profile.role)
       .single()
 
     if (!fwdDoc) {
       return NextResponse.json({ error: 'Document not found' }, { status: 404 })
     }
 
-    // Append comment to existing comments
-    const existingComments = fwdDoc.dpda_comments ? JSON.parse(fwdDoc.dpda_comments) : []
+    // Append comment to existing comments array
+    // dpda_comments is JSONB — safe to parse directly; fallback to [] if null/empty
+    const existingComments = fwdDoc.dpda_comments
+      ? (typeof fwdDoc.dpda_comments === 'string'
+          ? JSON.parse(fwdDoc.dpda_comments)
+          : fwdDoc.dpda_comments)
+      : []
+
     const updatedComments = [
       ...existingComments,
       {
         text: comment,
         author: profile.display_name || profile.role,
         timestamp: new Date().toISOString(),
+        action: 'comment',
       },
     ]
 
-    // Update the document
     const { data: updated, error: updateError } = await supabase
       .from('forwarded_documents')
       .update({
@@ -120,7 +131,12 @@ export async function GET(
       return NextResponse.json({ error: 'Document not found' }, { status: 404 })
     }
 
-    const comments = fwdDoc.dpda_comments ? JSON.parse(fwdDoc.dpda_comments) : []
+    // dpda_comments is JSONB — handle both parsed object and raw string
+    const comments = fwdDoc.dpda_comments
+      ? (typeof fwdDoc.dpda_comments === 'string'
+          ? JSON.parse(fwdDoc.dpda_comments)
+          : fwdDoc.dpda_comments)
+      : []
 
     return NextResponse.json({
       success: true,

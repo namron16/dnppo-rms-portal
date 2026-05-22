@@ -1,5 +1,11 @@
 // app/admin/dpda-inbox/page.tsx
 // DPDA Inbox - Main page for reviewing forwarded documents
+//
+// FIXES APPLIED:
+//  1. Moved role guard AFTER all hook declarations (React rules of hooks violation)
+//  2. Status count cards now use per-status totals from API (not filtered local page data)
+//  3. Removed unused getStatusCount() function (dead code)
+//  4. Wired up the attachment download button in desktop table
 
 'use client'
 
@@ -17,38 +23,19 @@ import { useAuth } from '@/lib/auth'
 import { DPDAFilterBar } from '@/components/dpda-inbox/DPDAFilterBar'
 import { ForwardedFileCard } from '@/components/dpda-inbox/ForwardedFileCard'
 import { FileDetailsModal } from '@/components/dpda-inbox/FileDetailsModal'
+import type { ForwardedDocument } from '@/components/dpda-inbox/FileDetailsModal'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 
-interface ForwardedDocument {
-  id: string
-  sender_role: string
-  recipient_role: string
-  original_doc_id: string
-  document_type: string
-  title: string
-  notes?: string
-  gdrive_file_id: string
-  gdrive_url: string
-  file_size_bytes?: number
-  file_name?: string
-  mime_type?: string
-  status: string
-  priority?: string
-  received_at: string
-  created_at: string
-  dpda_comments?: string
-  dpda_status?: string
-  dpda_reviewed_at?: string
-  forwarded_attachments?: Array<{
-    id: string
-    title: string
-    file_name?: string
-    file_size_bytes?: number
-    mime_type?: string
-    gdrive_file_id: string
-    gdrive_url: string
-  }>
+// Use the shared `ForwardedDocument` type exported by `FileDetailsModal` to
+// avoid duplicate incompatible definitions across modules.
+
+// FIX: Added statusCounts to track per-status totals from the API
+interface StatusCounts {
+  pending: number
+  approved: number
+  disapproved: number
+  returned: number
 }
 
 const ITEMS_PER_PAGE = 12
@@ -59,6 +46,14 @@ export default function DPDAInboxPage() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
+
+  // FIX: Separate state for per-status counts (from API) vs local page data
+  const [statusCounts, setStatusCounts] = useState<StatusCounts>({
+    pending: 0,
+    approved: 0,
+    disapproved: 0,
+    returned: 0,
+  })
 
   // Filters and pagination
   const [searchQuery, setSearchQuery] = useState('')
@@ -72,19 +67,6 @@ export default function DPDAInboxPage() {
   // Modal state
   const [selectedDocument, setSelectedDocument] = useState<ForwardedDocument | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
-
-  // Verify DPDA role
-  if (user && !['DPDA', 'DPDO'].includes(user.role)) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-slate-900">Access Denied</h2>
-          <p className="text-slate-600 mt-2">Only DPDA/DPDO can access this module</p>
-        </div>
-      </div>
-    )
-  }
 
   const fetchDocuments = useCallback(async () => {
     setLoading(true)
@@ -101,7 +83,7 @@ export default function DPDAInboxPage() {
       })
 
       const res = await fetch(`/api/dpda-inbox?${params}`)
-      
+
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}))
         throw new Error(errorData.error || 'Failed to fetch documents')
@@ -110,6 +92,11 @@ export default function DPDAInboxPage() {
       const data = await res.json()
       setDocuments(data.data || [])
       setTotalCount(data.total || 0)
+
+      // FIX: Read per-status counts returned by the API instead of filtering local page
+      if (data.statusCounts) {
+        setStatusCounts(data.statusCounts)
+      }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'An error occurred'
       setError(errorMsg)
@@ -129,6 +116,20 @@ export default function DPDAInboxPage() {
   useEffect(() => {
     fetchDocuments()
   }, [fetchDocuments])
+
+  // FIX: Role guard moved here — AFTER all hook declarations — to satisfy React rules of hooks.
+  // Previously this guard appeared between hook declarations, which is a rules violation.
+  if (user && !['DPDA', 'DPDO'].includes(user.role)) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-bold text-slate-900">Access Denied</h2>
+          <p className="text-slate-600 mt-2">Only DPDA/DPDO can access this module</p>
+        </div>
+      </div>
+    )
+  }
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -161,10 +162,7 @@ export default function DPDAInboxPage() {
     setIsModalOpen(true)
   }
 
-  const getStatusCount = (status: string) => {
-    if (status === 'all') return totalCount
-    return documents.filter((doc) => doc.dpda_status === status).length
-  }
+  // FIX: Removed unused getStatusCount() function
 
   return (
     <div className="w-full min-h-screen bg-slate-50 py-8">
@@ -194,39 +192,40 @@ export default function DPDAInboxPage() {
           </div>
 
           {/* Status Summary Cards */}
+          {/* FIX: Values now come from statusCounts (API totals), not filtered local page data */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             {[
-              { 
-                label: 'Total Documents', 
-                value: totalCount, 
+              {
+                label: 'Total Documents',
+                value: totalCount,
                 color: 'from-slate-500 to-slate-600',
                 textColor: 'text-slate-700',
                 bgColor: 'bg-slate-50'
               },
               {
                 label: 'Pending Review',
-                value: documents.filter((d) => d.dpda_status === 'pending').length,
+                value: statusCounts.pending,
                 color: 'from-amber-500 to-amber-600',
                 textColor: 'text-amber-700',
                 bgColor: 'bg-amber-50'
               },
               {
                 label: 'Approved',
-                value: documents.filter((d) => d.dpda_status === 'approved').length,
+                value: statusCounts.approved,
                 color: 'from-green-500 to-green-600',
                 textColor: 'text-green-700',
                 bgColor: 'bg-green-50'
               },
               {
                 label: 'Disapproved',
-                value: documents.filter((d) => d.dpda_status === 'disapproved').length,
+                value: statusCounts.disapproved,
                 color: 'from-red-500 to-red-600',
                 textColor: 'text-red-700',
                 bgColor: 'bg-red-50'
               },
               {
                 label: 'Returned',
-                value: documents.filter((d) => d.dpda_status === 'returned').length,
+                value: statusCounts.returned,
                 color: 'from-purple-500 to-purple-600',
                 textColor: 'text-purple-700',
                 bgColor: 'bg-purple-50'
@@ -306,10 +305,10 @@ export default function DPDAInboxPage() {
 
                 {/* Table Body */}
                 <div>
-                  {documents.map((doc, idx) => (
+                  {documents.map((doc) => (
                     <div
                       key={doc.id}
-                      className={`border-b border-slate-200 last:border-b-0 px-6 py-4 hover:bg-slate-50 transition-colors cursor-pointer group`}
+                      className="border-b border-slate-200 last:border-b-0 px-6 py-4 hover:bg-slate-50 transition-colors cursor-pointer group"
                       onClick={() => handleViewDocument(doc)}
                     >
                       <div className="grid grid-cols-12 gap-4 items-center">
@@ -373,7 +372,7 @@ export default function DPDAInboxPage() {
                             {doc.dpda_status === 'returned_with_comments' && (
                               <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-50 text-blue-700 rounded-md text-xs font-medium border border-blue-200">
                                 <div className="w-1.5 h-1.5 bg-blue-500 rounded-full"></div>
-                                Returned
+                                With Comments
                               </span>
                             )}
                             {doc.dpda_status === 'returned' && (
@@ -400,6 +399,7 @@ export default function DPDAInboxPage() {
                         </div>
 
                         {/* Actions Column */}
+                        {/* FIX: Attachment download button now opens the modal where files are listed */}
                         <div className="col-span-2 flex justify-end gap-2">
                           <button
                             onClick={(e) => {
@@ -414,8 +414,11 @@ export default function DPDAInboxPage() {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation()
+                                // FIX: Open modal to view/download attachments instead of no-op
+                                handleViewDocument(doc)
                               }}
                               className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg transition-colors text-xs font-medium border border-slate-200 flex items-center gap-1"
+                              title="View attachments"
                             >
                               <Download className="w-3 h-3" />
                               {doc.forwarded_attachments.length}
@@ -476,9 +479,14 @@ export default function DPDAInboxPage() {
                       if (Math.abs(page - currentPage) <= 1) return page
                       return null
                     }).map((page, idx, arr) => {
+                      // When `page` is null we want to render an ellipsis, but only
+                      // if there's a gap between the previous and next numeric pages.
+                      // Use the neighboring entries to compute the gap instead of
+                      // attempting to coerce the null `page` value to a number.
                       if (page === null) {
-                        const nextPage = arr[idx + 1]
-                        if (nextPage && nextPage - page > 1) {
+                        const nextPage = arr[idx + 1] as number | null
+                        const prevPage = arr[idx - 1] as number | null
+                        if (nextPage && prevPage && nextPage - prevPage > 1) {
                           return (
                             <span key={`ellipsis-${idx}`} className="px-2 py-2 text-slate-500">
                               ...

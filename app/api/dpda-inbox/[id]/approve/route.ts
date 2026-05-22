@@ -1,5 +1,11 @@
 // app/api/dpda-inbox/[id]/approve/route.ts
 // Approve a forwarded document
+//
+// FIXES APPLIED:
+//  1. dpda_comments now stored as a JSONB array (JSON.stringify'd),
+//     not a raw string. The migration defines the column as JSONB DEFAULT '[]',
+//     so writing a plain string risks a type error or silent coercion.
+//  2. DPDO role now allowed alongside DPDA (was blocked despite README stating both have access).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
@@ -24,8 +30,9 @@ export async function POST(
     .eq('id', user.id)
     .single()
 
-  if (!profile || profile.role !== 'DPDA') {
-    return NextResponse.json({ error: 'Only DPDA can approve documents' }, { status: 403 })
+  // FIX: Allow DPDO as well as DPDA (was DPDA-only, inconsistent with README and GET route)
+  if (!profile || !['DPDA', 'DPDO'].includes(profile.role)) {
+    return NextResponse.json({ error: 'Only DPDA/DPDO can approve documents' }, { status: 403 })
   }
 
   setCurrentLogger(profile.role as AdminRole, user.id)
@@ -33,18 +40,33 @@ export async function POST(
   const body = await req.json()
   const { comments = '' } = body
 
+  // FIX: Build dpda_comments as a JSONB-compatible array instead of a raw string.
+  // The column is defined as JSONB DEFAULT '[]' in the migration.
+  // Storing a plain string would either throw or silently coerce, and would break
+  // the comment route's JSON.parse() when reading existing comments later.
+  const commentsArray = comments.trim()
+    ? [
+        {
+          text: comments,
+          author: profile.display_name || profile.role,
+          timestamp: new Date().toISOString(),
+          action: 'approved',
+        },
+      ]
+    : []
+
   try {
-    // Update the forwarded document with approval
     const { data: updated, error: updateError } = await supabase
       .from('forwarded_documents')
       .update({
         dpda_status: 'approved',
         dpda_reviewed_by: user.id,
         dpda_reviewed_at: new Date().toISOString(),
-        dpda_comments: comments,
+        // FIX: Store as JSON string of an array, not a raw string
+        dpda_comments: JSON.stringify(commentsArray),
       })
       .eq('id', id)
-      .eq('recipient_role', 'DPDA')
+      .eq('recipient_role', profile.role)
       .select()
       .single()
 
@@ -52,7 +74,6 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to approve document' }, { status: 500 })
     }
 
-    // Log the action
     await logAction('DPDA Approved Document', {
       documentId: updated.original_doc_id,
       forwardedId: id,
@@ -61,7 +82,6 @@ export async function POST(
       comments: comments.substring(0, 100),
     })
 
-    // Trigger notification to sender (you'll implement this via Supabase realtime)
     await supabase
       .from('notifications')
       .insert({
@@ -75,8 +95,7 @@ export async function POST(
         is_read: false,
         created_at: new Date().toISOString(),
       })
-      .then(() => {}) // Silently fail if notification creation fails
-      .catch(console.error)
+      .then(() => {})
 
     return NextResponse.json({
       success: true,
