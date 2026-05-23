@@ -510,7 +510,7 @@ function LoginForm() {
 
             <div className="mt-5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg">
               <p className="text-[11px] text-amber-800 text-center">
-                ⏱ The code expires in <strong>1 hour</strong>. Check spam/junk if not received.
+                ⏱ The code expires in <strong>10 mins</strong>. Check spam/junk if not received.
               </p>
             </div>
           </div>
