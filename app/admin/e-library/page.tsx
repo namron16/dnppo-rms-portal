@@ -1,10 +1,11 @@
 'use client'
 // app/admin/e-library/page.tsx
-// FIX: loadAll filters library items by user.role (uploaded_by) so each
-//      account only sees the items they personally added.
-//      DPDA, DPDO, and admin are privileged roles that see all items.
+// UPDATED:
+//  1. Added ForwardDocumentModal support — any role with canUpload can forward items.
+//  2. Replaced flat action buttons in the table with a single "⋯" dropdown action menu.
+//  3. Forwarding uses the shared /api/forward endpoint via forwardDocument().
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader }            from '@/components/ui/PageHeader'
 import { Badge }                 from '@/components/ui/Badge'
 import { Button }                from '@/components/ui/Button'
@@ -15,10 +16,11 @@ import { ToolbarSelect }         from '@/components/ui/Toolbar'
 import { Modal }                 from '@/components/ui/Modal'
 import { Pagination }            from '@/components/ui/Pagination'
 import { AddLibraryItemModal }   from '@/components/modals/AddLibraryItemModal'
+import { ForwardDocumentModal }  from '@/components/modals/ForwardDocumentModal'
 import { useSearch, useModal, useDisclosure, usePagination } from '@/hooks'
 import { useRealtimeLibraryItems } from '@/hooks/useRealtimeCollections'
 import { useToast }              from '@/components/ui/Toast'
-import { Paperclip, Eye, PencilLine, Trash2, Download } from 'lucide-react'
+import { Eye, PencilLine, Trash2, Download, Paperclip, Share2, Archive, MoreHorizontal } from 'lucide-react'
 import { logDeleteDocument, logEditLibraryItem, logViewDocument, logAddLibraryItem, logArchiveLibraryItem } from '@/lib/adminLogger'
 import {
   getLibraryItems,
@@ -29,8 +31,8 @@ import {
   getArchivedDocs,
 } from '@/lib/data'
 import { libraryBadgeClass }     from '@/lib/utils'
-import { useAuth } from '@/lib/auth'
-import type { AdminRole } from '@/lib/auth'
+import { useAuth }               from '@/lib/auth'
+import type { AdminRole }        from '@/lib/auth'
 import {
   canUploadDocuments, canEditDocuments, canDeleteDocuments, canArchiveDocuments,
 } from '@/lib/permissions'
@@ -38,16 +40,103 @@ import { isDocumentUnrestricted } from '@/lib/rbac'
 import type { LibraryItem, LibraryCategory } from '@/types'
 
 // ── Privileged roles that can see ALL items regardless of uploader ────────────
-// FIX: DPDA, DPDO, and admin see everything; all other roles see only their own.
 const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
 function canSeeAllDocuments(role: string): boolean {
   return PRIVILEGED_ROLES.includes(role)
 }
 
 type LibraryItemWithUrl = LibraryItem & {
-  fileUrl?:     string
-  description?: string
-  uploaded_by?: string   // FIX: track who added this item
+  fileUrl?:       string
+  description?:   string
+  uploaded_by?:   string
+  gdrive_file_id?: string
+  pool_account_id?: string
+  mime_type?:     string
+  file_size_bytes?: number
+}
+
+// ── Action Menu ───────────────────────────────────────────────────────────────
+
+function ActionMenu({
+  item,
+  canEdit,
+  canDelete,
+  canArchive,
+  canForward,
+  onView,
+  onEdit,
+  onDelete,
+  onArchive,
+  onForward,
+}: {
+  item: LibraryItemWithUrl
+  canEdit: boolean
+  canDelete: boolean
+  canArchive: boolean
+  canForward: boolean
+  onView: () => void
+  onEdit: () => void
+  onDelete: () => void
+  onArchive: () => void
+  onForward: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    if (open) document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  const menuItem = (label: string, icon: React.ReactNode, onClick: () => void, danger = false) => (
+    <button
+      onClick={() => { onClick(); setOpen(false) }}
+      className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm rounded-md transition-colors text-left
+        ${danger
+          ? 'text-red-600 hover:bg-red-50'
+          : 'text-slate-700 hover:bg-slate-50'}`}
+    >
+      {icon}
+      {label}
+    </button>
+  )
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setOpen(v => !v)}
+        title="Actions"
+        className="h-8 w-8 p-0 flex items-center justify-center"
+      >
+        <MoreHorizontal size={16} className="text-slate-500" />
+      </Button>
+
+      {open && (
+        <div className="absolute right-0 top-9 z-50 w-44 rounded-xl border border-slate-200 bg-white shadow-lg py-1.5 px-1">
+          {menuItem('View', <Eye size={14} />, onView)}
+          {item.fileUrl && menuItem(
+            'Download',
+            <Download size={14} />,
+            () => window.open(item.fileUrl, '_blank')
+          )}
+          {canForward && menuItem('Forward', <Share2 size={14} />, onForward)}
+          {canEdit && menuItem('Edit', <PencilLine size={14} />, onEdit)}
+          {canArchive && (
+            <>
+              <div className="my-1 border-t border-slate-100" />
+              {menuItem('Archive', <Archive size={14} />, onArchive, true)}
+            </>
+          )}
+          {canDelete && menuItem('Delete', <Trash2 size={14} />, onDelete, true)}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── View Item Modal ───────────────────────────────────────────────────────────
@@ -223,13 +312,7 @@ function EditLibraryItemModal({
 async function printFileFromUrl(fileUrl: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const iframe = document.createElement('iframe')
-    iframe.style.position = 'fixed'
-    iframe.style.right    = '0'
-    iframe.style.bottom   = '0'
-    iframe.style.width    = '0'
-    iframe.style.height   = '0'
-    iframe.style.border   = '0'
-    iframe.style.opacity  = '0'
+    Object.assign(iframe.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0', opacity: '0' })
 
     let settled = false
     let blobUrl: string | null = null
@@ -249,38 +332,25 @@ async function printFileFromUrl(fileUrl: string): Promise<void> {
     }, 15000)
 
     fetch(fileUrl)
-      .then(response => {
-        if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`)
-        return response.blob()
-      })
+      .then(r => { if (!r.ok) throw new Error(`Fetch failed: ${r.status}`); return r.blob() })
       .then(blob => {
         blobUrl = URL.createObjectURL(blob)
         iframe.src = blobUrl
         iframe.onload = () => {
           const target = iframe.contentWindow
-          if (!target) {
-            finish(() => { cleanup(); reject(new Error('Unable to load printable content.')) })
-            return
-          }
+          if (!target) { finish(() => { cleanup(); reject(new Error('Unable to load content.')) }); return }
           window.setTimeout(() => {
             finish(() => {
               try { target.focus(); target.print(); resolve() }
-              catch (error) { reject(error instanceof Error ? error : new Error('Print failed.')) }
+              catch (e) { reject(e instanceof Error ? e : new Error('Print failed.')) }
               finally { window.setTimeout(cleanup, 1200) }
             })
           }, 500)
         }
-        iframe.onerror = () => {
-          finish(() => { cleanup(); reject(new Error('Could not load file for printing.')) })
-        }
+        iframe.onerror = () => finish(() => { cleanup(); reject(new Error('Could not load file.')) })
         document.body.appendChild(iframe)
       })
-      .catch(error => {
-        finish(() => {
-          cleanup()
-          reject(error instanceof Error ? error : new Error('Failed to prepare file for printing.'))
-        })
-      })
+      .catch(e => finish(() => { cleanup(); reject(e instanceof Error ? e : new Error('Fetch failed.')) }))
   })
 }
 
@@ -298,15 +368,20 @@ export default function LibraryPage() {
 
   const canUploadLibrary = user?.permissions.canUpload ?? false
   const isSuperAdmin     = user?.role === 'P1'
-  const canEdit          = user?.role ? canEditDocuments(user.role)   : false
-  const canDelete        = user?.role ? canDeleteDocuments(user.role) : false
-  const canArchive       = user?.role ? canArchiveDocuments(user.role): false
+  const canEdit          = user?.role ? canEditDocuments(user.role)    : false
+  const canDelete        = user?.role ? canDeleteDocuments(user.role)  : false
+  const canArchive       = user?.role ? canArchiveDocuments(user.role) : false
+  const canForward       = canUploadLibrary  // same permission gate as upload
 
-  const newModal    = useModal()
-  const viewDisc    = useDisclosure<LibraryItemWithUrl>()
-  const editDisc    = useDisclosure<LibraryItemWithUrl>()
-  const archiveDisc = useDisclosure<LibraryItemWithUrl>()
-  const deleteDisc  = useDisclosure<LibraryItemWithUrl>()
+  const newModal      = useModal()
+  const viewDisc      = useDisclosure<LibraryItemWithUrl>()
+  const editDisc      = useDisclosure<LibraryItemWithUrl>()
+  const archiveDisc   = useDisclosure<LibraryItemWithUrl>()
+  const deleteDisc    = useDisclosure<LibraryItemWithUrl>()
+  const forwardDisc   = useDisclosure<LibraryItemWithUrl>()
+
+  // Build attachmentsMap (empty for library items that use flat file model)
+  const attachmentsMap = new Map<string, any[]>()
 
   const { query, setQuery, filtered: searched } = useSearch(
     items,
@@ -315,19 +390,10 @@ export default function LibraryPage() {
   const filtered = searched.filter(i => catFilter === 'ALL' || i.category === catFilter)
 
   const {
-    currentPage,
-    pageSize,
-    totalPages,
-    paginatedItems,
-    setCurrentPage,
-    setPageSize,
-  } = usePagination({
-    items: filtered,
-    defaultPageSize: 25,
-    resetDeps: [query, catFilter],
-  })
+    currentPage, pageSize, totalPages, paginatedItems, setCurrentPage, setPageSize,
+  } = usePagination({ items: filtered, defaultPageSize: 25, resetDeps: [query, catFilter] })
 
-  // ── Load — FIX: filter by uploaded_by unless user is privileged ──────────
+  // ── Load ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!user) return
     Promise.all([getLibraryItems(), getArchivedDocs()]).then(([data, archived]) => {
@@ -337,27 +403,18 @@ export default function LibraryPage() {
           .filter((id: string) => id.startsWith('arc-lib-'))
           .map((id: string) => id.replace('arc-lib-', ''))
       )
-
-      // FIX: privileged roles see all items; everyone else sees only their own.
       const visible = (data as LibraryItemWithUrl[]).filter(item => {
         if (archivedIds.has(item.id)) return false
-        if (canSeeAllDocuments(user.role)) return true        // privileged: see all
+        if (canSeeAllDocuments(user.role)) return true
         return !item.uploaded_by || item.uploaded_by === user.role
-        //      ↑ `!item.uploaded_by` keeps legacy records visible during migration
       })
-
       setItems(visible)
       setLoading(false)
     })
   }, [user])
 
-  // The modal already handles Drive upload + DB persist internally.
-  // This function just appends the returned item to local state.
   function handleAdd(newItem: LibraryItemWithUrl) {
-    if (!canUploadLibrary) {
-      toast.error('Only P1–P10 accounts can add e-Library items.')
-      return
-    }
+    if (!canUploadLibrary) { toast.error('Only P1–P10 accounts can add e-Library items.'); return }
     setItems(prev => [newItem, ...prev])
   }
 
@@ -397,9 +454,7 @@ export default function LibraryPage() {
     deleteDisc.close()
   }
 
-  const handlePrintFile = useCallback(async (
-    fileUrl: string, fileName: string, sourceDocumentId?: string,
-  ) => {
+  const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, sourceDocumentId?: string) => {
     try {
       if (user && !isSuperAdmin) {
         if (!sourceDocumentId) { toast.error('Printing is only allowed for files approved by P1.'); return }
@@ -421,12 +476,27 @@ export default function LibraryPage() {
     TEMPLATE:  items.filter(i => i.category === 'TEMPLATE').length,
   }
 
+  // Build the forward document payload shape expected by ForwardDocumentModal
+  const forwardPayload = forwardDisc.payload
+    ? {
+        id:            forwardDisc.payload.id,
+        title:         forwardDisc.payload.title,
+        type:          `Library · ${forwardDisc.payload.category}`,
+        documentType:  'library' as const,
+        gdriveFileId:  forwardDisc.payload.gdrive_file_id ?? '',
+        gdriveUrl:     forwardDisc.payload.fileUrl ?? '',
+        poolAccountId: forwardDisc.payload.pool_account_id ?? '',
+        fileName:      forwardDisc.payload.title,
+        fileSizeBytes: forwardDisc.payload.file_size_bytes,
+        mimeType:      forwardDisc.payload.mime_type,
+      }
+    : null
+
   return (
     <>
       <PageHeader title="e-Library" />
 
-      <div className="p-8 space-y-6">
-
+      <div className="flex h-full min-h-0 flex-col gap-6 p-8">
         {/* Stats */}
         <div className="grid grid-cols-4 gap-4">
           {[
@@ -446,15 +516,10 @@ export default function LibraryPage() {
         </div>
 
         {/* Main table */}
-        <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-hidden">
-
+        <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-visible flex flex-1 min-h-0 flex-col">
           <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50">
             <SearchInput value={query} onChange={setQuery} placeholder="Search library…" className="max-w-xs flex-1" />
-            <ToolbarSelect
-              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                setCat(e.target.value as LibraryCategory | 'ALL')
-              }
-            >
+            <ToolbarSelect onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCat(e.target.value as LibraryCategory | 'ALL')}>
               <option value="ALL">All Categories</option>
               <option value="MANUAL">Manual</option>
               <option value="GUIDELINE">Guideline</option>
@@ -468,27 +533,29 @@ export default function LibraryPage() {
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center py-16">
+            <div className="flex flex-1 items-center justify-center py-16">
               <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : filtered.length === 0 ? (
-            <EmptyState
-              icon="📚"
-              title="No items found"
-              description={
-                query || catFilter !== 'ALL'
-                  ? 'Try adjusting your search or category filter.'
-                  : 'Add your first library item to get started.'
-              }
-              action={
-                !query && catFilter === 'ALL' && canUploadLibrary
-                  ? <Button variant="primary" size="sm" onClick={newModal.open}>+ Add to Library</Button>
-                  : undefined
-              }
-            />
+            <div className="flex flex-1 min-h-0 items-center justify-center py-16">
+              <EmptyState
+                icon="📚"
+                title="No items found"
+                description={
+                  query || catFilter !== 'ALL'
+                    ? 'Try adjusting your search or category filter.'
+                    : 'Add your first library item to get started.'
+                }
+                action={
+                  !query && catFilter === 'ALL' && canUploadLibrary
+                    ? <Button variant="primary" size="sm" onClick={newModal.open}>+ Add to Library</Button>
+                    : undefined
+                }
+              />
+            </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div className="flex-1 min-h-0 overflow-x-auto">
                 <table className="w-full border-collapse">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200">
@@ -519,47 +586,28 @@ export default function LibraryPage() {
                         </td>
                         <td className="px-4 py-3.5 text-sm text-slate-500">{item.size}</td>
                         <td className="px-4 py-3.5 text-sm text-slate-500">
-                          <div className="flex flex-col gap-0.5">
-                            {item.created_at && (
-                              <span className="text-xs">
-                                📅 {new Date(item.created_at).toLocaleString('en-PH', {
-                                  year: 'numeric', month: 'short', day: 'numeric',
-                                  hour: '2-digit', minute: '2-digit',
-                                })}
-                              </span>
-                            )}
-                          </div>
+                          {item.created_at && (
+                            <span className="text-xs">
+                              📅 {new Date(item.created_at).toLocaleString('en-PH', {
+                                year: 'numeric', month: 'short', day: 'numeric',
+                                hour: '2-digit', minute: '2-digit',
+                              })}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-1">
-                            <Button variant="ghost" size="sm"
-                              onClick={() => { viewDisc.open(item); logViewDocument(item.title).catch(() => {}) }}
-                              title="View item details">
-                              <Eye size={16} className="text-slate-600" />
-                            </Button>
-                            {canEdit && (
-                              <Button variant="ghost" size="sm" onClick={() => editDisc.open(item)} title="Edit item">
-                                <PencilLine size={16} className="text-slate-600" />
-                              </Button>
-                            )}
-                            {canDelete && (
-                              <Button variant="ghost" size="sm" onClick={() => deleteDisc.open(item)} title="Delete item">
-                                <Trash2 size={16} className="text-slate-600" />
-                              </Button>
-                            )}
-                            {item.fileUrl && (
-                              <a href={item.fileUrl} download target="_blank" rel="noopener noreferrer">
-                                <Button variant="ghost" size="sm" title="Download file">
-                                  <Download size={16} className="text-slate-600" />
-                                </Button>
-                              </a>
-                            )}
-                            {canArchive && (
-                              <Button variant="ghost" size="sm" onClick={() => archiveDisc.open(item)} title="Archive item">
-                                <span className="text-lg">🗄️</span>
-                              </Button>
-                            )}
-                          </div>
+                          <ActionMenu
+                            item={item}
+                            canEdit={canEdit}
+                            canDelete={canDelete}
+                            canArchive={canArchive}
+                            canForward={canForward}
+                            onView={() => { viewDisc.open(item); logViewDocument(item.title).catch(() => {}) }}
+                            onEdit={() => editDisc.open(item)}
+                            onDelete={() => deleteDisc.open(item)}
+                            onArchive={() => archiveDisc.open(item)}
+                            onForward={() => forwardDisc.open(item)}
+                          />
                         </td>
                       </tr>
                     ))}
@@ -579,7 +627,6 @@ export default function LibraryPage() {
                 />
               )}
             </>
-            
           )}
         </div>
       </div>
@@ -602,6 +649,18 @@ export default function LibraryPage() {
           open={editDisc.isOpen}
           onClose={editDisc.close}
           onSave={handleSave}
+        />
+      )}
+
+      {/* Forward Modal */}
+      {canForward && forwardPayload && user && (
+        <ForwardDocumentModal
+          open={forwardDisc.isOpen}
+          onClose={forwardDisc.close}
+          document={forwardPayload}
+          attachmentsMap={attachmentsMap}
+          senderRole={user.role as AdminRole}
+          onForwarded={() => toast.success(`"${forwardPayload.title}" forwarded successfully.`)}
         />
       )}
 

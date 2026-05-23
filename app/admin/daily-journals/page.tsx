@@ -1,27 +1,30 @@
 'use client'
 // app/admin/daily-journals/page.tsx
-// FIX: handleCreate now persists uploaded_by on the journal entry.
-//      loadAll filters by user.role so each account only sees their own entries.
-//      DPDA, DPDO, and admin are privileged roles that see all entries.
+// UPDATED:
+//  1. Added ForwardDocumentModal support — any role with canUpload can forward entries.
+//  2. Replaced flat action buttons in the table with a single "⋯" dropdown action menu.
+//  3. Forwarding uses the shared /api/forward endpoint via forwardDocument().
 
-import { useEffect, useMemo, useState } from 'react'
-import { PageHeader } from '@/components/ui/PageHeader'
-import { Badge } from '@/components/ui/Badge'
-import { Button } from '@/components/ui/Button'
-import { SearchInput } from '@/components/ui/SearchInput'
-import { EmptyState } from '@/components/ui/EmptyState'
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { Modal } from '@/components/ui/Modal'
-import { Pagination } from '@/components/ui/Pagination'
-import { ToolbarSelect } from '@/components/ui/Toolbar'
-import { useToast } from '@/components/ui/Toast'
-import { AddJournalEntryModal } from '@/components/modals/AddJournalEntryModal'
+import { useEffect, useMemo, useState, useRef } from 'react'
+import { PageHeader }             from '@/components/ui/PageHeader'
+import { Badge }                  from '@/components/ui/Badge'
+import { Button }                 from '@/components/ui/Button'
+import { SearchInput }            from '@/components/ui/SearchInput'
+import { EmptyState }             from '@/components/ui/EmptyState'
+import { ConfirmDialog }          from '@/components/ui/ConfirmDialog'
+import { Modal }                  from '@/components/ui/Modal'
+import { Pagination }             from '@/components/ui/Pagination'
+import { ToolbarSelect }          from '@/components/ui/Toolbar'
+import { useToast }               from '@/components/ui/Toast'
+import { AddJournalEntryModal }   from '@/components/modals/AddJournalEntryModal'
+import { ForwardDocumentModal }   from '@/components/modals/ForwardDocumentModal'
 import { useDisclosure, useModal, useSearch, usePagination } from '@/hooks'
 import { useRealtimeDailyJournals } from '@/hooks/useRealtimeCollections'
 import { logDeleteDocument, logEditJournal, logViewDocument, logCreateJournal, logArchiveJournal } from '@/lib/adminLogger'
-import { useAuth } from '@/lib/auth'
+import { useAuth }                from '@/lib/auth'
+import type { AdminRole }         from '@/lib/auth'
 import type { AddJournalEntryInput } from '@/lib/validations'
-import type { JournalEntry } from '@/types'
+import type { JournalEntry }      from '@/types'
 import {
   addArchivedDoc,
   addDailyJournal,
@@ -34,9 +37,9 @@ import {
 import {
   canUploadDocuments, canEditDocuments, canDeleteDocuments, canArchiveDocuments,
 } from '@/lib/permissions'
+import { Archive, Copy, Eye, PencilLine, Share2, Trash2, MoreHorizontal } from 'lucide-react'
 
-// ── Privileged roles that can see ALL entries regardless of uploader ─────────
-// FIX: DPDA, DPDO, and admin see everything; all other roles see only their own.
+// ── Privileged roles ──────────────────────────────────────────────────────────
 const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
 function canSeeAllDocuments(role: string): boolean {
   return PRIVILEGED_ROLES.includes(role)
@@ -45,10 +48,15 @@ function canSeeAllDocuments(role: string): boolean {
 type JournalStatus = 'Draft' | 'Filed' | 'Reviewed'
 
 type JournalRecord = DailyJournalRecord & {
-  content: string
-  summary: string
-  status: JournalStatus
-  uploaded_by?: string   // FIX: track who created this entry
+  content:       string
+  summary:       string
+  status:        JournalStatus
+  uploaded_by?:  string
+  // Drive fields for forwarding
+  gdrive_file_id?:  string
+  pool_account_id?: string
+  mime_type?:       string
+  file_size_bytes?: number
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -79,7 +87,83 @@ function statusBadgeClass(status: JournalStatus) {
   }
 }
 
-// ── View Journal Modal ──────────────────────────────────────────────────────
+// ── Action Menu ───────────────────────────────────────────────────────────────
+
+function ActionMenu({
+  entry,
+  isSuperAdmin,
+  canForward,
+  onView,
+  onEdit,
+  onArchive,
+  onDelete,
+  onForward,
+  onCopyTitle,
+}: {
+  entry: JournalRecord
+  isSuperAdmin: boolean
+  canForward: boolean
+  onView: () => void
+  onEdit: () => void
+  onArchive: () => void
+  onDelete: () => void
+  onForward: () => void
+  onCopyTitle: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    if (open) document.addEventListener('mousedown', handleOutside)
+    return () => document.removeEventListener('mousedown', handleOutside)
+  }, [open])
+
+  const item = (label: string, icon: React.ReactNode, onClick: () => void, danger = false) => (
+    <button
+      onClick={() => { onClick(); setOpen(false) }}
+      className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm rounded-md transition-colors text-left
+        ${danger ? 'text-red-600 hover:bg-red-50' : 'text-slate-700 hover:bg-slate-50'}`}
+    >
+      {icon}
+      {label}
+    </button>
+  )
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setOpen(v => !v)}
+        title="Actions"
+        className="h-8 w-8 p-0 flex items-center justify-center"
+      >
+        <MoreHorizontal size={16} className="text-slate-500" />
+      </Button>
+
+      {open && (
+        <div className="absolute right-0 top-9 z-50 w-44 rounded-xl border border-slate-200 bg-white shadow-lg py-1.5 px-1">
+          {item('View', <Eye size={14} />, onView)}
+          {item('Copy Title', <Copy size={14} />, onCopyTitle)}
+          {canForward && item('Forward', <Share2 size={14} />, onForward)}
+          {isSuperAdmin && item('Edit', <PencilLine size={14} />, onEdit)}
+          {isSuperAdmin && (
+            <>
+              <div className="my-1 border-t border-slate-100" />
+              {item('Archive', <Archive size={14} />, onArchive, true)}
+              {item('Delete', <Trash2 size={14} />, onDelete, true)}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── View Journal Modal ────────────────────────────────────────────────────────
 
 function ViewJournalModal({
   entry, open, onClose, onViewAttachment,
@@ -152,7 +236,7 @@ function ViewJournalModal({
   )
 }
 
-// ── View Attachment Modal ───────────────────────────────────────────────────
+// ── View Attachment Modal ─────────────────────────────────────────────────────
 
 function ViewJournalAttachmentModal({
   fileUrl, fileName, open, onClose,
@@ -207,13 +291,15 @@ export default function DailyJournalsPage() {
   const canEdit    = user?.role ? canEditDocuments(user.role)    : false
   const canDelete  = user?.role ? canDeleteDocuments(user.role)  : false
   const canArchive = user?.role ? canArchiveDocuments(user.role) : false
+  const canForward = canUpload  // same gate as upload
 
-  const addModal            = useModal()
-  const editDisc            = useDisclosure<JournalRecord>()
-  const viewDisc            = useDisclosure<JournalRecord>()
-  const viewAttachmentDisc  = useDisclosure<{ fileUrl: string; fileName: string }>()
-  const archiveDisc         = useDisclosure<JournalRecord>()
-  const deleteDisc          = useDisclosure<JournalRecord>()
+  const addModal           = useModal()
+  const editDisc           = useDisclosure<JournalRecord>()
+  const viewDisc           = useDisclosure<JournalRecord>()
+  const viewAttachmentDisc = useDisclosure<{ fileUrl: string; fileName: string }>()
+  const archiveDisc        = useDisclosure<JournalRecord>()
+  const deleteDisc         = useDisclosure<JournalRecord>()
+  const forwardDisc        = useDisclosure<JournalRecord>()
 
   const [loading, setLoading]   = useState(true)
   const [entries, setEntries]   = useState<JournalRecord[]>([])
@@ -232,17 +318,8 @@ export default function DailyJournalsPage() {
   )
 
   const {
-    currentPage,
-    pageSize,
-    totalPages,
-    paginatedItems,
-    setCurrentPage,
-    setPageSize,
-  } = usePagination({
-    items: filteredEntries,
-    defaultPageSize: 20,
-    resetDeps: [query, activeType],
-  })
+    currentPage, pageSize, totalPages, paginatedItems, setCurrentPage, setPageSize,
+  } = usePagination({ items: filteredEntries, defaultPageSize: 20, resetDeps: [query, activeType] })
 
   const journalStats = useMemo(() => ({
     all:    entries.length,
@@ -251,7 +328,7 @@ export default function DailyJournalsPage() {
     log:    entries.filter(e => e.type === 'LOG').length,
   }), [entries])
 
-  // ── Load — FIX: filter by uploaded_by unless user is privileged ──────────
+  // ── Load ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const role = user?.role ?? ''
     if (!role) return
@@ -260,14 +337,10 @@ export default function DailyJournalsPage() {
       try {
         const data = await getDailyJournals()
         if (!isMounted) return
-
-        // FIX: privileged roles see all entries; everyone else sees only their own.
         const visible = data.filter((entry: any) => {
-          if (canSeeAllDocuments(role)) return true       // privileged: see all
+          if (canSeeAllDocuments(role)) return true
           return !entry.uploaded_by || entry.uploaded_by === role
-          //      ↑ `!entry.uploaded_by` keeps legacy records visible during migration
         })
-
         setEntries(visible.map((entry: any) => ({
           ...entry,
           content:     entry.content ?? 'No content was provided for this entry.',
@@ -286,15 +359,12 @@ export default function DailyJournalsPage() {
     return () => { isMounted = false }
   }, [user?.role]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Create — FIX: persist uploaded_by on new entry ──────────────────────
+  // ── Create ────────────────────────────────────────────────────────────────
   async function handleCreate(
     input: AddJournalEntryInput & { file?: File; driveFileUrl?: string; uploaded_by?: string }
   ) {
     if (!canUpload) throw new Error('You do not have permission to create journal entries.')
-
-    if (!input.file && !input.driveFileUrl) {
-      throw new Error('Attachment is required.')
-    }
+    if (!input.file && !input.driveFileUrl) throw new Error('Attachment is required.')
 
     const now    = new Date()
     const status: JournalStatus =
@@ -302,7 +372,6 @@ export default function DailyJournalsPage() {
       : input.type === 'REPORT' ? 'Reviewed'
       : 'Filed'
 
-    // FIX: store uploaded_by so the page can filter entries per user
     const nextEntry: JournalRecord = {
       id:          `jrnl-${Date.now()}`,
       title:       input.title.trim(),
@@ -316,7 +385,7 @@ export default function DailyJournalsPage() {
       summary:     input.content?.trim()
         ? input.content.trim().slice(0, 120)
         : 'Newly created entry waiting for final review.',
-      uploaded_by: input.uploaded_by ?? user?.role,   // FIX
+      uploaded_by: input.uploaded_by ?? user?.role,
     }
 
     await addDailyJournal(nextEntry)
@@ -325,18 +394,15 @@ export default function DailyJournalsPage() {
     addModal.close()
   }
 
-  // ── Edit — FIX: preserve uploaded_by when updating ──────────────────────
+  // ── Edit ──────────────────────────────────────────────────────────────────
   async function handleEdit(
     input: AddJournalEntryInput & { file?: File; driveFileUrl?: string; uploaded_by?: string }
   ) {
     if (!canEdit) throw new Error('You do not have permission to edit journal entries.')
-
     const existing = editDisc.payload
     if (!existing) return
 
     const nextFileUrl = input.driveFileUrl ?? existing.fileUrl
-
-    // FIX: preserve the original uploaded_by — editing doesn't change ownership
     const updatedEntry: JournalRecord = {
       ...existing,
       title:       input.title.trim(),
@@ -353,7 +419,7 @@ export default function DailyJournalsPage() {
         input.type === 'MEMO'   ? 'Draft'
         : input.type === 'REPORT' ? 'Reviewed'
         : 'Filed',
-      uploaded_by: existing.uploaded_by,   // FIX: keep original owner
+      uploaded_by: existing.uploaded_by,
     }
 
     await updateDailyJournal(updatedEntry)
@@ -392,11 +458,30 @@ export default function DailyJournalsPage() {
     toast.success(`"${item.title}" deleted permanently.`)
   }
 
+  // Build forward payload
+  const forwardEntry = forwardDisc.payload
+  const forwardPayload = forwardEntry
+    ? {
+        id:            forwardEntry.id,
+        title:         forwardEntry.title,
+        type:          `Journal · ${forwardEntry.type}`,
+        documentType:  'daily_journal' as const,
+        gdriveFileId:  forwardEntry.gdrive_file_id ?? '',
+        gdriveUrl:     forwardEntry.fileUrl ?? '',
+        poolAccountId: forwardEntry.pool_account_id ?? '',
+        fileName:      forwardEntry.title,
+        fileSizeBytes: forwardEntry.file_size_bytes,
+        mimeType:      forwardEntry.mime_type,
+      }
+    : null
+
+  const attachmentsMap = new Map<string, any[]>()
+
   return (
     <>
       <PageHeader title="Daily Journals" />
 
-      <div className="p-8 space-y-6">
+      <div className="flex h-full min-h-0 flex-col gap-6 p-8">
 
         {/* Hero section */}
         <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -420,7 +505,7 @@ export default function DailyJournalsPage() {
                 { label: 'Total Entries', value: journalStats.all,    icon: '📒', bg: 'bg-blue-50',   text: 'text-blue-700'   },
                 { label: 'Memos',         value: journalStats.memo,   icon: '📝', bg: 'bg-amber-50',  text: 'text-amber-700'  },
                 { label: 'Reports',       value: journalStats.report, icon: '📋', bg: 'bg-violet-50', text: 'text-violet-700' },
-                { label: 'Logs',          value: journalStats.log,    icon: '🗂️', bg: 'bg-emerald-50',text: 'text-emerald-700'},
+                { label: 'Logs',          value: journalStats.log,    icon: '🗂️', bg: 'bg-emerald-50', text: 'text-emerald-700'},
               ].map(card => (
                 <div key={card.label} className={`${card.bg} rounded-xl border border-slate-200 px-4 py-3 flex items-center gap-3`}>
                   <span className="text-2xl">{card.icon}</span>
@@ -435,7 +520,7 @@ export default function DailyJournalsPage() {
         </section>
 
         {/* Table */}
-        <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-hidden">
+        <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-visible flex flex-1 min-h-0 flex-col">
           <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50 flex-wrap">
             <SearchInput value={query} onChange={setQuery} placeholder="Search journal entries…" className="max-w-xs flex-1" />
             <ToolbarSelect value={activeType} onChange={e => setActiveType(e.target.value as 'ALL' | JournalEntry['type'])}>
@@ -452,26 +537,28 @@ export default function DailyJournalsPage() {
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center py-16">
+            <div className="flex flex-1 items-center justify-center py-16">
               <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : filteredEntries.length === 0 ? (
-            <EmptyState
-              icon="📒"
-              title="No journal entries found"
-              description={
-                query || activeType !== 'ALL'
-                  ? 'Try adjusting your search or type filter.'
-                  : 'Create the first journal entry to populate this register.'
-              }
-              action={!query && activeType === 'ALL' && isSuperAdmin
-                ? <Button variant="primary" size="sm" onClick={addModal.open}>+ Add Entry</Button>
-                : undefined
-              }
-            />
+            <div className="flex flex-1 min-h-0 items-center justify-center py-16">
+              <EmptyState
+                icon="📒"
+                title="No journal entries found"
+                description={
+                  query || activeType !== 'ALL'
+                    ? 'Try adjusting your search or type filter.'
+                    : 'Create the first journal entry to populate this register.'
+                }
+                action={!query && activeType === 'ALL' && isSuperAdmin
+                  ? <Button variant="primary" size="sm" onClick={addModal.open}>+ Add Entry</Button>
+                  : undefined
+                }
+              />
+            </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div className="flex-1 min-h-0 overflow-x-auto">
                 <table className="w-full border-collapse">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200">
@@ -501,26 +588,20 @@ export default function DailyJournalsPage() {
                         </td>
                         <td className="px-4 py-3.5 align-top text-sm text-slate-600">{entry.attachments}</td>
                         <td className="px-4 py-3.5 align-top">
-                          <div className="flex flex-wrap gap-2">
-                            <Button variant="outline" size="sm" onClick={() => {
+                          <ActionMenu
+                            entry={entry}
+                            isSuperAdmin={isSuperAdmin}
+                            canForward={canForward}
+                            onView={() => {
                               viewDisc.open(entry)
                               logViewDocument(entry.title).catch(() => {})
-                            }}>
-                              View
-                            </Button>
-                            {isSuperAdmin && (
-                              <Button variant="outline" size="sm" onClick={() => editDisc.open(entry)}>Edit</Button>
-                            )}
-                            {isSuperAdmin && (
-                              <Button variant="danger" size="sm" onClick={() => archiveDisc.open(entry)}>Archive</Button>
-                            )}
-                            {isSuperAdmin && (
-                              <Button variant="danger" size="sm" onClick={() => deleteDisc.open(entry)}>Delete</Button>
-                            )}
-                            <Button variant="ghost" size="sm" onClick={() => navigator.clipboard?.writeText(entry.title)}>
-                              Copy title
-                            </Button>
-                          </div>
+                            }}
+                            onEdit={() => editDisc.open(entry)}
+                            onArchive={() => archiveDisc.open(entry)}
+                            onDelete={() => deleteDisc.open(entry)}
+                            onForward={() => forwardDisc.open(entry)}
+                            onCopyTitle={() => navigator.clipboard?.writeText(entry.title)}
+                          />
                         </td>
                       </tr>
                     ))}
@@ -577,6 +658,18 @@ export default function DailyJournalsPage() {
         open={viewAttachmentDisc.isOpen}
         onClose={viewAttachmentDisc.close}
       />
+
+      {/* Forward Modal */}
+      {canForward && forwardPayload && user && (
+        <ForwardDocumentModal
+          open={forwardDisc.isOpen}
+          onClose={forwardDisc.close}
+          document={forwardPayload}
+          attachmentsMap={attachmentsMap}
+          senderRole={user.role as AdminRole}
+          onForwarded={() => toast.success(`"${forwardPayload.title}" forwarded successfully.`)}
+        />
+      )}
 
       {isSuperAdmin && (
         <ConfirmDialog
