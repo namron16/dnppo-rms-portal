@@ -15,8 +15,8 @@ export type LogActionType =
   | 'add_org_member' | 'edit_org_member' | 'remove_org_member'
   | 'recall_inbox_item' | 'save_inbox_item' | 'change_password' | 'save_forwarded_document'
 
-// Module-level state — set on login via setCurrentLogger()
-let _currentUserId: string | null = null    // Supabase UUID
+// ── Module-level state — set on login via setCurrentLogger() ─────────────────
+let _currentUserId: string | null = null   // Supabase UUID
 let _currentRole:   AdminRole | null = null
 
 export function setCurrentLogger(role: AdminRole | null, userId?: string | null) {
@@ -24,29 +24,68 @@ export function setCurrentLogger(role: AdminRole | null, userId?: string | null)
   _currentUserId = userId ?? null
 }
 
+// ── FIX RISK 1: exported getter so auth.tsx can assert logger is ready ───────
+export function isLoggerReady(): boolean {
+  return !!(_currentUserId && _currentRole)
+}
+
+// ── Core log writer ───────────────────────────────────────────────────────────
+
 export async function logAction(
   action: LogActionType | string,
   description: string | Record<string, any>,
 ): Promise<void> {
-  if (!_currentUserId || !_currentRole) return
+
+  // FIX RISK 1: warn in development when logger was never initialised.
+  // In production this stays silent (same as before) but you will now
+  // see an explicit message during local dev instead of silently missing logs.
+  if (!_currentUserId || !_currentRole) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn(
+        `[adminLogger] logAction("${action}") called before setCurrentLogger() — log dropped.\n` +
+        'Call setCurrentLogger(role, userId) immediately after auth resolves.'
+      )
+    }
+    return
+  }
 
   const supabase = createClient()
   const descriptionValue =
     typeof description === 'string' ? description : JSON.stringify(description)
 
+  // FIX RISK 2: surface DB errors instead of only console.warn'ing them.
+  // We still never throw (to keep callers fire-and-forget), but we:
+  //   a) log the full error object so RLS failures are visible, and
+  //   b) in development, throw so you catch silent audit gaps immediately.
   const { error } = await supabase.from('admin_logs').insert({
-    user_id: _currentUserId,
-    role: _currentRole,
+    user_id:     _currentUserId,
+    role:        _currentRole,
     action,
     description: descriptionValue,
   })
 
-  if (error) console.warn('[adminLogger] Failed to write log:', error.message)
+  if (error) {
+    // Always log the full error — includes RLS policy name, code, and hint.
+    console.error(
+      `[adminLogger] Failed to write log for action "${action}".\n`,
+      `  Code:    ${error.code}\n`,
+      `  Message: ${error.message}\n`,
+      `  Hint:    ${error.hint ?? '—'}\n`,
+      `  Details: ${error.details ?? '—'}`
+    )
+
+    // FIX RISK 2: In development, throw so tests / CI catch silent audit gaps.
+    if (process.env.NODE_ENV === 'development') {
+      throw new Error(
+        `[adminLogger] DB insert failed for action "${action}": ${error.message}`
+      )
+    }
+  }
 }
 
-// ── Convenience wrappers ──────────────────────
-// logLogin and logLogout accept the role explicitly so callers don't have
-// to rely on _currentRole being set in time (though it should be by now).
+// ── Convenience wrappers ──────────────────────────────────────────────────────
+// logLogin / logLogout accept the role explicitly so callers do not have to
+// rely on _currentRole being set in time.
 
 export const logLogin  = (role: AdminRole) =>
   logAction('login',  `${role} logged in`)
@@ -115,7 +154,6 @@ export const logPasswordChange = () =>
 export const logSaveForwardedDocument = (docTitle: string, fromRole: string, targetTable: string) =>
   logAction('save_forwarded_document', `Saved forwarded "${docTitle}" from ${fromRole} to ${targetTable}`)
 
-// Additional convenience loggers
 export const logForwardAttachment = (attachmentTitle: string, recipient: string) =>
   logAction('forward_attachment', `Forwarded attachment "${attachmentTitle}" to ${recipient}`)
 
