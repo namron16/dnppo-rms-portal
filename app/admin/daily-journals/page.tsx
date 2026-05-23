@@ -12,10 +12,11 @@ import { SearchInput } from '@/components/ui/SearchInput'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Modal } from '@/components/ui/Modal'
+import { Pagination } from '@/components/ui/Pagination'
 import { ToolbarSelect } from '@/components/ui/Toolbar'
 import { useToast } from '@/components/ui/Toast'
 import { AddJournalEntryModal } from '@/components/modals/AddJournalEntryModal'
-import { useDisclosure, useModal, useSearch } from '@/hooks'
+import { useDisclosure, useModal, useSearch, usePagination } from '@/hooks'
 import { useRealtimeDailyJournals } from '@/hooks/useRealtimeCollections'
 import { logDeleteDocument, logEditJournal, logViewDocument, logCreateJournal, logArchiveJournal } from '@/lib/adminLogger'
 import { useAuth } from '@/lib/auth'
@@ -229,6 +230,19 @@ export default function DailyJournalsPage() {
     () => searched.filter(e => activeType === 'ALL' || e.type === activeType),
     [activeType, searched]
   )
+
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    paginatedItems,
+    setCurrentPage,
+    setPageSize,
+  } = usePagination({
+    items: filteredEntries,
+    defaultPageSize: 20,
+    resetDeps: [query, activeType],
+  })
 
   const journalStats = useMemo(() => ({
     all:    entries.length,
@@ -456,62 +470,76 @@ export default function DailyJournalsPage() {
               }
             />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    {['Entry', 'Type', 'Author', 'Date', 'Status', 'Attachments', 'Actions'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredEntries.map(entry => (
-                    <tr key={entry.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
-                      <td className="px-4 py-3.5 align-top">
-                        <div className="space-y-1.5">
-                          <div className="font-semibold text-sm text-slate-800">{entry.title}</div>
-                          <div className="text-xs text-slate-500 leading-relaxed max-w-lg">{entry.summary}</div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3.5 align-top">
-                        <Badge className={typeBadgeClass(entry.type)}>{entry.type}</Badge>
-                      </td>
-                      <td className="px-4 py-3.5 align-top text-sm text-slate-600">{entry.author}</td>
-                      <td className="px-4 py-3.5 align-top text-sm text-slate-600">
-                        <span>📅 {formatDate(entry.created_at)}</span>
-                      </td>
-                      <td className="px-4 py-3.5 align-top">
-                        <Badge className={statusBadgeClass(entry.status)}>{entry.status}</Badge>
-                      </td>
-                      <td className="px-4 py-3.5 align-top text-sm text-slate-600">{entry.attachments}</td>
-                      <td className="px-4 py-3.5 align-top">
-                        <div className="flex flex-wrap gap-2">
-                          <Button variant="outline" size="sm" onClick={() => {
-                            viewDisc.open(entry)
-                            logViewDocument(entry.title).catch(() => {})
-                          }}>
-                            View
-                          </Button>
-                          {isSuperAdmin && (
-                            <Button variant="outline" size="sm" onClick={() => editDisc.open(entry)}>Edit</Button>
-                          )}
-                          {isSuperAdmin && (
-                            <Button variant="danger" size="sm" onClick={() => archiveDisc.open(entry)}>Archive</Button>
-                          )}
-                          {isSuperAdmin && (
-                            <Button variant="danger" size="sm" onClick={() => deleteDisc.open(entry)}>Delete</Button>
-                          )}
-                          <Button variant="ghost" size="sm" onClick={() => navigator.clipboard?.writeText(entry.title)}>
-                            Copy title
-                          </Button>
-                        </div>
-                      </td>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      {['Entry', 'Type', 'Author', 'Date', 'Status', 'Attachments', 'Actions'].map(h => (
+                        <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">{h}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {paginatedItems.map(entry => (
+                      <tr key={entry.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
+                        <td className="px-4 py-3.5 align-top">
+                          <div className="space-y-1.5">
+                            <div className="font-semibold text-sm text-slate-800">{entry.title}</div>
+                            <div className="text-xs text-slate-500 leading-relaxed max-w-lg">{entry.summary}</div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5 align-top">
+                          <Badge className={typeBadgeClass(entry.type)}>{entry.type}</Badge>
+                        </td>
+                        <td className="px-4 py-3.5 align-top text-sm text-slate-600">{entry.author}</td>
+                        <td className="px-4 py-3.5 align-top text-sm text-slate-600">
+                          <span>📅 {formatDate(entry.created_at)}</span>
+                        </td>
+                        <td className="px-4 py-3.5 align-top">
+                          <Badge className={statusBadgeClass(entry.status)}>{entry.status}</Badge>
+                        </td>
+                        <td className="px-4 py-3.5 align-top text-sm text-slate-600">{entry.attachments}</td>
+                        <td className="px-4 py-3.5 align-top">
+                          <div className="flex flex-wrap gap-2">
+                            <Button variant="outline" size="sm" onClick={() => {
+                              viewDisc.open(entry)
+                              logViewDocument(entry.title).catch(() => {})
+                            }}>
+                              View
+                            </Button>
+                            {isSuperAdmin && (
+                              <Button variant="outline" size="sm" onClick={() => editDisc.open(entry)}>Edit</Button>
+                            )}
+                            {isSuperAdmin && (
+                              <Button variant="danger" size="sm" onClick={() => archiveDisc.open(entry)}>Archive</Button>
+                            )}
+                            {isSuperAdmin && (
+                              <Button variant="danger" size="sm" onClick={() => deleteDisc.open(entry)}>Delete</Button>
+                            )}
+                            <Button variant="ghost" size="sm" onClick={() => navigator.clipboard?.writeText(entry.title)}>
+                              Copy title
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {!loading && filteredEntries.length > 0 && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  totalItems={filteredEntries.length}
+                  pageSize={pageSize}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={setPageSize}
+                  pageSizeOptions={[10, 20, 50]}
+                />
+              )}
+            </>
           )}
         </div>
       </div>

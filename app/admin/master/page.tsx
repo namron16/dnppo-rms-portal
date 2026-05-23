@@ -15,11 +15,12 @@ import { ConfirmDialog }    from '@/components/ui/ConfirmDialog'
 import { EmptyState }       from '@/components/ui/EmptyState'
 import { ToolbarSelect }    from '@/components/ui/Toolbar'
 import { Modal }            from '@/components/ui/Modal'
+import { Pagination }       from '@/components/ui/Pagination'
 import { AddDocumentModal } from '@/components/modals/AddDocumentModal'
 import { ApprovalWorkflowModal }  from '@/components/modals/ApprovalWorkflowModal'
 import { ForwardDocumentModal } from '@/components/modals/ForwardDocumentModal'
 import { UploadGuard }      from '@/components/ui/UploadGuard'
-import { useModal, useDisclosure } from '@/hooks'
+import { useModal, useDisclosure, usePagination } from '@/hooks'
 import { useToast }         from '@/components/ui/Toast'
 import { useAuth }          from '@/lib/auth'
 import { levelBadgeClass }  from '@/lib/utils'
@@ -694,6 +695,19 @@ export default function MasterPage() {
            (levelFilter === 'ALL' || doc.level === levelFilter)
   }), [allFlat, query, levelFilter, attachmentsMap])
 
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    paginatedItems: paginatedDocs,
+    setCurrentPage,
+    setPageSize,
+  } = usePagination({
+    items: filtered,
+    defaultPageSize: 25,
+    resetDeps: [query, levelFilter],
+  })
+
   const currentAttachmentEntry = attachmentNavStack.length > 0
     ? attachmentNavStack[attachmentNavStack.length - 1]
     : null
@@ -783,7 +797,7 @@ export default function MasterPage() {
                 ) : filtered.length === 0 ? (
                   <EmptyState icon="📁" title="No documents" description="No active master documents." />
                 ) : (
-                  filtered.map(({ doc, depth }) => {
+                  paginatedDocs.map(({ doc, depth }) => {
                     const activeCount = countActiveAttachments(doc.id)
                     const levelColor = doc.level === 'REGIONAL' ? '#3b63b8' : doc.level === 'PROVINCIAL' ? '#f59e0b' : '#10b981'
                     const indentPx = depth * 16 + 8
@@ -811,6 +825,16 @@ export default function MasterPage() {
                   })
                 )}
               </div>
+
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                totalItems={filtered.length}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+                pageSizeOptions={[10, 25, 50]}
+              />
 
               {/* Legend */}
               <div className="px-4 py-3 border-t border-slate-100 space-y-1.5 flex-shrink-0">

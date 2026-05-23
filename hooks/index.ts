@@ -86,3 +86,13 @@ export function useActiveTab<T extends string>(defaultTab: T) {
   const [active, setActive] = useState<T>(defaultTab)
   return { active, setActive }
 }
+
+// ════════════════════════════════════════════
+// usePagination
+// Handles pagination state for filtered lists.
+//
+// Usage:
+//   const { currentPage, pageSize, totalPages, paginatedItems, setCurrentPage, setPageSize }
+//     = usePagination({ items: filtered, defaultPageSize: 25, resetDeps: [query, filter] })
+// ════════════════════════════════════════════
+export { usePagination } from './usePagination'

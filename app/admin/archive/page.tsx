@@ -9,7 +9,8 @@ import { SearchInput }   from '@/components/ui/SearchInput'
 import { EmptyState }    from '@/components/ui/EmptyState'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ToolbarSelect } from '@/components/ui/Toolbar'
-import { useSearch, useDisclosure } from '@/hooks'
+import { Pagination }    from '@/components/ui/Pagination'
+import { useSearch, useDisclosure, usePagination } from '@/hooks'
 import { useRealtimeArchivedDocs } from '@/hooks/useRealtimeCollections'
 import { useToast }      from '@/components/ui/Toast'
 import { useAuth }       from '@/lib/auth'
@@ -38,6 +39,19 @@ export default function ArchivePage() {
 
   const { query, setQuery, filtered: searched } = useSearch(items, ['title', 'archivedBy'] as Array<keyof ArchivedItem>)
   const filtered = searched.filter(i => typeFilter === 'All Types' || i.type === typeFilter)
+
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    paginatedItems,
+    setCurrentPage,
+    setPageSize,
+  } = usePagination({
+    items: filtered,
+    defaultPageSize: 25,
+    resetDeps: [query, typeFilter],
+  })
 
   useEffect(() => {
     getArchivedDocs().then(data => {
@@ -97,33 +111,47 @@ export default function ArchivePage() {
           ) : filtered.length === 0 ? (
             <EmptyState icon="🗄️" title="No archived documents found" description="Documents you archive will appear here." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    {['Document', 'Type', 'Archived Date', 'Archived By', 'Actions'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(item => (
-                    <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
-                      <td className="px-4 py-3.5 font-semibold text-sm text-slate-800">{item.title}</td>
-                      <td className="px-4 py-3.5"><Badge className="bg-slate-200 text-slate-500">{item.type}</Badge></td>
-                      <td className="px-4 py-3.5 text-sm text-slate-500">{item.archivedDate}</td>
-                      <td className="px-4 py-3.5 text-sm text-slate-600">{item.archivedBy}</td>
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2">
-                          <Button variant="outline" size="sm" onClick={() => restoreDisc.open(item)}>↩ Restore</Button>
-                          <Button variant="ghost"   size="sm" onClick={() => deleteDisc.open(item)}>🗑</Button>
-                        </div>
-                      </td>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      {['Document', 'Type', 'Archived Date', 'Archived By', 'Actions'].map(h => (
+                        <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">{h}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {paginatedItems.map(item => (
+                      <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
+                        <td className="px-4 py-3.5 font-semibold text-sm text-slate-800">{item.title}</td>
+                        <td className="px-4 py-3.5"><Badge className="bg-slate-200 text-slate-500">{item.type}</Badge></td>
+                        <td className="px-4 py-3.5 text-sm text-slate-500">{item.archivedDate}</td>
+                        <td className="px-4 py-3.5 text-sm text-slate-600">{item.archivedBy}</td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-2">
+                            <Button variant="outline" size="sm" onClick={() => restoreDisc.open(item)}>↩ Restore</Button>
+                            <Button variant="ghost"   size="sm" onClick={() => deleteDisc.open(item)}>🗑</Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {!loading && filtered.length > 0 && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  totalItems={filtered.length}
+                  pageSize={pageSize}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={setPageSize}
+                  pageSizeOptions={[10, 25, 50]}
+                />
+              )}
+            </>
           )}
         </div>
       </div>

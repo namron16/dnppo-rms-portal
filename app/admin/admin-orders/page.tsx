@@ -13,9 +13,10 @@ import { EmptyState }           from '@/components/ui/EmptyState'
 import { ConfirmDialog }        from '@/components/ui/ConfirmDialog'
 import { ToolbarSelect }        from '@/components/ui/Toolbar'
 import { Modal }                from '@/components/ui/Modal'
+import { Pagination }           from '@/components/ui/Pagination'
 import { AddSpecialOrderModal } from '@/components/modals/AddSpecialOrderModal'
 import { ForwardDocumentModal } from '@/components/modals/ForwardDocumentModal'
-import { useModal, useDisclosure } from '@/hooks'
+import { useModal, useDisclosure, usePagination } from '@/hooks'
 import { useToast }             from '@/components/ui/Toast'
 import { FileText, Paperclip } from 'lucide-react'
 import {
@@ -1130,6 +1131,19 @@ export default function AdminOrdersPage() {
     )
   }, [orders, query, statusFilter])
 
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    paginatedItems: paginatedOrders,
+    setCurrentPage,
+    setPageSize,
+  } = usePagination({
+    items: filteredOrders,
+    defaultPageSize: 20,
+    resetDeps: [query, statusFilter],
+  })
+
   function handleViewFile(fileUrl: string, fileName: string) {
     setViewerFile({ url: fileUrl, name: fileName })
     logViewDocument(fileName).catch(() => {})
@@ -1178,7 +1192,7 @@ export default function AdminOrdersPage() {
                 ) : filteredOrders.length === 0 ? (
                   <EmptyState icon="📋" title="No orders found" description="Create your first order." />
                 ) : (
-                  filteredOrders.map(order => (
+                  paginatedOrders.map(order => (
                     <OrderListNode
                       key={order.id}
                       order={order}
@@ -1190,6 +1204,18 @@ export default function AdminOrdersPage() {
                   ))
                 )}
               </div>
+
+              {!loading && filteredOrders.length > 0 && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  totalItems={filteredOrders.length}
+                  pageSize={pageSize}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={setPageSize}
+                  pageSizeOptions={[10, 20, 50]}
+                />
+              )}
 
               {/* Legend */}
               <div className="px-4 py-3 border-t border-slate-100 space-y-1.5 flex-shrink-0">

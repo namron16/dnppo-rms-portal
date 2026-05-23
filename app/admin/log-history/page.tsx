@@ -6,7 +6,9 @@ import { PageHeader }    from '@/components/ui/PageHeader'
 import { SearchInput }   from '@/components/ui/SearchInput'
 import { EmptyState }    from '@/components/ui/EmptyState'
 import { ToolbarSelect } from '@/components/ui/Toolbar'
+import { Pagination }    from '@/components/ui/Pagination'
 import { useToast }      from '@/components/ui/Toast'
+import { usePagination } from '@/hooks'
 import { createClient }  from '@/lib/supabase/client'
 import type { AdminRole } from '@/lib/auth'
 import type { LogActionType } from '@/lib/adminLogger'
@@ -194,6 +196,19 @@ export default function LogHistoryPage() {
     })
   }, [logs, query, roleFilter, actionFilter, dateFilter])
 
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    paginatedItems,
+    setCurrentPage,
+    setPageSize,
+  } = usePagination({
+    items: filtered,
+    defaultPageSize: 50,
+    resetDeps: [query, roleFilter, actionFilter, dateFilter],
+  })
+
   // ── CSV Export ───────────────────────────────
   function exportCSV() {
     const header = ['Role', 'Account Name', 'Action', 'Description', 'Date & Time']
@@ -316,12 +331,12 @@ export default function LogHistoryPage() {
           {/* Count bar */}
           <div className="px-6 py-2.5 text-xs text-slate-400 border-b border-slate-100 bg-white flex items-center gap-2">
             <span>
-              Showing <strong className="text-slate-700">{filtered.length}</strong> of{' '}
-              <strong className="text-slate-700">{logs.length}</strong> log entries
+              Showing <strong className="text-slate-700">{paginatedItems.length}</strong> of{' '}
+              <strong className="text-slate-700">{filtered.length}</strong> entries
+              {filtered.length !== logs.length && (
+                <> · filtered from <strong className="text-slate-700">{logs.length}</strong> total</>
+              )}
             </span>
-            {filtered.length !== logs.length && (
-              <span className="text-slate-300">· filtered</span>
-            )}
           </div>
 
           {/* Table body */}
@@ -348,7 +363,7 @@ export default function LogHistoryPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(log => {
+                  {paginatedItems.map(log => {
                     const cfg        = getActionConfig(log.action)
                     const roleColor  = getRoleColor(log.role)
                     const initials   = getRoleInitials(log.role)
@@ -397,6 +412,18 @@ export default function LogHistoryPage() {
                 </tbody>
               </table>
             </div>
+          )}
+
+          {!loading && filtered.length > 0 && (
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={filtered.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={setPageSize}
+              pageSizeOptions={[25, 50, 100, 200]}
+            />
           )}
         </div>
       </div>

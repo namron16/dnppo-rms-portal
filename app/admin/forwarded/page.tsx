@@ -3,8 +3,10 @@
 // Inbox page for receiving forwarded documents.
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { Badge }  from '@/components/ui/Badge'
-import { Button } from '@/components/ui/Button'
+import { Badge }       from '@/components/ui/Badge'
+import { Button }      from '@/components/ui/Button'
+import { Pagination }  from '@/components/ui/Pagination'
+import { usePagination } from '@/hooks'
 import { buildAttachmentTree } from '@/lib/forwarding'
 import {
   FileText, Inbox, Clock, CheckCircle,
@@ -85,6 +87,19 @@ export default function ForwardedInboxPage() {
     }
   }
 
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    paginatedItems,
+    setCurrentPage,
+    setPageSize,
+  } = usePagination({
+    items: documents,
+    defaultPageSize: 15,
+    resetDeps: [activeTab],
+  })
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       {/* Header */}
@@ -119,111 +134,125 @@ export default function ForwardedInboxPage() {
           No {activeTab} documents.
         </div>
       ) : (
-        <div className="space-y-3">
-          {documents.map(doc => {
-            const tree = buildAttachmentTree(doc.forwarded_attachments ?? [])
-            const isExpanded = expanded === doc.id
+        <>
+          <div className="space-y-3">
+            {paginatedItems.map(doc => {
+              const tree = buildAttachmentTree(doc.forwarded_attachments ?? [])
+              const isExpanded = expanded === doc.id
 
-            return (
-              <div
-                key={doc.id}
-                className="border rounded-xl bg-white shadow-sm overflow-hidden"
-              >
-                {/* Main Row */}
-                <div className="p-4 flex items-start gap-3">
-                  <FileText className="w-5 h-5 text-slate-400 mt-0.5 flex-shrink-0" />
+              return (
+                <div
+                  key={doc.id}
+                  className="border rounded-xl bg-white shadow-sm overflow-hidden"
+                >
+                  {/* Main Row */}
+                  <div className="p-4 flex items-start gap-3">
+                    <FileText className="w-5 h-5 text-slate-400 mt-0.5 flex-shrink-0" />
 
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-slate-900 truncate">
-                        {doc.title}
-                      </span>
-                      <Badge className={`text-xs ${DOC_TYPE_COLORS[doc.document_type]}`}>
-                        {DOC_TYPE_LABELS[doc.document_type] ?? doc.document_type}
-                      </Badge>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-slate-900 truncate">
+                          {doc.title}
+                        </span>
+                        <Badge className={`text-xs ${DOC_TYPE_COLORS[doc.document_type]}`}>
+                          {DOC_TYPE_LABELS[doc.document_type] ?? doc.document_type}
+                        </Badge>
+                      </div>
+
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        From <strong>{doc.sender_role}</strong> ·{' '}
+                        {new Date(doc.received_at).toLocaleString('en-PH')}
+                        {doc.forwarded_attachments?.length > 0 && (
+                          <> · {doc.forwarded_attachments.length} attachment{doc.forwarded_attachments.length !== 1 ? 's' : ''}</>
+                        )}
+                      </p>
+
+                      {doc.notes && (
+                        <p className="text-xs text-slate-600 mt-1 italic">"{doc.notes}"</p>
+                      )}
                     </div>
 
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      From <strong>{doc.sender_role}</strong> ·{' '}
-                      {new Date(doc.received_at).toLocaleString('en-PH')}
+                    {/* Actions */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
                       {doc.forwarded_attachments?.length > 0 && (
-                        <> · {doc.forwarded_attachments.length} attachment{doc.forwarded_attachments.length !== 1 ? 's' : ''}</>
-                      )}
-                    </p>
-
-                    {doc.notes && (
-                      <p className="text-xs text-slate-600 mt-1 italic">"{doc.notes}"</p>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {doc.forwarded_attachments?.length > 0 && (
-                      <button
-                        onClick={() => setExpanded(isExpanded ? null : doc.id)}
-                        className="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-0.5"
-                      >
-                        <ChevronRight className={`w-3.5 h-3.5 transition ${isExpanded ? 'rotate-90' : ''}`} />
-                        Attachments
-                      </button>
-                    )}
-
-                    <a
-                      href={doc.gdrive_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-1.5 rounded-lg border text-slate-600 hover:bg-slate-50"
-                      title="Preview in Drive"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                    </a>
-
-                    {activeTab === 'pending' && (
-                      <>
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() => handleSave(doc)}
-                          disabled={saving === doc.id}
-                          className="text-xs"
-                        >
-                          <Save className="w-3 h-3 mr-1" />
-                          {saving === doc.id
-                            ? 'Saving…'
-                            : `Save to ${DOC_TYPE_LABELS[doc.document_type] ?? 'Storage'}`}
-                        </Button>
-
                         <button
-                          onClick={() => handleDismiss(doc)}
-                          disabled={dismissing === doc.id}
-                          className="p-1.5 rounded-lg border text-slate-400 hover:bg-red-50 hover:text-red-500 hover:border-red-200 transition"
-                          title="Dismiss"
+                          onClick={() => setExpanded(isExpanded ? null : doc.id)}
+                          className="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-0.5"
                         >
-                          <XCircle className="w-3.5 h-3.5" />
+                          <ChevronRight className={`w-3.5 h-3.5 transition ${isExpanded ? 'rotate-90' : ''}`} />
+                          Attachments
                         </button>
-                      </>
-                    )}
+                      )}
 
-                    {activeTab === 'saved' && (
-                      <div className="flex items-center gap-1 text-xs text-green-600">
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        Saved
-                      </div>
-                    )}
+                      <a
+                        href={doc.gdrive_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1.5 rounded-lg border text-slate-600 hover:bg-slate-50"
+                        title="Preview in Drive"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </a>
+
+                      {activeTab === 'pending' && (
+                        <>
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => handleSave(doc)}
+                            disabled={saving === doc.id}
+                            className="text-xs"
+                          >
+                            <Save className="w-3 h-3 mr-1" />
+                            {saving === doc.id
+                              ? 'Saving…'
+                              : `Save to ${DOC_TYPE_LABELS[doc.document_type] ?? 'Storage'}`}
+                          </Button>
+
+                          <button
+                            onClick={() => handleDismiss(doc)}
+                            disabled={dismissing === doc.id}
+                            className="p-1.5 rounded-lg border text-slate-400 hover:bg-red-50 hover:text-red-500 hover:border-red-200 transition"
+                            title="Dismiss"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
+
+                      {activeTab === 'saved' && (
+                        <div className="flex items-center gap-1 text-xs text-green-600">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          Saved
+                        </div>
+                      )}
+                    </div>
                   </div>
+
+                  {/* Attachments Accordion */}
+                  {isExpanded && tree.length > 0 && (
+                    <div className="border-t bg-slate-50 px-4 py-3 space-y-1.5">
+                      <p className="text-xs font-medium text-slate-600 mb-2">Attachments</p>
+                      <AttachmentTree nodes={tree} depth={0} />
+                    </div>
+                  )}
                 </div>
+              )
+            })}
+          </div>
 
-                {/* Attachments Accordion */}
-                {isExpanded && tree.length > 0 && (
-                  <div className="border-t bg-slate-50 px-4 py-3 space-y-1.5">
-                    <p className="text-xs font-medium text-slate-600 mb-2">Attachments</p>
-                    <AttachmentTree nodes={tree} depth={0} />
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+          {!loading && documents.length > 0 && (
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={documents.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={setPageSize}
+              pageSizeOptions={[10, 15, 25, 50]}
+            />
+          )}
+        </>
       )}
     </div>
   )

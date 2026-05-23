@@ -13,8 +13,9 @@ import { EmptyState }            from '@/components/ui/EmptyState'
 import { ConfirmDialog }         from '@/components/ui/ConfirmDialog'
 import { ToolbarSelect }         from '@/components/ui/Toolbar'
 import { Modal }                 from '@/components/ui/Modal'
+import { Pagination }            from '@/components/ui/Pagination'
 import { AddLibraryItemModal }   from '@/components/modals/AddLibraryItemModal'
-import { useSearch, useModal, useDisclosure } from '@/hooks'
+import { useSearch, useModal, useDisclosure, usePagination } from '@/hooks'
 import { useRealtimeLibraryItems } from '@/hooks/useRealtimeCollections'
 import { useToast }              from '@/components/ui/Toast'
 import { Paperclip, Eye, PencilLine, Trash2, Download } from 'lucide-react'
@@ -313,6 +314,19 @@ export default function LibraryPage() {
   )
   const filtered = searched.filter(i => catFilter === 'ALL' || i.category === catFilter)
 
+  const {
+    currentPage,
+    pageSize,
+    totalPages,
+    paginatedItems,
+    setCurrentPage,
+    setPageSize,
+  } = usePagination({
+    items: filtered,
+    defaultPageSize: 25,
+    resetDeps: [query, catFilter],
+  })
+
   // ── Load — FIX: filter by uploaded_by unless user is privileged ──────────
   useEffect(() => {
     if (!user) return
@@ -473,84 +487,99 @@ export default function LibraryPage() {
               }
             />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    {['Title', 'Category', 'Size', 'Date Added', 'Actions'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(item => (
-                    <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2">
-                          <span>📗</span>
-                          <span className="font-semibold text-sm text-slate-800">{item.title}</span>
-                          {item.fileUrl && (
-                            <span className="inline-flex items-center bg-emerald-50 text-emerald-600 text-[10px] font-semibold px-1.5 py-0.5 rounded border border-emerald-200">
-                              <Paperclip size={11} />
-                            </span>
-                          )}
-                        </div>
-                        {item.description && (
-                          <p className="text-xs text-slate-400 mt-0.5 ml-6 truncate max-w-xs">{item.description}</p>
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <Badge className={libraryBadgeClass(item.category)}>{item.category}</Badge>
-                      </td>
-                      <td className="px-4 py-3.5 text-sm text-slate-500">{item.size}</td>
-                      <td className="px-4 py-3.5 text-sm text-slate-500">
-                        <div className="flex flex-col gap-0.5">
-                          {item.created_at && (
-                            <span className="text-xs">
-                              📅 {new Date(item.created_at).toLocaleString('en-PH', {
-                                year: 'numeric', month: 'short', day: 'numeric',
-                                hour: '2-digit', minute: '2-digit',
-                              })}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="sm"
-                            onClick={() => { viewDisc.open(item); logViewDocument(item.title).catch(() => {}) }}
-                            title="View item details">
-                            <Eye size={16} className="text-slate-600" />
-                          </Button>
-                          {canEdit && (
-                            <Button variant="ghost" size="sm" onClick={() => editDisc.open(item)} title="Edit item">
-                              <PencilLine size={16} className="text-slate-600" />
-                            </Button>
-                          )}
-                          {canDelete && (
-                            <Button variant="ghost" size="sm" onClick={() => deleteDisc.open(item)} title="Delete item">
-                              <Trash2 size={16} className="text-slate-600" />
-                            </Button>
-                          )}
-                          {item.fileUrl && (
-                            <a href={item.fileUrl} download target="_blank" rel="noopener noreferrer">
-                              <Button variant="ghost" size="sm" title="Download file">
-                                <Download size={16} className="text-slate-600" />
-                              </Button>
-                            </a>
-                          )}
-                          {canArchive && (
-                            <Button variant="ghost" size="sm" onClick={() => archiveDisc.open(item)} title="Archive item">
-                              <span className="text-lg">🗄️</span>
-                            </Button>
-                          )}
-                        </div>
-                      </td>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      {['Title', 'Category', 'Size', 'Date Added', 'Actions'].map(h => (
+                        <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">{h}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {paginatedItems.map(item => (
+                      <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-2">
+                            <span>📗</span>
+                            <span className="font-semibold text-sm text-slate-800">{item.title}</span>
+                            {item.fileUrl && (
+                              <span className="inline-flex items-center bg-emerald-50 text-emerald-600 text-[10px] font-semibold px-1.5 py-0.5 rounded border border-emerald-200">
+                                <Paperclip size={11} />
+                              </span>
+                            )}
+                          </div>
+                          {item.description && (
+                            <p className="text-xs text-slate-400 mt-0.5 ml-6 truncate max-w-xs">{item.description}</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <Badge className={libraryBadgeClass(item.category)}>{item.category}</Badge>
+                        </td>
+                        <td className="px-4 py-3.5 text-sm text-slate-500">{item.size}</td>
+                        <td className="px-4 py-3.5 text-sm text-slate-500">
+                          <div className="flex flex-col gap-0.5">
+                            {item.created_at && (
+                              <span className="text-xs">
+                                📅 {new Date(item.created_at).toLocaleString('en-PH', {
+                                  year: 'numeric', month: 'short', day: 'numeric',
+                                  hour: '2-digit', minute: '2-digit',
+                                })}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="sm"
+                              onClick={() => { viewDisc.open(item); logViewDocument(item.title).catch(() => {}) }}
+                              title="View item details">
+                              <Eye size={16} className="text-slate-600" />
+                            </Button>
+                            {canEdit && (
+                              <Button variant="ghost" size="sm" onClick={() => editDisc.open(item)} title="Edit item">
+                                <PencilLine size={16} className="text-slate-600" />
+                              </Button>
+                            )}
+                            {canDelete && (
+                              <Button variant="ghost" size="sm" onClick={() => deleteDisc.open(item)} title="Delete item">
+                                <Trash2 size={16} className="text-slate-600" />
+                              </Button>
+                            )}
+                            {item.fileUrl && (
+                              <a href={item.fileUrl} download target="_blank" rel="noopener noreferrer">
+                                <Button variant="ghost" size="sm" title="Download file">
+                                  <Download size={16} className="text-slate-600" />
+                                </Button>
+                              </a>
+                            )}
+                            {canArchive && (
+                              <Button variant="ghost" size="sm" onClick={() => archiveDisc.open(item)} title="Archive item">
+                                <span className="text-lg">🗄️</span>
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {!loading && filtered.length > 0 && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  totalItems={filtered.length}
+                  pageSize={pageSize}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={setPageSize}
+                  pageSizeOptions={[10, 25, 50, 100]}
+                />
+              )}
+            </>
+            
           )}
         </div>
       </div>
