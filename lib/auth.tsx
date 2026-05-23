@@ -3,7 +3,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 import { createClient } from './supabase/client'
-import { setCurrentLogger, logLogin, isLoggerReady } from './adminLogger'
+import { setCurrentLogger, logLogin } from './adminLogger'
 import type { Session, User } from '@supabase/supabase-js'
 
 export type AdminRole =
@@ -108,7 +108,7 @@ async function fetchProfile(
 }
 
 // ── Email masking helper ──────────────────────────────────────────────────────
-// Turns "pd@dnppo.gov.ph" into "p*@dnppo.gov.ph" so the UI can confirm
+// Turns "pd@dnppo.gov.ph" into "p****@dnppo.gov.ph" so the UI can confirm
 // which address the code was sent to without exposing the full email.
 
 export function maskEmail(email: string): string {
@@ -146,10 +146,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
 
   // ── On mount: restore existing session ───────────────────────────────────
-  // FIX RISK 1: setCurrentLogger is called before any component mounts and
-  // can fire a log. The cancelled guard ensures we never set stale state
-  // after unmount. A dev warning fires if the profile fetch fails but a
-  // Supabase session exists — that means logs would be silently dropped.
 
   useEffect(() => {
     let cancelled = false
@@ -164,28 +160,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (cancelled) return
 
           if (adminUser) {
-            // FIX RISK 1: set logger FIRST, before updating React state.
-            // This ensures any log fired during the initial render cycle
-            // (e.g. from a useEffect in a page) already has a valid logger.
+            // Set logger FIRST so any log fired during initial render already
+            // has a valid logger context.
             setCurrentLogger(adminUser.role, adminUser.id)
             setUser(adminUser)
             setSession(s)
-
-            // Sanity-check in dev: confirm the logger is actually ready
-            // immediately after setting it.
-            if (process.env.NODE_ENV === 'development' && !isLoggerReady()) {
-              console.warn(
-                '[auth] setCurrentLogger() called but isLoggerReady() is still false. ' +
-                'Check that role and userId are both non-null.'
-              )
-            }
           } else {
-            // Session exists but profile fetch failed — logger stays null.
-            // Warn in dev so this silent audit gap is caught early.
             if (process.env.NODE_ENV === 'development') {
               console.warn(
                 '[auth] Session restored but profile fetch returned null. ' +
-                'setCurrentLogger() was NOT called — all log calls will be dropped until the user logs in again.'
+                'setCurrentLogger() was NOT called — log calls will be dropped until re-login.'
               )
             }
           }
@@ -202,9 +186,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Login ─────────────────────────────────────────────────────────────────
-  // FIX RISK 1: setCurrentLogger is called BEFORE logLogin so the logger
-  // is guaranteed ready when logLogin fires. Previously the order was
-  // correct but now it is explicit and documented.
 
   const loginPassword = useCallback(async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
@@ -215,14 +196,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const adminUser = await fetchProfile(supabase, data.user)
     if (!adminUser) return { error: 'Account profile not found. Contact your administrator.' }
 
-    // FIX RISK 1: logger must be ready BEFORE logLogin — preserve this order.
+    // Logger must be ready BEFORE logLogin fires — preserve this order.
     setCurrentLogger(adminUser.role, adminUser.id)
-
-    // Confirm in dev that the logger is ready before writing the login log.
-    if (process.env.NODE_ENV === 'development' && !isLoggerReady()) {
-      console.warn('[auth] loginPassword: logger still not ready after setCurrentLogger() — login log will be dropped.')
-    }
-
     await logLogin(adminUser.role)
 
     setUser(adminUser)
@@ -232,24 +207,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [supabase]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Logout ────────────────────────────────────────────────────────────────
-  // FIX RISK 1: original code called setCurrentLogger(null) BEFORE signOut,
-  // which meant the logout log (if added in future) would always be dropped.
-  // Fixed order:
-  //   1. Write the logout log (logger is still valid here)
-  //   2. Clear logger state
-  //   3. Clear React state
-  //   4. Call signOut
-  //   5. Redirect
 
   const logout = useCallback(async () => {
-    // Step 1: capture role for the log before clearing anything
+    // Capture role before clearing state so the logout log can still fire.
     const roleForLog = user?.role ?? null
 
-    // Step 2: write logout log while logger is still valid
     if (roleForLog) {
       try {
-        // logAction is fire-and-forget; await so it completes before signOut
-        // invalidates the session (which would break the Supabase insert).
         await import('./adminLogger').then(({ logAction }) =>
           logAction('logout', `${roleForLog} logged out`)
         )
@@ -258,15 +222,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // Step 3: now clear the logger and React state
     setCurrentLogger(null)
     setUser(null)
     setSession(null)
-
-    // Step 4: invalidate the Supabase session
     await supabase.auth.signOut()
-
-    // Step 5: redirect
     window.location.href = '/login'
   }, [supabase, user])
 
@@ -287,22 +246,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [supabase, user])
 
   // ── Resolve email from role via DB RPC ────────────────────────────────────
-  // This is the only place in the codebase that knows role → email.
-  // The frontend never stores or displays the raw email.
+  // ISSUE 2 FIX: memoized with useCallback so it's stable across renders and
+  // can be safely listed as a dependency in sendPasswordResetOTP and
+  // verifyOTPAndReset without causing infinite re-creation loops.
+  //
+  // This is the ONLY place in the codebase that knows role → email.
+  // The raw email never reaches the UI — only the masked form is returned
+  // to callers via sendPasswordResetOTP.
+  //
+  // Requires this function in your Supabase SQL editor (run once):
+  //
+  //   create or replace function get_email_by_role(p_role text)
+  //   returns text
+  //   language sql
+  //   security definer
+  //   as $$
+  //     select u.email
+  //     from auth.users u
+  //     join profiles p on p.id = u.id
+  //     where p.role = p_role
+  //     limit 1;
+  //   $$;
 
-  async function resolveEmailByRole(role: string): Promise<string | null> {
+  const resolveEmailByRole = useCallback(async (role: string): Promise<string | null> => {
     const { data, error } = await supabase.rpc('get_email_by_role', { p_role: role })
     if (error || !data) return null
     return data as string
-  }
+  }, [supabase])
 
   // ── Send OTP for password reset (logged-out flow) ─────────────────────────
+  // Accepts a role string. Resolves email internally — caller never receives
+  // the raw address, only a masked hint (e.g. "p****@dnppo.gov.ph").
+  // shouldCreateUser: false ensures only existing accounts trigger OTPs.
 
   const sendPasswordResetOTP = useCallback(async (role: string) => {
     const email = await resolveEmailByRole(role)
 
+    // Return the same vague error whether the role has no match or Supabase
+    // rejects — prevents account enumeration via error message differences.
     if (!email) {
-      return { maskedEmail: null, error: 'Could not send code. Please check your role selection and try again.' }
+      return {
+        maskedEmail: null,
+        error: 'Could not send code. Please check your role selection and try again.',
+      }
     }
 
     const { error } = await supabase.auth.signInWithOtp({
@@ -311,13 +297,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })
 
     if (error) {
-      return { maskedEmail: null, error: 'Could not send code. Please check your role selection and try again.' }
+      return {
+        maskedEmail: null,
+        error: 'Could not send code. Please check your role selection and try again.',
+      }
     }
 
+    // Return only the masked form — UI shows "sent to p****@dnppo.gov.ph"
     return { maskedEmail: maskEmail(email), error: null }
-  }, [supabase]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [supabase, resolveEmailByRole])
 
   // ── Verify OTP and set new password (logged-out flow) ────────────────────
+  // 1. resolveEmailByRole — get the raw email for Supabase (never sent to UI)
+  // 2. verifyOtp          — authenticate the session with the 6-digit code
+  // 3. updateUser         — set the new password on the now-authenticated session
+  // 4. signOut            — clear the session; user must log in fresh with new pw
+  //
+  // NOTE: verifyOtp type 'email' is correct for supabase-js v2 numeric OTP.
+  // If using an older version, change to 'magiclink'. Confirm in Supabase
+  // dashboard: Auth → Email → ensure "Enable OTP" is ON (not just magic link).
 
   const verifyOTPAndReset = useCallback(async (
     role: string,
@@ -343,11 +341,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { error: updateError.message }
     }
 
-    // Sign out immediately so no unintended session lingers on the login page
+    // Sign out immediately — no unintended session should linger on the login page.
     await supabase.auth.signOut()
 
     return { error: null }
-  }, [supabase]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [supabase, resolveEmailByRole])
 
   return (
     <AuthContext.Provider value={{
