@@ -2,11 +2,11 @@
 // components/modals/ProfileSettingsModal.tsx
 // Micro settings panel for sidebar profile – clickable avatar opens this modal.
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/lib/auth'
 import type { AdminUser } from '@/lib/auth'
-import { logAction, logPasswordChange } from '@/lib/adminLogger'
+import { logPasswordChange } from '@/lib/adminLogger'
 import {
   getStoredProfilePrefs,
   saveStoredProfilePrefs,
@@ -45,30 +45,34 @@ export function ProfileSettingsModal({
 }: ProfileSettingsModalProps) {
   const { toast } = useToast()
   const { changePassword } = useAuth()
-  const fileInputRef  = useRef<HTMLInputElement>(null)
-  const modalRef      = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const modalRef     = useRef<HTMLDivElement>(null)
 
   const [tab,     setTab]     = useState<Tab>('profile')
   const [saving,  setSaving]  = useState(false)
   const [mounted, setMounted] = useState(open)
   const [closing, setClosing] = useState(false)
 
-  // Profile fields
+  // ── Profile fields ────────────────────────────────────────────────────────
   const [displayName,  setDisplayName]  = useState(user?.name ?? '')
-  const [email,        setEmail]        = useState(user?.email ?? '')
   const [photoFile,    setPhotoFile]    = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string>('')
   const [nameError,    setNameError]    = useState('')
-  const [emailError,   setEmailError]   = useState('')
+  // ISSUE 5 FIX: email removed from state entirely — it is displayed read-only
+  // directly from user?.email. The previous editable field was a silent bug:
+  // the value was never sent to supabase.auth.updateUser or the profiles table,
+  // so users could "save" a new email address and nothing would actually change.
+  // Email changes must be handled by a system administrator.
 
-  // Password fields
+  // ── Password fields ───────────────────────────────────────────────────────
   const [currentPw, setCurrentPw] = useState('')
   const [newPw,     setNewPw]     = useState('')
   const [confirmPw, setConfirmPw] = useState('')
   const [showPw,    setShowPw]    = useState({ current: false, next: false, confirm: false })
   const [pwErrors,  setPwErrors]  = useState<Record<string, string>>({})
 
-  // ── animation lifecycle ───────────────────────
+  // ── Animation lifecycle ───────────────────────────────────────────────────
+
   useEffect(() => {
     if (open) {
       setMounted(true)
@@ -80,7 +84,8 @@ export function ProfileSettingsModal({
     }
   }, [open, mounted])
 
-  // ── reset state when opened ───────────────────
+  // ── Reset state when opened ───────────────────────────────────────────────
+
   useEffect(() => {
     if (!open) return
     setTab('profile')
@@ -89,10 +94,8 @@ export function ProfileSettingsModal({
       setDisplayName(prefs.displayName ?? user?.name ?? '')
       setPhotoPreview(prefs.avatarUrl ?? user?.avatarUrl ?? '')
     })()
-    setEmail(user?.email ?? '')
     setPhotoFile(null)
     setNameError('')
-    setEmailError('')
     setCurrentPw('')
     setNewPw('')
     setConfirmPw('')
@@ -101,7 +104,8 @@ export function ProfileSettingsModal({
     setShowPw({ current: false, next: false, confirm: false })
   }, [open, user])
 
-  // ── close on Escape ───────────────────────────
+  // ── Close on Escape ───────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!open) return
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -109,7 +113,8 @@ export function ProfileSettingsModal({
     return () => document.removeEventListener('keydown', handler)
   }, [open, onClose])
 
-  // ── photo picker ──────────────────────────────
+  // ── Photo picker ──────────────────────────────────────────────────────────
+
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -121,13 +126,10 @@ export function ProfileSettingsModal({
     reader.readAsDataURL(file)
   }
 
-  // ── profile save ──────────────────────────────
+  // ── Profile save ──────────────────────────────────────────────────────────
+
   async function handleProfileSave() {
-    let hasError = false
-    if (!displayName.trim()) { setNameError('Display name is required.'); hasError = true }
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!emailRegex.test(email.trim())) { setEmailError('Enter a valid email address.'); hasError = true }
-    if (hasError) return
+    if (!displayName.trim()) { setNameError('Display name is required.'); return }
 
     setSaving(true)
     try {
@@ -169,72 +171,70 @@ export function ProfileSettingsModal({
     }
   }
 
-  // ── password save ─────────────────────────────
+  // ── Password save ─────────────────────────────────────────────────────────
+
   async function handlePasswordSave() {
-  // ── Client-side validation ──────────────────────────────
-  const errors: Record<string, string> = {}
+    const errors: Record<string, string> = {}
 
-  if (!currentPw)
-    errors.current = 'Current password is required.'
+    if (!currentPw)
+      errors.current = 'Current password is required.'
 
-  if (!newPw)
-    errors.next = 'New password is required.'
-  else if (newPw.length < 12)
-    errors.next = 'Password must be at least 12 characters.'
+    if (!newPw)
+      errors.next = 'New password is required.'
+    else if (newPw.length < 12)
+      errors.next = 'Password must be at least 12 characters.'
 
-  if (!confirmPw)
-    errors.confirm = 'Please confirm the new password.'
-  else if (newPw !== confirmPw)
-    errors.confirm = 'Passwords do not match.'
+    if (!confirmPw)
+      errors.confirm = 'Please confirm the new password.'
+    else if (newPw !== confirmPw)
+      errors.confirm = 'Passwords do not match.'
 
-  // Prevent reuse of the same password
-  if (newPw && currentPw && newPw === currentPw)
-    errors.next = 'New password must be different from your current password.'
+    if (newPw && currentPw && newPw === currentPw)
+      errors.next = 'New password must be different from your current password.'
 
-  setPwErrors(errors)
-  if (Object.keys(errors).length > 0) return
+    setPwErrors(errors)
+    if (Object.keys(errors).length > 0) return
 
-  // ── Call Supabase ───────────────────────────────────────
-  setSaving(true)
+    setSaving(true)
+    const { error } = await changePassword(currentPw, newPw)
+    setSaving(false)
 
-  const { error } = await changePassword(currentPw, newPw)
-
-  setSaving(false)
-
-  if (error) {
-    // Route the error to the right field
-    if (error === 'Current password is incorrect.') {
-      setPwErrors(prev => ({ ...prev, current: error }))
-    } else {
-      toast.error(error)
+    if (error) {
+      if (error === 'Current password is incorrect.') {
+        setPwErrors(prev => ({ ...prev, current: error }))
+      } else {
+        toast.error(error)
+      }
+      return
     }
-    return
+
+    toast.success('Password updated successfully.')
+    void logPasswordChange()
+    setCurrentPw('')
+    setNewPw('')
+    setConfirmPw('')
   }
 
-  // ── Success ─────────────────────────────────────────────
-  toast.success('Password updated successfully.')
-  void logPasswordChange()
-  setCurrentPw('')
-  setNewPw('')
-  setConfirmPw('')
-  // Stay on the Security tab — no forced logout
-}
+  // ── Password strength ─────────────────────────────────────────────────────
 
-  // ── password strength ─────────────────────────
-  const pwStrength = newPw.length >= 20 ? 4   // Strong
-  : newPw.length >= 16 ? 3                  // Good
-  : newPw.length >= 12 ? 2                  // Fair (meets minimum)
-  : newPw.length > 0   ? 1                  // Weak (below minimum)
-  : 0
+  const pwStrength = newPw.length >= 20 ? 4
+    : newPw.length >= 16 ? 3
+    : newPw.length >= 12 ? 2
+    : newPw.length > 0   ? 1
+    : 0
   const pwStrengthColors = ['', 'bg-red-400', 'bg-amber-400', 'bg-blue-500', 'bg-emerald-500']
   const pwStrengthLabels = ['', 'Weak', 'Fair', 'Good', 'Strong']
 
   if (!mounted) return null
 
-  const inputCls = (err?: string) =>
+  const fieldCls = (err?: string) =>
     `w-full px-3 py-2.5 border-[1.5px] rounded-xl text-sm bg-slate-50 focus:outline-none focus:bg-white transition ${
       err ? 'border-red-400 focus:border-red-400' : 'border-slate-200 focus:border-blue-500'
     }`
+
+  // Read-only field — same visual weight as the System Role display box
+  const readOnlyFieldCls =
+    'w-full px-3 py-2.5 border-[1.5px] border-slate-100 rounded-xl text-sm bg-slate-50 text-slate-400 flex items-center gap-2'
 
   const avatarBg = user?.avatarColor ?? '#3b63b8'
   const initials = displayName ? getInitials(displayName) : (user?.initials ?? '??')
@@ -331,16 +331,19 @@ export function ProfileSettingsModal({
           {/* ── Scrollable body ── */}
           <div className="flex-1 overflow-y-auto">
 
-            {/* ── Profile Tab ── */}
+            {/* ══════════════════════════════════════
+                PROFILE TAB
+            ══════════════════════════════════════ */}
             {tab === 'profile' && (
               <div className="p-5 space-y-4">
 
+                {/* Display name — editable */}
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     Display Name <span className="text-red-500">*</span>
                   </label>
                   <input
-                    className={inputCls(nameError)}
+                    className={fieldCls(nameError)}
                     value={displayName}
                     onChange={e => { setDisplayName(e.target.value); setNameError('') }}
                     placeholder="e.g. Ramon Dela Cruz"
@@ -350,21 +353,24 @@ export function ProfileSettingsModal({
                   <p className="text-[10px] text-slate-400 mt-1">Updates your sidebar display name only.</p>
                 </div>
 
+                {/* Email — read-only (ISSUE 5 FIX) */}
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-                    Email Address <span className="text-red-500">*</span>
+                    Email Address <span className="text-[10px] text-slate-400 normal-case">(read-only)</span>
                   </label>
-                  <input
-                    type="email"
-                    className={inputCls(emailError)}
-                    value={email}
-                    onChange={e => { setEmail(e.target.value); setEmailError('') }}
-                    placeholder="yourname@dnppo.gov.ph"
-                    disabled={saving}
-                  />
-                  {emailError && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {emailError}</p>}
+                  <div className={readOnlyFieldCls}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 text-slate-300">
+                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                      <polyline points="22,6 12,13 2,6" />
+                    </svg>
+                    <span className="truncate">{user?.email ?? '—'}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Email changes must be requested from your system administrator.
+                  </p>
                 </div>
 
+                {/* System role — read-only */}
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     System Role <span className="text-[10px] text-slate-400 normal-case">(read-only)</span>
@@ -377,6 +383,7 @@ export function ProfileSettingsModal({
                   </div>
                 </div>
 
+                {/* Photo picker */}
                 {photoFile ? (
                   <div className="flex items-center gap-3 px-3 py-3 bg-blue-50 border border-blue-200 rounded-xl">
                     <div className="w-9 h-9 rounded-full overflow-hidden border-2 border-blue-200 flex-shrink-0">
@@ -436,16 +443,18 @@ export function ProfileSettingsModal({
               </div>
             )}
 
-            {/* ── Password Tab ── */}
+            {/* ══════════════════════════════════════
+                SECURITY TAB
+            ══════════════════════════════════════ */}
             {tab === 'password' && (
               <div className="p-5 space-y-4">
 
                 <div className="flex items-start gap-2 px-3 py-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
                   <span className="flex-shrink-0 mt-0.5">⚠️</span>
-                  <span>Use a strong password (min. 12 characters, mix of upper/lower, numbers & symbols). You remain logged in after changing.</span>
+                  <span>Use a strong password (min. 12 characters, mix of upper/lower, numbers &amp; symbols). You remain logged in after changing.</span>
                 </div>
 
-                {/* Current */}
+                {/* Current password */}
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     Current Password <span className="text-red-500">*</span>
@@ -453,7 +462,7 @@ export function ProfileSettingsModal({
                   <div className="relative">
                     <input
                       type={showPw.current ? 'text' : 'password'}
-                      className={`${inputCls(pwErrors.current)} pr-10`}
+                      className={`${fieldCls(pwErrors.current)} pr-10`}
                       placeholder="Enter current password"
                       value={currentPw}
                       onChange={e => { setCurrentPw(e.target.value); setPwErrors(p => ({ ...p, current: '' })) }}
@@ -467,7 +476,7 @@ export function ProfileSettingsModal({
                   {pwErrors.current && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {pwErrors.current}</p>}
                 </div>
 
-                {/* New */}
+                {/* New password */}
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     New Password <span className="text-red-500">*</span>
@@ -475,7 +484,7 @@ export function ProfileSettingsModal({
                   <div className="relative">
                     <input
                       type={showPw.next ? 'text' : 'password'}
-                      className={`${inputCls(pwErrors.next)} pr-10`}
+                      className={`${fieldCls(pwErrors.next)} pr-10`}
                       placeholder="Min. 12 characters"
                       value={newPw}
                       onChange={e => { setNewPw(e.target.value); setPwErrors(p => ({ ...p, next: '' })) }}
@@ -501,7 +510,7 @@ export function ProfileSettingsModal({
                   {pwErrors.next && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {pwErrors.next}</p>}
                 </div>
 
-                {/* Confirm */}
+                {/* Confirm password */}
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
                     Confirm Password <span className="text-red-500">*</span>
@@ -509,7 +518,7 @@ export function ProfileSettingsModal({
                   <div className="relative">
                     <input
                       type={showPw.confirm ? 'text' : 'password'}
-                      className={`${inputCls(pwErrors.confirm)} pr-10`}
+                      className={`${fieldCls(pwErrors.confirm)} pr-10`}
                       placeholder="Repeat new password"
                       value={confirmPw}
                       onChange={e => { setConfirmPw(e.target.value); setPwErrors(p => ({ ...p, confirm: '' })) }}
