@@ -20,22 +20,7 @@ const ROLE_IDS = [
 // password still needs the email on the client side, which is acceptable —
 // see auth.tsx comments). If you later want to move this server-side too,
 // add a second RPC and call it here before loginPassword.
-const ROLE_EMAIL_MAP: Record<string, string> = {
-  admin: 'dalenamron@gmail.com',
-  PD:    'pd@dnppo.gov.ph',
-  DPDA:  '11dnpporms.dpda@gmail.com',
-  DPDO:  'dpdo@dnppo.gov.ph',
-  P1:    '11dnpporms.p1@gmail.com',
-  P2:    '11dnpporms.p2@gmail.com',
-  P3:    '11dnpporms.p3@gmail.com',
-  P4:    '11dnpporms.p4@gmail.com',
-  P5:    '11dnpporms.p5@gmail.com',
-  P6:    '11dnpporms.p6@gmail.com',
-  P7:    '11dnpporms.p7@gmail.com',
-  P8:    '11dnpporms.p8@gmail.com',
-  P9:    '11dnpporms.p9@gmail.com',
-  P10:   '11dnpporms.p10@gmail.com',
-}
+
 
 function getRoleLabel(id: string): string {
   switch (id) {
@@ -162,19 +147,25 @@ function LoginForm() {
     e.preventDefault()
     setLoginError('')
     setResetSuccess(false)
-
+ 
     if (!roleId)   { setLoginError('Please select your role.'); return }
     if (!password) { setLoginError('Please enter your password.'); return }
-
+ 
     setLoading(true)
-    const { error } = await loginPassword(ROLE_EMAIL_MAP[roleId] ?? '', password)
+    const { error } = await loginPassword(roleId, password)  // ← role, not email
     setLoading(false)
-
+ 
     if (error) {
-      setLoginError('Invalid credentials. Please check your role and password.')
+      // Surface disabled-account errors distinctly; treat everything else as
+      // generic "invalid credentials" to avoid leaking account existence info.
+      if (error.toLowerCase().includes('disabled')) {
+        setLoginError(error)
+      } else {
+        setLoginError('Invalid credentials. Please check your role and password.')
+      }
       return
     }
-
+ 
     router.replace(getDefaultAdminRoute(roleId as SessionRole))
   }, [roleId, password, loginPassword, router])
 
@@ -324,17 +315,7 @@ function LoginForm() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className={labelCls} style={{ marginBottom: 0 }}>Password</label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFpRoleId(roleId) // pre-fill if user already picked a role
-                      setFpError('')
-                      setView('forgot_role')
-                    }}
-                    className="text-xs text-[#1b365d]/60 hover:text-[#1b365d] underline underline-offset-2 transition font-medium"
-                  >
-                    Forgot password?
-                  </button>
+                  
                 </div>
                 <input
                   type="password"
@@ -345,6 +326,17 @@ function LoginForm() {
                   disabled={loading}
                   autoComplete="current-password"
                 />
+                <button
+                    type="button"
+                    onClick={() => {
+                      setFpRoleId(roleId) // pre-fill if user already picked a role
+                      setFpError('')
+                      setView('forgot_role')
+                    }}
+                    className="text-xs text-[#1b365d]/60 hover:text-[#1b365d] underline underline-offset-2 transition font-medium"
+                  >
+                    Forgot password?
+                  </button>
               </div>
 
               <button
@@ -669,6 +661,9 @@ function LoginForm() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function LoginPage() {
+
+  const searchParams = useSearchParams()
+  const isDisabled   = searchParams.get('disabled') === '1'
   return (
     <div className="min-h-screen flex font-sans">
 
@@ -711,6 +706,11 @@ export default function LoginPage() {
           <div className="w-6 h-6 border-2 border-[#1b365d] border-t-transparent rounded-full animate-spin" />
         </div>
       }>
+        {isDisabled && (
+          <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 font-medium">
+            Your account has been disabled. Please contact your system administrator.
+          </div>
+        )}
         <LoginForm />
       </Suspense>
 
