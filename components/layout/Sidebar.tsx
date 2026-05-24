@@ -131,27 +131,48 @@ export function Sidebar() {
 
   // Fetch unread inbox count
   // Replace the "Fetch unread inbox count" useEffect with this:
+  // AFTER — Supabase Realtime subscription
   useEffect(() => {
     if (!user) {
       setUnreadInboxCount(0)
       return
     }
 
-    const fetchForwardedCount = async () => {
-      try {
-        const res = await fetch('/api/forward/inbox/count')
-        const json = await res.json()
-        setUnreadInboxCount(json.count ?? 0)
-      } catch {
-        setUnreadInboxCount(0)
-      }
+    // 1. Fetch the initial count on mount
+    const fetchCount = async () => {
+      const { count } = await supabase
+        .from('forwarded_documents')
+        .select('*', { count: 'exact', head: true })
+        .eq('recipient_role', user.role)
+        .eq('status', 'pending')
+      setUnreadInboxCount(count ?? 0)
     }
 
-    fetchForwardedCount()
+    fetchCount()
 
-    // Poll every 30 seconds (real-time subscription requires forwarded_documents RLS to be set up)
-    const interval = setInterval(fetchForwardedCount, 30_000)
-    return () => clearInterval(interval)
+    // 2. Subscribe to any INSERT or UPDATE on forwarded_documents
+    //    filtered to rows where recipient_role matches this user
+    const channel = supabase
+      .channel('forwarded-inbox-count')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',   // INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'forwarded_documents',
+          filter: `recipient_role=eq.${user.role}`,
+        },
+        () => {
+          // Re-fetch count whenever anything changes for this recipient
+          fetchCount()
+        }
+      )
+      .subscribe()
+
+    // 3. Cleanup: unsubscribe when user logs out or component unmounts
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [user])
 
   async function handleLogoutConfirm() {
