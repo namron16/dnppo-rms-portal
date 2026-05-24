@@ -30,18 +30,15 @@ async function assertSuperAdmin() {
 // ── List all users ──────────────────────────
 
 export async function listAllUsers() {
-  console.log('listAllUsers called') 
   await assertSuperAdmin()
-  console.log('assertSuperAdmin passed')
   
   const admin = getAdminClient()
 
   const { data, error } = await admin.auth.admin.listUsers()
   if (error) throw error
 
-  // Enrich with profiles
-  const supabase = await createServerClient()
-  const { data: profiles } = await supabase
+  // ✅ FIX 1 — use admin client to bypass RLS when reading all profiles
+  const { data: profiles } = await admin
     .from('profiles')
     .select('id, role, display_name, is_active')
 
@@ -64,18 +61,35 @@ export async function listAllUsers() {
 
 export async function setUserActive(userId: string, isActive: boolean) {
   await assertSuperAdmin()
-  const supabase = await createServerClient()
 
-  const { error } = await supabase
+  const supabase = await createServerClient()
+  const admin    = getAdminClient()
+
+  // 1. Update profiles table (source of truth for the UI)
+  const { error: profileError } = await supabase
     .from('profiles')
     .update({ is_active: isActive })
     .eq('id', userId)
 
-  if (error) throw error
+  if (profileError) throw profileError
 
-  // If deactivating, also sign them out everywhere
+  // 2. Sync into user_metadata so the middleware can check without a DB call.
+  //    We merge so we don't accidentally wipe other keys (e.g. role).
+  const { data: authUser, error: fetchError } = await admin.auth.admin.getUserById(userId)
+  if (fetchError) throw fetchError
+
+  const merged = {
+    ...(authUser.user?.user_metadata ?? {}),
+    is_active: isActive,
+  }
+
+  const { error: metaError } = await admin.auth.admin.updateUserById(userId, {
+    user_metadata: merged,
+  })
+  if (metaError) throw metaError
+
+  // 3. If deactivating, immediately invalidate all existing sessions
   if (!isActive) {
-    const admin = getAdminClient()
     await admin.auth.admin.signOut(userId, 'global')
   }
 }
@@ -89,5 +103,32 @@ export async function adminResetPassword(userId: string, newPassword: string) {
 
   const admin = getAdminClient()
   const { error } = await admin.auth.admin.updateUserById(userId, { password: newPassword })
+  if (error) throw error
+}
+
+// ── Update email address ────────────────────────────────────────────
+
+/**
+ * Update a user's email address.
+ * Only callable by a user with role = 'admin'.
+ * Pass sendConfirmation: false to skip confirmation email (for internal accounts).
+ */
+export async function adminUpdateEmail(
+  userId: string,
+  newEmail: string,
+  options?: { sendConfirmation?: boolean }
+) {
+  await assertSuperAdmin()
+
+  if (!newEmail.includes('@')) {
+    throw new Error('Invalid email address.')
+  }
+
+  const admin = getAdminClient()
+  const { error } = await admin.auth.admin.updateUserById(userId, {
+    email: newEmail,
+    email_confirm: !(options?.sendConfirmation ?? false),
+  })
+
   if (error) throw error
 }

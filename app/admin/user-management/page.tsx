@@ -14,7 +14,10 @@ import {
   listAllUsers,
   setUserActive,
   adminResetPassword,
+  adminUpdateEmail,
 } from './actions'
+import { ResetPasswordModal } from './ResetPasswordModal'
+import { EditEmailModal } from './EditEmailModal'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -56,6 +59,10 @@ export default function UserManagementPage() {
   const [loading,          setLoading]          = useState(true)
   const [realtimeConnected, setRealtimeConnected] = useState(false)
   const [message,          setMessage]          = useState<{ type: 'info' | 'error'; text: string } | null>(null)
+
+  // ✅ FIX 3 & 7 — Modal state for password and email edits
+  const [resetTarget,     setResetTarget]     = useState<{ id: string; displayName: string } | null>(null)
+  const [editEmailTarget, setEditEmailTarget] = useState<{ id: string; displayName: string; email?: string } | null>(null)
 
   // ── Searchable list (name, role, title) ──────────────────────────────────
 
@@ -148,16 +155,27 @@ export default function UserManagementPage() {
     }
   }
 
-  async function resetPassword(userId: string, displayName: string) {
-    const newPass = prompt(`Enter new password for ${displayName} (min 12 characters):`)
-    if (!newPass) return
-    try {
-      await adminResetPassword(userId, newPass)
-      setMessage({ type: 'info', text: `Password reset for ${displayName}.` })
-      await logAction('edit_document', `Admin ${user?.role ?? ''} reset password for ${displayName}`)
-    } catch (e: unknown) {
-      setMessage({ type: 'error', text: e instanceof Error ? e.message : 'Reset failed.' })
-    }
+  // ✅ FIX 3 — Handle password reset modal
+  const handleResetPassword = (userId: string, displayName: string) => {
+    setResetTarget({ id: userId, displayName })
+  }
+
+  const handleResetSuccess = () => {
+    setResetTarget(null)
+    setMessage({ type: 'info', text: `Password reset for ${resetTarget?.displayName}.` })
+    void logAction('edit_document', `Admin ${user?.role ?? ''} reset password for ${resetTarget?.displayName}`)
+  }
+
+  // ✅ FIX 7 — Handle email edit modal
+  const handleEditEmail = (userId: string, displayName: string, email?: string) => {
+    setEditEmailTarget({ id: userId, displayName, email })
+  }
+
+  const handleEditEmailSuccess = (newEmail: string) => {
+    const oldTarget = editEmailTarget
+    setEditEmailTarget(null)
+    setMessage({ type: 'info', text: `Email updated to ${newEmail}.` })
+    void logAction('edit_document', `Admin ${user?.role ?? ''} updated email to ${newEmail} for ${oldTarget?.displayName}`)
   }
 
   // ── Role level badge ──────────────────────────────────────────────────────
@@ -356,11 +374,19 @@ export default function UserManagementPage() {
                             >
                               {u.isActive ? 'Disable' : 'Enable'}
                             </button>
+                            {/* ✅ FIX 3 — Reset password button now opens modal */}
                             <button
-                              onClick={() => resetPassword(u.id, u.displayName)}
+                              onClick={() => handleResetPassword(u.id, u.displayName)}
                               className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 transition"
                             >
                               Reset PW
+                            </button>
+                            {/* ✅ FIX 7 — Edit email button */}
+                            <button
+                              onClick={() => handleEditEmail(u.id, u.displayName, u.email)}
+                              className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 transition"
+                            >
+                              Edit Email
                             </button>
                           </div>
                         </td>
@@ -382,6 +408,27 @@ export default function UserManagementPage() {
 
         </div>
       </div>
+
+      {/* ✅ FIX 3 — Reset Password Modal */}
+      {resetTarget && (
+        <ResetPasswordModal
+          userId={resetTarget.id}
+          displayName={resetTarget.displayName}
+          onClose={() => setResetTarget(null)}
+          onSuccess={handleResetSuccess}
+        />
+      )}
+
+      {/* ✅ FIX 7 — Edit Email Modal */}
+      {editEmailTarget && (
+        <EditEmailModal
+          userId={editEmailTarget.id}
+          displayName={editEmailTarget.displayName}
+          currentEmail={editEmailTarget.email}
+          onClose={() => setEditEmailTarget(null)}
+          onSuccess={handleEditEmailSuccess}
+        />
+      )}
     </>
   )
 }
