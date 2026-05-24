@@ -1,0 +1,79 @@
+'use client'
+
+import { createClient } from './supabase/client'
+
+const SESSION_TOKEN_KEY = 'dnppo_session_token'
+
+function getStorage(): Storage | null {
+  if (typeof window === 'undefined') return null
+  return window.localStorage
+}
+
+export function generateToken(): string {
+  return crypto.randomUUID()
+}
+
+export function saveTokenLocally(token: string) {
+  getStorage()?.setItem(SESSION_TOKEN_KEY, token)
+}
+
+export function getLocalToken(): string | null {
+  return getStorage()?.getItem(SESSION_TOKEN_KEY) ?? null
+}
+
+export function clearLocalToken() {
+  getStorage()?.removeItem(SESSION_TOKEN_KEY)
+}
+
+export async function registerSession(role: string, userId: string): Promise<string> {
+  const supabase = createClient()
+  const token = generateToken()
+
+  const { error } = await supabase
+    .from('active_sessions')
+    .upsert({
+      role,
+      session_token: token,
+      user_id: userId,
+      logged_in_at: new Date().toISOString(),
+    })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  saveTokenLocally(token)
+  return token
+}
+
+export async function isSessionValid(role: string): Promise<boolean> {
+  const localToken = getLocalToken()
+  if (!localToken) return false
+
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('active_sessions')
+    .select('session_token')
+    .eq('role', role)
+    .single()
+
+  if (error || !data) return false
+  return data.session_token === localToken
+}
+
+export async function clearSession(role: string) {
+  const localToken = getLocalToken()
+  if (!localToken) {
+    clearLocalToken()
+    return
+  }
+
+  const supabase = createClient()
+  await supabase
+    .from('active_sessions')
+    .delete()
+    .eq('role', role)
+    .eq('session_token', localToken)
+
+  clearLocalToken()
+}

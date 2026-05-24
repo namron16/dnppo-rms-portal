@@ -269,6 +269,12 @@ function LoginForm() {
           </div>
         )}
 
+        {reason === 'session_taken' && view === 'login' && (
+          <div className="w-full mb-4 rounded-lg bg-red-50 border border-red-300 px-4 py-3 text-sm text-red-800">
+            Your session was ended because this account was logged in from another device.
+          </div>
+        )}
+
         {/* ── Password reset success banner ── */}
         {resetSuccess && view === 'login' && (
           <div className="w-full mb-4 rounded-lg bg-emerald-50 border border-emerald-300 px-4 py-3 text-sm text-emerald-800 flex items-start gap-2">

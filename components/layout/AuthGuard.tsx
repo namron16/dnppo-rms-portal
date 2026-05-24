@@ -8,6 +8,8 @@ import { isAllowedAdminPath } from '@/lib/adminRouteAccess'
 import type { SessionRole } from '@/lib/adminRouteAccess'
 import { getDefaultAdminRoute } from '@/lib/adminRouteAccess'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { clearLocalToken, isSessionValid } from '@/lib/sessionLock'
+import { createClient } from '@/lib/supabase/client'
 
 interface AuthGuardProps {
   requiredRole?: 'admin' | 'officer' | 'any'
@@ -15,6 +17,7 @@ interface AuthGuardProps {
 }
 
 const LOADING_TIMEOUT_MS = 8_000
+const SESSION_CHECK_INTERVAL_MS = 30_000
 
 export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
   const { user, isLoading } = useAuth()
@@ -22,6 +25,7 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
   const pathname = usePathname()
   const [timedOut, setTimedOut] = useState(false)
   const timerRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Timeout safety net ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -40,6 +44,40 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
     }
   }, [isLoading])
 
+  // ── Session lock polling ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+
+    if (isLoading || !user) return
+
+    let cancelled = false
+
+    const checkSessionLock = async () => {
+      const valid = await isSessionValid(user.role)
+      if (cancelled || valid) return
+
+      clearLocalToken()
+      await createClient().auth.signOut()
+      router.replace('/login?reason=session_taken')
+    }
+
+    void checkSessionLock()
+    intervalRef.current = setInterval(() => {
+      void checkSessionLock()
+    }, SESSION_CHECK_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+  }, [isLoading, router, user])
+
   // ── Route guard ────────────────────────────────────────────────────────────
   useEffect(() => {
     // Still loading and haven't timed out — wait
@@ -51,10 +89,20 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
       return
     }
 
-    // User exists but path is forbidden for their role → redirect to default
-    if (pathname && !isAllowedAdminPath(pathname, user.role as SessionRole)) {
-      router.replace(getDefaultAdminRoute(user.role as SessionRole))
-    }
+    void (async () => {
+      const valid = await isSessionValid(user.role)
+      if (!valid) {
+        clearLocalToken()
+        await createClient().auth.signOut()
+        router.replace('/login?reason=session_taken')
+        return
+      }
+
+      // User exists but path is forbidden for their role → redirect to default
+      if (pathname && !isAllowedAdminPath(pathname, user.role as SessionRole)) {
+        router.replace(getDefaultAdminRoute(user.role as SessionRole))
+      }
+    })()
   }, [user, isLoading, timedOut, router, pathname])
 
   // ── Render logic ───────────────────────────────────────────────────────────

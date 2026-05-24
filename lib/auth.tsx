@@ -4,6 +4,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
 import { createClient } from './supabase/client'
 import { setCurrentLogger, logLogin } from './adminLogger'
+import { clearSession, registerSession } from './sessionLock'
 import type { Session, User } from '@supabase/supabase-js'
 
 export type AdminRole =
@@ -196,6 +197,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const adminUser = await fetchProfile(supabase, data.user)
     if (!adminUser) return { error: 'Account profile not found. Contact your administrator.' }
 
+    try {
+      await registerSession(adminUser.role, adminUser.id)
+    } catch {
+      await supabase.auth.signOut()
+      return { error: 'Could not establish a session lock. Please try again.' }
+    }
+
     // Logger must be ready BEFORE logLogin fires — preserve this order.
     setCurrentLogger(adminUser.role, adminUser.id)
     await logLogin(adminUser.role)
@@ -219,6 +227,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         )
       } catch {
         // Never block logout on a log failure
+      }
+    }
+
+    if (roleForLog) {
+      try {
+        await clearSession(roleForLog)
+      } catch {
+        // Never block logout on a lock cleanup failure
       }
     }
 
