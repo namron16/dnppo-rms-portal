@@ -5,6 +5,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { createClient } from './supabase/client'
 import { setCurrentLogger, logLogin } from './adminLogger'
 import { clearSession, registerSession } from './sessionLock'
+import { setAdminActive, setAdminInactive } from './accessRequests'
 import type { Session, User } from '@supabase/supabase-js'
 
 export type AdminRole =
@@ -126,7 +127,7 @@ interface AuthContextValue {
   user:           AdminUser | null
   session:        Session | null
   isLoading:      boolean
-  loginPassword:  (email: string, password: string) => Promise<{ error: string | null }>
+  loginPassword:  (role: string, password: string) => Promise<{ error: string | null }>
   logout:         () => Promise<void>
   changePassword: (current: string, next: string)   => Promise<{ error: string | null }>
 
@@ -161,6 +162,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (cancelled) return
 
           if (adminUser) {
+            await setAdminActive(s.user.id)
+
             // Set logger FIRST so any log fired during initial render already
             // has a valid logger context.
             setCurrentLogger(adminUser.role, adminUser.id)
@@ -186,16 +189,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+      // ── Resolve email from role via DB RPC ────────────────────────────────────
+  // ISSUE 2 FIX: memoized with useCallback so it's stable across renders and
+  // can be safely listed as a dependency in sendPasswordResetOTP and
+  // verifyOTPAndReset without causing infinite re-creation loops.
+  //
+  // This is the ONLY place in the codebase that knows role → email.
+  // The raw email never reaches the UI — only the masked form is returned
+  // to callers via sendPasswordResetOTP.
+  //
+  // Requires this function in your Supabase SQL editor (run once):
+  //
+  //   create or replace function get_email_by_role(p_role text)
+  //   returns text
+  //   language sql
+  //   security definer
+  //   as $$
+  //     select u.email
+  //     from auth.users u
+  //     join profiles p on p.id = u.id
+  //     where p.role = p_role
+  //     limit 1;
+  //   $$;
+
+    const resolveEmailByRole = useCallback(async (role: string): Promise<string | null> => {
+    const { data, error } = await supabase.rpc('get_email_by_role', { p_role: role })
+    if (error || !data) return null
+    return data as string
+  }, [supabase])
+
   // ── Login ─────────────────────────────────────────────────────────────────
-
-  const loginPassword = useCallback(async (email: string, password: string) => {
+  const loginPassword = useCallback(async (role: string, password: string) => {
+    const email = await resolveEmailByRole(role)
+    if (!email) {
+      return { error: 'Account not found. Please check your role selection.' }
+    }
+    // Step 2 — sign in with resolved email + password
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-
     if (error)      return { error: error.message }
     if (!data.user) return { error: 'No user returned.' }
+ 
 
     const adminUser = await fetchProfile(supabase, data.user)
     if (!adminUser) return { error: 'Account profile not found. Contact your administrator.' }
+
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('is_active')
+      .eq('id', data.user.id)
+      .single()
+
+    if (profileRow?.is_active === false) {
+      await supabase.auth.signOut()
+      return { error: 'Your account has been disabled. Contact your administrator.' }
+    }
 
     try {
       await registerSession(adminUser.role, adminUser.id)
@@ -203,6 +250,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await supabase.auth.signOut()
       return { error: 'Could not establish a session lock. Please try again.' }
     }
+
+    await setAdminActive(data.user.id)
 
     // Logger must be ready BEFORE logLogin fires — preserve this order.
     setCurrentLogger(adminUser.role, adminUser.id)
@@ -212,13 +261,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSession(data.session)
 
     return { error: null }
-  }, [supabase]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [supabase, resolveEmailByRole]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Logout ────────────────────────────────────────────────────────────────
 
   const logout = useCallback(async () => {
-    // Capture role before clearing state so the logout log can still fire.
+    // Capture role and userId before clearing state so the logout log can still fire.
     const roleForLog = user?.role ?? null
+    const userIdForLog = user?.id ?? null
 
     if (roleForLog) {
       try {
@@ -235,6 +285,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await clearSession(roleForLog)
       } catch {
         // Never block logout on a lock cleanup failure
+      }
+    }
+
+    if (userIdForLog) {
+      try {
+        await setAdminInactive(userIdForLog)
+      } catch {
+        // Never block logout on presence cleanup failure
       }
     }
 
@@ -261,34 +319,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: null }
   }, [supabase, user])
 
-  // ── Resolve email from role via DB RPC ────────────────────────────────────
-  // ISSUE 2 FIX: memoized with useCallback so it's stable across renders and
-  // can be safely listed as a dependency in sendPasswordResetOTP and
-  // verifyOTPAndReset without causing infinite re-creation loops.
-  //
-  // This is the ONLY place in the codebase that knows role → email.
-  // The raw email never reaches the UI — only the masked form is returned
-  // to callers via sendPasswordResetOTP.
-  //
-  // Requires this function in your Supabase SQL editor (run once):
-  //
-  //   create or replace function get_email_by_role(p_role text)
-  //   returns text
-  //   language sql
-  //   security definer
-  //   as $$
-  //     select u.email
-  //     from auth.users u
-  //     join profiles p on p.id = u.id
-  //     where p.role = p_role
-  //     limit 1;
-  //   $$;
 
-  const resolveEmailByRole = useCallback(async (role: string): Promise<string | null> => {
-    const { data, error } = await supabase.rpc('get_email_by_role', { p_role: role })
-    if (error || !data) return null
-    return data as string
-  }, [supabase])
+
 
   // ── Send OTP for password reset (logged-out flow) ─────────────────────────
   // Accepts a role string. Resolves email internally — caller never receives

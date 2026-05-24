@@ -41,25 +41,36 @@ export async function proxy(request: NextRequest) {
 
   // ── Admin routes ────────────────────────────
   if (pathname.startsWith('/admin')) {
-    // Not authenticated
-    if (!isLoggedIn || !role) {
-      const loginUrl = new URL('/login', request.url)
-      loginUrl.searchParams.set('from', pathname)
-      return NextResponse.redirect(loginUrl, { status: 303 })
-    }
-
-    // /admin root → default for role
-    if (pathname === '/admin') {
-      return redirectTo(getDefaultAdminRoute(role))
-    }
-
-    // Unauthorized route for this role → default for role (303 replaces history)
-    if (!isAllowedAdminPath(pathname, role)) {
-      return redirectTo(getDefaultAdminRoute(role))
-    }
-
-    return supabaseResponse
+  // Not authenticated
+  if (!isLoggedIn || !role) {
+    const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('from', pathname)
+    return NextResponse.redirect(loginUrl, { status: 303 })
   }
+
+  // ✅ NEW — account disabled check (reads from JWT, no DB call)
+  const isActive = user?.user_metadata?.is_active ?? true
+  if (!isActive) {
+    const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('disabled', '1')
+    const response = NextResponse.redirect(loginUrl, { status: 303 })
+    // Clear session cookies so the browser doesn't replay the old session
+    supabaseResponse.cookies.getAll().forEach(cookie => {
+      response.cookies.set(cookie.name, '', { maxAge: 0 })
+    })
+    return response
+  }
+
+  if (pathname === '/admin') {
+    return redirectTo(getDefaultAdminRoute(role))
+  }
+
+  if (!isAllowedAdminPath(pathname, role)) {
+    return redirectTo(getDefaultAdminRoute(role))
+  }
+
+  return supabaseResponse
+}
 
   return supabaseResponse
 }
