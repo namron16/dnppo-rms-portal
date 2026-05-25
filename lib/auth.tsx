@@ -2,11 +2,11 @@
 // lib/auth.tsx
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
-import { createClient } from './supabase/client'
-import { setCurrentLogger, logLogin } from './adminLogger'
-import { clearSession, registerSession } from './sessionLock'
-import { setAdminActive, setAdminInactive } from './accessRequests'
-import type { Session, User } from '@supabase/supabase-js'
+import { createClient }                         from './supabase/client'
+import { setCurrentLogger, logLogin }           from './adminLogger'
+import { clearSession, registerSession }        from './sessionLock'
+import { setAdminActive, setAdminInactive }     from './accessRequests'
+import type { Session, User }                   from '@supabase/supabase-js'
 
 export type AdminRole =
   | 'admin' | 'PD' | 'DPDA' | 'DPDO'
@@ -59,8 +59,8 @@ function permissionsForRole(role: AdminRole): AdminUser['permissions'] {
 }
 
 function levelForRole(role: AdminRole): RoleLevel {
-  if (role === 'admin') return 'super_admin'
-  if (role === 'DPDA' || role === 'DPDO') return 'deputy'
+  if (role === 'admin')                        return 'super_admin'
+  if (role === 'DPDA' || role === 'DPDO')      return 'deputy'
   return 'admin'
 }
 
@@ -111,8 +111,6 @@ async function fetchProfile(
 }
 
 // ── Email masking helper ──────────────────────────────────────────────────────
-// Turns "pd@dnppo.gov.ph" into "p****@dnppo.gov.ph" so the UI can confirm
-// which address the code was sent to without exposing the full email.
 
 export function maskEmail(email: string): string {
   const [local, domain] = email.split('@')
@@ -123,10 +121,6 @@ export function maskEmail(email: string): string {
 }
 
 // ── Safe sign-out helper ──────────────────────────────────────────────────────
-// Signs the user out and waits long enough for the browser to receive and
-// apply the cleared-cookie response headers before any React navigation fires.
-// Without this delay the middleware sees the old session cookie and redirects
-// to /admin/*, causing the "Failed to fetch RSC payload" error.
 
 async function safeSignOut(supabase: ReturnType<typeof createClient>): Promise<void> {
   await supabase.auth.signOut({ scope: 'global' })
@@ -141,11 +135,7 @@ interface AuthContextValue {
   isLoading:      boolean
   loginPassword:  (role: string, password: string) => Promise<{ error: string | null }>
   logout:         () => Promise<void>
-  changePassword: (current: string, next: string)   => Promise<{ error: string | null }>
-
-  // ── OTP password reset (logged-out flow, login page only) ────────────────
-  // Accepts a role string — resolves the email internally via DB RPC.
-  // Returns the masked email on success so the UI can show a hint.
+  changePassword: (current: string, next: string)  => Promise<{ error: string | null }>
   sendPasswordResetOTP: (role: string) => Promise<{ maskedEmail: string | null; error: string | null }>
   verifyOTPAndReset:    (role: string, token: string, newPassword: string) => Promise<{ error: string | null }>
 }
@@ -170,18 +160,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return
 
         if (s?.user) {
-          // ── Check if account is still active before restoring the session ──
-          // This handles the case where an admin disabled the account while the
-          // user was already logged in. The next page load will catch it here
-          // rather than waiting for the middleware redirect loop.
           const { data: profileRow } = await supabase
             .from('profiles')
             .select('is_active')
             .eq('id', s.user.id)
             .single()
 
+          // Account was disabled while the user was already logged in —
+          // sign out silently and let the middleware redirect to /login?disabled=1.
+          // Do NOT call setCurrentLogger or logLogin here.
           if (profileRow?.is_active === false) {
-            // Sign out silently — middleware will redirect to /login?disabled=1
             await safeSignOut(supabase)
             if (!cancelled) setIsLoading(false)
             return
@@ -192,9 +180,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           if (adminUser) {
             await setAdminActive(s.user.id)
-
-            // Set logger FIRST so any log fired during initial render already
-            // has a valid logger context.
             setCurrentLogger(adminUser.role, adminUser.id)
             setUser(adminUser)
             setSession(s)
@@ -219,27 +204,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Resolve email from role via DB RPC ────────────────────────────────────
-  // ISSUE 2 FIX: memoized with useCallback so it's stable across renders and
-  // can be safely listed as a dependency in sendPasswordResetOTP and
-  // verifyOTPAndReset without causing infinite re-creation loops.
-  //
-  // This is the ONLY place in the codebase that knows role → email.
-  // The raw email never reaches the UI — only the masked form is returned
-  // to callers via sendPasswordResetOTP.
-  //
-  // Requires this function in your Supabase SQL editor (run once):
-  //
-  //   create or replace function get_email_by_role(p_role text)
-  //   returns text
-  //   language sql
-  //   security definer
-  //   as $$
-  //     select u.email
-  //     from auth.users u
-  //     join profiles p on p.id = u.id
-  //     where p.role = p_role
-  //     limit 1;
-  //   $$;
 
   const resolveEmailByRole = useCallback(async (role: string): Promise<string | null> => {
     const { data, error } = await supabase.rpc('get_email_by_role', { p_role: role })
@@ -265,13 +229,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const adminUser = await fetchProfile(supabase, data.user)
     if (!adminUser) return { error: 'Account profile not found. Contact your administrator.' }
 
-    // Step 4 — disabled account check
-    // IMPORTANT: We must sign out completely and wait for the browser to
-    // receive the cleared-cookie headers BEFORE returning the error.
-    // If we return early without awaiting the sign-out flush, the browser
-    // still holds a valid session cookie. React then navigates and the
-    // middleware lets the request through → RSC fetch hits /admin/* →
-    // "Failed to fetch RSC payload" error.
+    // Step 4 — disabled account check.
+    //
+    // IMPORTANT: We sign out fully and wait for the browser to flush the
+    // cleared-cookie headers BEFORE returning the error. Returning early without
+    // this flush leaves a valid session cookie in the browser; React then navigates
+    // and the middleware lets the request through → "Failed to fetch RSC payload".
+    //
+    // We also deliberately do NOT call setCurrentLogger or logLogin here.
+    // A disabled account attempting to log in must never appear as "logged in"
+    // in the audit log.
     const { data: profileRow } = await supabase
       .from('profiles')
       .select('is_active')
@@ -291,10 +258,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { error: 'Could not establish a session lock. Please try again.' }
     }
 
-    // Step 6 — mark presence, set logger, log the login event
+    // Step 6 — mark presence, set logger, log the login event.
+    //
+    // setCurrentLogger MUST be called before logLogin so the logger module has
+    // a valid userId and role before the first write fires.
+    // We only reach this point when is_active is confirmed true (Step 4 above),
+    // so it is safe to log the login here.
     await setAdminActive(data.user.id)
-
-    // Logger must be ready BEFORE logLogin fires — preserve this order.
     setCurrentLogger(adminUser.role, adminUser.id)
     await logLogin(adminUser.role)
 
@@ -307,7 +277,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── Logout ────────────────────────────────────────────────────────────────
 
   const logout = useCallback(async () => {
-    // Capture role and userId before clearing state so the logout log can still fire.
     const roleForLog   = user?.role ?? null
     const userIdForLog = user?.id   ?? null
 
@@ -344,7 +313,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.location.href = '/login'
   }, [supabase, user])
 
-  // ── Change password (logged-in flow — requires current password) ──────────
+  // ── Change password (logged-in flow) ──────────────────────────────────────
 
   const changePassword = useCallback(async (current: string, next: string) => {
     if (!user?.email) return { error: 'Session error. Please log out and back in.' }
@@ -361,15 +330,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [supabase, user])
 
   // ── Send OTP for password reset (logged-out flow) ─────────────────────────
-  // Accepts a role string. Resolves email internally — caller never receives
-  // the raw address, only a masked hint (e.g. "p****@dnppo.gov.ph").
-  // shouldCreateUser: false ensures only existing accounts trigger OTPs.
 
   const sendPasswordResetOTP = useCallback(async (role: string) => {
     const email = await resolveEmailByRole(role)
 
-    // Return the same vague error whether the role has no match or Supabase
-    // rejects — prevents account enumeration via error message differences.
     if (!email) {
       return {
         maskedEmail: null,
@@ -389,19 +353,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // Return only the masked form — UI shows "sent to p****@dnppo.gov.ph"
     return { maskedEmail: maskEmail(email), error: null }
   }, [supabase, resolveEmailByRole])
 
   // ── Verify OTP and set new password (logged-out flow) ────────────────────
-  // 1. resolveEmailByRole — get the raw email for Supabase (never sent to UI)
-  // 2. verifyOtp          — authenticate the session with the 6-digit code
-  // 3. updateUser         — set the new password on the now-authenticated session
-  // 4. signOut            — clear the session; user must log in fresh with new pw
-  //
-  // NOTE: verifyOtp type 'email' is correct for supabase-js v2 numeric OTP.
-  // If using an older version, change to 'magiclink'. Confirm in Supabase
-  // dashboard: Auth → Email → ensure "Enable OTP" is ON (not just magic link).
 
   const verifyOTPAndReset = useCallback(async (
     role: string,
@@ -427,7 +382,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { error: updateError.message }
     }
 
-    // Sign out immediately — no unintended session should linger on the login page.
     await supabase.auth.signOut()
 
     return { error: null }
