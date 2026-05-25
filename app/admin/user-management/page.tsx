@@ -219,16 +219,18 @@ export default function UserManagementPage() {
             ...(row.title         !== undefined && { title:       row.title }),
           })
 
-          // If active status changed we also need the latest email from auth.users,
-          // so we fetch the single user record server-side and upsert the full row.
+          // If active status changed, fetch the full user record to ensure email
+          // is synced, but preserve the is_active value we just patched to avoid
+          // race conditions with the database write.
           if (row.is_active !== undefined) {
             try {
               const fresh = await getSingleUser(row.id)
               if (fresh) {
-                // Preserve existing presence data — don't overwrite it
+                // Preserve existing presence data and the is_active we just updated
                 const existing = usersRef.current.find(u => u.id === row.id)
                 upsertUser({
                   ...fresh,
+                  isActive: existing?.isActive ?? fresh.isActive, // Use patched value
                   presenceActive: existing?.presenceActive ?? false,
                   lastSeen:       existing?.lastSeen,
                 })

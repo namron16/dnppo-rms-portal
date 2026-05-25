@@ -7,20 +7,12 @@ import { useAuth } from '@/lib/auth'
 import { getDefaultAdminRoute, type SessionRole } from '@/lib/adminRouteAccess'
 
 // ── Role map (labels only — no emails) ───────────────────────────────────────
-// Emails are resolved server-side via the get_email_by_role() Supabase RPC.
-// This map exists purely for display labels in the <select>.
 
 const ROLE_IDS = [
   'admin', 'PD', 'DPDA', 'DPDO',
   'P1', 'P2', 'P3', 'P4', 'P5',
   'P6', 'P7', 'P8', 'P9', 'P10', 'PPSMU', 'WCPD',
 ] as const
-
-// The email map is kept here only for the loginPassword call (sign-in with
-// password still needs the email on the client side, which is acceptable —
-// see auth.tsx comments). If you later want to move this server-side too,
-// add a second RPC and call it here before loginPassword.
-
 
 function getRoleLabel(id: string): string {
   switch (id) {
@@ -40,7 +32,7 @@ const ROLE_OPTIONS = ROLE_IDS.map(id => ({ id, label: getRoleLabel(id) }))
 // ── Password strength helper ──────────────────────────────────────────────────
 
 function getPwStrength(pw: string): number {
-  if (!pw)           return 0
+  if (!pw)             return 0
   if (pw.length >= 20) return 4
   if (pw.length >= 16) return 3
   if (pw.length >= 12) return 2
@@ -117,10 +109,10 @@ function LoginForm() {
   const [resetSuccess, setResetSuccess] = useState(false)
 
   // ── Forgot password state ─────────────────────────────────────────────────
-  const [fpRoleId,     setFpRoleId]     = useState('')
-  const [fpMaskedEmail, setFpMaskedEmail] = useState('') // e.g. "p***@dnppo.gov.ph"
-  const [otpCode,      setOtpCode]      = useState('')
-  const [fpError,      setFpError]      = useState('')
+  const [fpRoleId,      setFpRoleId]      = useState('')
+  const [fpMaskedEmail, setFpMaskedEmail] = useState('')
+  const [otpCode,       setOtpCode]       = useState('')
+  const [fpError,       setFpError]       = useState('')
 
   // ── Step 3 password fields ────────────────────────────────────────────────
   const [newPw,     setNewPw]     = useState('')
@@ -149,17 +141,15 @@ function LoginForm() {
     e.preventDefault()
     setLoginError('')
     setResetSuccess(false)
- 
+
     if (!roleId)   { setLoginError('Please select your role.'); return }
     if (!password) { setLoginError('Please enter your password.'); return }
- 
+
     setLoading(true)
-    const { error } = await loginPassword(roleId, password)  // ← role, not email
+    const { error } = await loginPassword(roleId, password)
     setLoading(false)
- 
+
     if (error) {
-      // Surface disabled-account errors distinctly; treat everything else as
-      // generic "invalid credentials" to avoid leaking account existence info.
       if (error.toLowerCase().includes('disabled')) {
         setLoginError(error)
       } else {
@@ -167,13 +157,11 @@ function LoginForm() {
       }
       return
     }
- 
+
     router.replace(getDefaultAdminRoute(roleId as SessionRole))
   }, [roleId, password, loginPassword, router])
 
   // ── STEP 1: send OTP ──────────────────────────────────────────────────────
-  // Passes the role to auth — email is resolved server-side via DB RPC.
-  // The returned maskedEmail is the only email data the UI ever sees.
 
   const handleSendOTP = useCallback(async () => {
     setFpError('')
@@ -190,9 +178,6 @@ function LoginForm() {
   }, [fpRoleId, sendPasswordResetOTP])
 
   // ── STEP 2: validate OTP format, advance wizard ───────────────────────────
-  // Actual OTP verification happens together with the password update in step 3
-  // (Supabase verifyOtp must be followed immediately by updateUser in the same
-  // session — splitting them across steps would require storing a session token).
 
   const handleVerifyOTP = useCallback(() => {
     setFpError('')
@@ -210,7 +195,7 @@ function LoginForm() {
     setView('forgot_newpw')
   }, [otpCode])
 
-  // ── STEP 3: verify OTP + set new password (single atomic call) ────────────
+  // ── STEP 3: verify OTP + set new password ────────────────────────────────
 
   const handleResetPassword = useCallback(async () => {
     setFpError('')
@@ -233,7 +218,6 @@ function LoginForm() {
     }
 
     setLoading(true)
-    // Role is passed — auth.tsx resolves the email via DB RPC internally
     const { error } = await verifyOTPAndReset(fpRoleId, otpCode.trim(), newPw)
     setLoading(false)
 
@@ -255,27 +239,6 @@ function LoginForm() {
     <div className="w-[500px] bg-white px-12 py-10 flex flex-col relative shadow-2xl z-20">
       <div className="flex-1 flex flex-col justify-center items-center w-full">
 
-        {/* ── Disabled account banner ── */}
-        {reason === 'account_disabled' && view === 'login' && (
-          <div className="w-full mb-4 rounded-lg bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-800">
-            Your account has been disabled. Contact your system administrator.
-          </div>
-        )}
-
-        {reason === 'session_taken' && view === 'login' && (
-          <div className="w-full mb-4 rounded-lg bg-red-50 border border-red-300 px-4 py-3 text-sm text-red-800">
-            Your session was ended because this account was logged in from another device.
-          </div>
-        )}
-
-        {/* ── Password reset success banner ── */}
-        {resetSuccess && view === 'login' && (
-          <div className="w-full mb-4 rounded-lg bg-emerald-50 border border-emerald-300 px-4 py-3 text-sm text-emerald-800 flex items-start gap-2">
-            <span className="flex-shrink-0">✅</span>
-            <span>Password reset successfully. You can now sign in with your new password.</span>
-          </div>
-        )}
-
         {/* ══════════════════════════════════════════════
             VIEW: LOGIN
         ══════════════════════════════════════════════ */}
@@ -291,12 +254,6 @@ function LoginForm() {
                 Access restricted to authorized DNPPO personnel
               </p>
             </div>
-
-            {loginError && (
-              <div className="w-full bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg text-center mb-4">
-                {loginError}
-              </div>
-            )}
 
             <form onSubmit={handleLogin} noValidate className="w-full space-y-6">
               <div>
@@ -317,7 +274,6 @@ function LoginForm() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className={labelCls} style={{ marginBottom: 0 }}>Password</label>
-                  
                 </div>
                 <input
                   type="password"
@@ -329,26 +285,61 @@ function LoginForm() {
                   autoComplete="current-password"
                 />
                 <button
-                    type="button"
-                    onClick={() => {
-                      setFpRoleId(roleId) // pre-fill if user already picked a role
-                      setFpError('')
-                      setView('forgot_role')
-                    }}
-                    className="text-xs text-[#1b365d]/60 hover:text-[#1b365d] underline underline-offset-2 transition font-medium"
-                  >
-                    Forgot password?
-                  </button>
+                  type="button"
+                  onClick={() => {
+                    setFpRoleId(roleId)
+                    setFpError('')
+                    setView('forgot_role')
+                  }}
+                  className="text-xs text-[#1b365d]/60 hover:text-[#1b365d] underline underline-offset-2 transition font-medium"
+                >
+                  Forgot password?
+                </button>
               </div>
 
-              <button
-                type="submit"
-                disabled={loading || !roleId || !password}
-                className="w-full bg-[#1b365d] hover:bg-[#152a4a] text-[#fde047] font-semibold
-                           py-3.5 rounded-lg transition text-lg disabled:opacity-70 shadow-md"
-              >
-                {loading ? 'Signing in…' : 'SIGN IN'}
-              </button>
+              {/* ── Submit button ── */}
+              <div className="space-y-3">
+                <button
+                  type="submit"
+                  disabled={loading || !roleId || !password}
+                  className="w-full bg-[#1b365d] hover:bg-[#152a4a] text-[#fde047] font-semibold
+                             py-3.5 rounded-lg transition text-lg disabled:opacity-70 shadow-md"
+                >
+                  {loading ? 'Signing in…' : 'SIGN IN'}
+                </button>
+
+                {/* Account disabled (redirected from middleware) */}
+                {reason === 'account_disabled' && !loginError && (
+                  <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm leading-snug">
+                    <span className="mt-0.5 flex-shrink-0">🔒</span>
+                    <span>Your account has been disabled. Contact your system administrator.</span>
+                  </div>
+                )}
+
+                {/* Session taken over by another device */}
+                {reason === 'session_taken' && !loginError && (
+                  <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm leading-snug">
+                    <span className="mt-0.5 flex-shrink-0">⚠️</span>
+                    <span>Your session was ended because this account was signed in from another device.</span>
+                  </div>
+                )}
+
+                {/* Password reset success (returning from forgot flow) */}
+                {resetSuccess && !loginError && (
+                  <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm leading-snug">
+                    <span className="mt-0.5 flex-shrink-0">✅</span>
+                    <span>Password reset successfully. You can now sign in with your new password.</span>
+                  </div>
+                )}
+
+                {/* Login error (wrong credentials, disabled account via error, etc.) */}
+                {loginError && (
+                  <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm leading-snug">
+                    <span className="mt-0.5 flex-shrink-0">❌</span>
+                    <span>{loginError}</span>
+                  </div>
+                )}
+              </div>
             </form>
 
             <div className="text-center mt-8 text-[11px] text-slate-400 leading-relaxed font-medium">
@@ -390,8 +381,9 @@ function LoginForm() {
             </div>
 
             {fpError && (
-              <div className="w-full bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg mb-4">
-                {fpError}
+              <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm leading-snug mb-4">
+                <span className="mt-0.5 flex-shrink-0">❌</span>
+                <span>{fpError}</span>
               </div>
             )}
 
@@ -409,8 +401,6 @@ function LoginForm() {
                     <option key={r.id} value={r.id}>{r.label}</option>
                   ))}
                 </select>
-                {/* No email hint shown here — it will appear on the next step
-                    as a masked address after the server resolves it */}
               </div>
 
               <button
@@ -454,15 +444,15 @@ function LoginForm() {
               </div>
               <h2 className="font-serif text-2xl text-[#1b365d] font-bold mb-1">Check Your Email</h2>
               <p className="text-slate-500 text-sm">A 6-digit code was sent to</p>
-              {/* Only the masked address is shown — never the raw email */}
               {fpMaskedEmail && (
                 <p className="text-[#1b365d] font-semibold text-sm mt-0.5">{fpMaskedEmail}</p>
               )}
             </div>
 
             {fpError && (
-              <div className="w-full bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg mb-4">
-                {fpError}
+              <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm leading-snug mb-4">
+                <span className="mt-0.5 flex-shrink-0">❌</span>
+                <span>{fpError}</span>
               </div>
             )}
 
@@ -547,8 +537,9 @@ function LoginForm() {
             </div>
 
             {fpError && (
-              <div className="w-full bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg mb-4">
-                {fpError}
+              <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm leading-snug mb-4">
+                <span className="mt-0.5 flex-shrink-0">❌</span>
+                <span>{fpError}</span>
               </div>
             )}
 
@@ -665,7 +656,7 @@ function LoginForm() {
 export default function LoginPage() {
 
   const searchParams = useSearchParams()
-  const isDisabled   = searchParams.get('disabled') === '1'
+
   return (
     <div className="min-h-screen flex font-sans">
 
@@ -708,11 +699,7 @@ export default function LoginPage() {
           <div className="w-6 h-6 border-2 border-[#1b365d] border-t-transparent rounded-full animate-spin" />
         </div>
       }>
-        {isDisabled && (
-          <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 font-medium">
-            Your account has been disabled. Please contact your system administrator.
-          </div>
-        )}
+        
         <LoginForm />
       </Suspense>
 

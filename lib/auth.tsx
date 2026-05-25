@@ -71,6 +71,7 @@ interface ProfileRow {
   initials:     string | null
   avatar_color: string | null
   avatar_url:   string | null
+  is_active:    boolean
 }
 
 function buildAdminUser(user: User, profile: ProfileRow): AdminUser {
@@ -121,6 +122,17 @@ export function maskEmail(email: string): string {
   return `${visible}${masked}@${domain}`
 }
 
+// ── Safe sign-out helper ──────────────────────────────────────────────────────
+// Signs the user out and waits long enough for the browser to receive and
+// apply the cleared-cookie response headers before any React navigation fires.
+// Without this delay the middleware sees the old session cookie and redirects
+// to /admin/*, causing the "Failed to fetch RSC payload" error.
+
+async function safeSignOut(supabase: ReturnType<typeof createClient>): Promise<void> {
+  await supabase.auth.signOut({ scope: 'global' })
+  await new Promise<void>(r => setTimeout(r, 200))
+}
+
 // ── Context ───────────────────────────────────────────────────────────────────
 
 interface AuthContextValue {
@@ -158,6 +170,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return
 
         if (s?.user) {
+          // ── Check if account is still active before restoring the session ──
+          // This handles the case where an admin disabled the account while the
+          // user was already logged in. The next page load will catch it here
+          // rather than waiting for the middleware redirect loop.
+          const { data: profileRow } = await supabase
+            .from('profiles')
+            .select('is_active')
+            .eq('id', s.user.id)
+            .single()
+
+          if (profileRow?.is_active === false) {
+            // Sign out silently — middleware will redirect to /login?disabled=1
+            await safeSignOut(supabase)
+            if (!cancelled) setIsLoading(false)
+            return
+          }
+
           const adminUser = await fetchProfile(supabase, s.user)
           if (cancelled) return
 
@@ -189,7 +218,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-      // ── Resolve email from role via DB RPC ────────────────────────────────────
+  // ── Resolve email from role via DB RPC ────────────────────────────────────
   // ISSUE 2 FIX: memoized with useCallback so it's stable across renders and
   // can be safely listed as a dependency in sendPasswordResetOTP and
   // verifyOTPAndReset without causing infinite re-creation loops.
@@ -212,27 +241,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   //     limit 1;
   //   $$;
 
-    const resolveEmailByRole = useCallback(async (role: string): Promise<string | null> => {
+  const resolveEmailByRole = useCallback(async (role: string): Promise<string | null> => {
     const { data, error } = await supabase.rpc('get_email_by_role', { p_role: role })
     if (error || !data) return null
     return data as string
   }, [supabase])
 
   // ── Login ─────────────────────────────────────────────────────────────────
+
   const loginPassword = useCallback(async (role: string, password: string) => {
+    // Step 1 — resolve role → email
     const email = await resolveEmailByRole(role)
     if (!email) {
       return { error: 'Account not found. Please check your role selection.' }
     }
+
     // Step 2 — sign in with resolved email + password
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error)      return { error: error.message }
     if (!data.user) return { error: 'No user returned.' }
- 
 
+    // Step 3 — fetch the profile to build the AdminUser object
     const adminUser = await fetchProfile(supabase, data.user)
     if (!adminUser) return { error: 'Account profile not found. Contact your administrator.' }
 
+    // Step 4 — disabled account check
+    // IMPORTANT: We must sign out completely and wait for the browser to
+    // receive the cleared-cookie headers BEFORE returning the error.
+    // If we return early without awaiting the sign-out flush, the browser
+    // still holds a valid session cookie. React then navigates and the
+    // middleware lets the request through → RSC fetch hits /admin/* →
+    // "Failed to fetch RSC payload" error.
     const { data: profileRow } = await supabase
       .from('profiles')
       .select('is_active')
@@ -240,17 +279,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .single()
 
     if (profileRow?.is_active === false) {
-      await supabase.auth.signOut()
+      await safeSignOut(supabase)
       return { error: 'Your account has been disabled. Contact your administrator.' }
     }
 
+    // Step 5 — session lock registration
     try {
       await registerSession(adminUser.role, adminUser.id)
     } catch {
-      await supabase.auth.signOut()
+      await safeSignOut(supabase)
       return { error: 'Could not establish a session lock. Please try again.' }
     }
 
+    // Step 6 — mark presence, set logger, log the login event
     await setAdminActive(data.user.id)
 
     // Logger must be ready BEFORE logLogin fires — preserve this order.
@@ -267,8 +308,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     // Capture role and userId before clearing state so the logout log can still fire.
-    const roleForLog = user?.role ?? null
-    const userIdForLog = user?.id ?? null
+    const roleForLog   = user?.role ?? null
+    const userIdForLog = user?.id   ?? null
 
     if (roleForLog) {
       try {
@@ -318,9 +359,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return { error: null }
   }, [supabase, user])
-
-
-
 
   // ── Send OTP for password reset (logged-out flow) ─────────────────────────
   // Accepts a role string. Resolves email internally — caller never receives

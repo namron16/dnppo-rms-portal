@@ -89,6 +89,18 @@ export async function getSingleUser(userId: string) {
 }
 
 // ── Toggle active/inactive ─────────────────────────────────────────────────
+//
+// Order of operations matters here:
+//
+//   1. Update profiles.is_active  — source of truth for the UI + realtime
+//   2. Update user_metadata       — what the middleware JWT check reads
+//   3. Global sign-out            — invalidate all existing sessions
+//
+// Steps 2 and 3 must happen in this order. If we sign out first, the user's
+// JWT is revoked before the metadata is updated, so the middleware still sees
+// the OLD is_active value on any in-flight request, allowing a brief window
+// where the account is signed out but the middleware would re-admit them.
+// Writing metadata first closes that window completely.
 
 export async function setUserActive(userId: string, isActive: boolean) {
   await assertSuperAdmin()
@@ -105,6 +117,7 @@ export async function setUserActive(userId: string, isActive: boolean) {
   if (profileError) throw profileError
 
   // 2. Sync into user_metadata for middleware checks
+  //    Fetch the current metadata first so we don't wipe other fields.
   const { data: authUser, error: fetchError } = await admin.auth.admin.getUserById(userId)
   if (fetchError) throw fetchError
 
@@ -118,8 +131,13 @@ export async function setUserActive(userId: string, isActive: boolean) {
   })
   if (metaError) throw metaError
 
-  // 3. Immediately invalidate all sessions when deactivating
+  // 3. Immediately invalidate all sessions when deactivating.
+  //    A small pause ensures Supabase has propagated the metadata update
+  //    to its internal token-validation layer before the sessions are killed.
+  //    Without this, a racing token refresh on the client can produce a new
+  //    JWT that still carries is_active: true.
   if (!isActive) {
+    await new Promise(r => setTimeout(r, 150))
     await admin.auth.admin.signOut(userId, 'global')
   }
 }

@@ -17,11 +17,38 @@ export async function proxy(request: NextRequest) {
 
   function redirectTo(path: string) {
     const url = new URL(path, request.url)
-    const response = NextResponse.redirect(url)
     // 303 See Other — tells the browser to GET the new URL and
     // replace the current history entry, so Back won't return here.
-    response.headers.set('Location', url.toString())
     return NextResponse.redirect(url, { status: 303 })
+  }
+
+  // ── Helper: build a redirect that nukes ALL session cookies ───────────────
+  // We collect cookie names from both the incoming request (what the browser
+  // sent) AND from supabaseResponse (what Supabase may have set/refreshed
+  // during updateSession). This ensures no stale token survives the redirect
+  // and prevents the "Failed to fetch RSC payload" error caused by the
+  // middleware letting a half-cleared session through to /admin/* routes.
+  function redirectAndClearSession(path: string) {
+    const url = new URL(path, request.url)
+    const response = NextResponse.redirect(url, { status: 303 })
+
+    const namesToClear = new Set<string>([
+      ...request.cookies.getAll().map(c => c.name),
+      ...supabaseResponse.cookies.getAll().map(c => c.name),
+    ])
+
+    namesToClear.forEach(name => {
+      response.cookies.set(name, '', {
+        maxAge:   0,
+        path:     '/',
+        httpOnly: true,
+        sameSite: 'lax',
+        // Mirror the secure flag used in lib/supabase/middleware.ts
+        secure:   process.env.NODE_ENV === 'production',
+      })
+    })
+
+    return response
   }
 
   // ── Root ────────────────────────────────────
@@ -34,6 +61,12 @@ export async function proxy(request: NextRequest) {
   // ── Login page ──────────────────────────────
   if (pathname.startsWith('/login')) {
     if (isLoggedIn && role) {
+      // If the account is disabled, don't redirect to admin — let the login
+      // page handle the ?disabled=1 message instead.
+      const isActive = user?.user_metadata?.is_active ?? true
+      if (!isActive) {
+        return supabaseResponse
+      }
       return redirectTo(getDefaultAdminRoute(role))
     }
     return supabaseResponse
@@ -41,36 +74,34 @@ export async function proxy(request: NextRequest) {
 
   // ── Admin routes ────────────────────────────
   if (pathname.startsWith('/admin')) {
-  // Not authenticated
-  if (!isLoggedIn || !role) {
-    const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('from', pathname)
-    return NextResponse.redirect(loginUrl, { status: 303 })
-  }
+    // Not authenticated
+    if (!isLoggedIn || !role) {
+      const loginUrl = new URL('/login', request.url)
+      loginUrl.searchParams.set('from', pathname)
+      return NextResponse.redirect(loginUrl, { status: 303 })
+    }
 
-  // ✅ NEW — account disabled check (reads from JWT, no DB call)
-  const isActive = user?.user_metadata?.is_active ?? true
-  if (!isActive) {
-    const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('disabled', '1')
-    const response = NextResponse.redirect(loginUrl, { status: 303 })
-    // Clear session cookies so the browser doesn't replay the old session
-    supabaseResponse.cookies.getAll().forEach(cookie => {
-      response.cookies.set(cookie.name, '', { maxAge: 0 })
-    })
-    return response
-  }
+    // Account disabled check (reads from JWT user_metadata — no DB call needed)
+    // Redirect to /login?disabled=1 and nuke all session cookies so the browser
+    // cannot replay the old session on the next request, which would cause the
+    // middleware to grant access again before the client-side signOut resolves.
+    const isActive = user?.user_metadata?.is_active ?? true
+    if (!isActive) {
+      const loginUrl = new URL('/login', request.url)
+      loginUrl.searchParams.set('reason', 'account_disabled')
+      return redirectAndClearSession(loginUrl.pathname + loginUrl.search)
+    }
 
-  if (pathname === '/admin') {
-    return redirectTo(getDefaultAdminRoute(role))
-  }
+    if (pathname === '/admin') {
+      return redirectTo(getDefaultAdminRoute(role))
+    }
 
-  if (!isAllowedAdminPath(pathname, role)) {
-    return redirectTo(getDefaultAdminRoute(role))
-  }
+    if (!isAllowedAdminPath(pathname, role)) {
+      return redirectTo(getDefaultAdminRoute(role))
+    }
 
-  return supabaseResponse
-}
+    return supabaseResponse
+  }
 
   return supabaseResponse
 }
