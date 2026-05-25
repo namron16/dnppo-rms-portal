@@ -14,9 +14,10 @@ export type LogActionType =
   | 'review_document' | 'approve_document' | 'reject_document'
   | 'add_org_member' | 'edit_org_member' | 'remove_org_member'
   | 'recall_inbox_item' | 'save_inbox_item' | 'change_password' | 'save_forwarded_document'
+  | 'disable_account' | 'enable_account'
 
 // ── Module-level state — set on login via setCurrentLogger() ─────────────────
-let _currentUserId: string | null = null   // Supabase UUID
+let _currentUserId: string | null = null
 let _currentRole:   AdminRole | null = null
 
 export function setCurrentLogger(role: AdminRole | null, userId?: string | null) {
@@ -24,7 +25,6 @@ export function setCurrentLogger(role: AdminRole | null, userId?: string | null)
   _currentUserId = userId ?? null
 }
 
-// ── FIX RISK 1: exported getter so auth.tsx can assert logger is ready ───────
 export function isLoggerReady(): boolean {
   return !!(_currentUserId && _currentRole)
 }
@@ -36,9 +36,6 @@ export async function logAction(
   description: string | Record<string, any>,
 ): Promise<void> {
 
-  // FIX RISK 1: warn in development when logger was never initialised.
-  // In production this stays silent (same as before) but you will now
-  // see an explicit message during local dev instead of silently missing logs.
   if (!_currentUserId || !_currentRole) {
     if (process.env.NODE_ENV === 'development') {
       console.warn(
@@ -53,10 +50,6 @@ export async function logAction(
   const descriptionValue =
     typeof description === 'string' ? description : JSON.stringify(description)
 
-  // FIX RISK 2: surface DB errors instead of only console.warn'ing them.
-  // We still never throw (to keep callers fire-and-forget), but we:
-  //   a) log the full error object so RLS failures are visible, and
-  //   b) in development, throw so you catch silent audit gaps immediately.
   const { error } = await supabase.from('admin_logs').insert({
     user_id:     _currentUserId,
     role:        _currentRole,
@@ -65,7 +58,6 @@ export async function logAction(
   })
 
   if (error) {
-    // Always log the full error — includes RLS policy name, code, and hint.
     console.error(
       `[adminLogger] Failed to write log for action "${action}".\n`,
       `  Code:    ${error.code}\n`,
@@ -74,7 +66,6 @@ export async function logAction(
       `  Details: ${error.details ?? '—'}`
     )
 
-    // FIX RISK 2: In development, throw so tests / CI catch silent audit gaps.
     if (process.env.NODE_ENV === 'development') {
       throw new Error(
         `[adminLogger] DB insert failed for action "${action}": ${error.message}`
@@ -84,16 +75,12 @@ export async function logAction(
 }
 
 // ── Convenience wrappers ──────────────────────────────────────────────────────
-// logLogin / logLogout accept the role explicitly so callers do not have to
-// rely on _currentRole being set in time.
 
 export const logLogin  = (role: AdminRole) =>
   logAction('login',  `${role} logged in`)
 
 export const logLogout = (role: AdminRole) =>
   logAction('logout', `${role} logged out`)
-
-
 
 export const logUploadDocument = (docTitle: string) =>
   logAction('upload_document', `Uploaded document "${docTitle}"`)
@@ -180,9 +167,16 @@ export const logAddUser = (userName: string, email: string) =>
 export const logDeleteOrgMember = (memberName: string) =>
   logAction('remove_org_member', `Removed organization member "${memberName}"`)
 
-// Personnel (201) convenience loggers
 export const logCreatePersonnel = (personName: string) =>
   logAction('create_personnel', `Created 201 file for "${personName}"`)
 
 export const logArchivePersonnel = (personName: string) =>
   logAction('archive_document', `Archived personnel record "${personName}"`)
+
+// ── Account management wrappers ───────────────────────────────────────────────
+
+export const logDisableAccount = (targetDisplayName: string) =>
+  logAction('disable_account', `Disabled account for "${targetDisplayName}"`)
+
+export const logEnableAccount = (targetDisplayName: string) =>
+  logAction('enable_account', `Enabled account for "${targetDisplayName}"`)

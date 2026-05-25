@@ -14,22 +14,14 @@ import type { AdminRole } from '@/lib/auth'
 import type { LogActionType } from '@/lib/adminLogger'
 
 // ── Types ─────────────────────────────────────
-// Matches the updated admin_logs schema:
-//   user_id  uuid  (references auth.users)
-//   role     text  (denormalized AdminRole)
-//   action   text
-//   description text
-//   created_at timestamptz
-
 interface AdminLog {
   id:          string
-  user_id:     string       // Supabase UUID
-  role:        AdminRole    // denormalized role stored at log time
+  user_id:     string
+  role:        AdminRole
   action:      LogActionType
   description: string
   created_at:  string
 }
-
 
 const ROLE_META: Record<string, { color: string; name: string }> = {
   admin: { color: '#dc2626', name: 'Super Admin' },
@@ -48,47 +40,50 @@ const ROLE_META: Record<string, { color: string; name: string }> = {
   P10:  { color: '#10b981', name: 'Admin Officer P10' },
 }
 
-function getRoleColor(role: string)   { return ROLE_META[role]?.color ?? '#64748b' }
-function getRoleName(role: string)    { return ROLE_META[role]?.name  ?? role }
-function getRoleInitials(role: string){ return role.slice(0, 2).toUpperCase() }
+function getRoleColor(role: string)    { return ROLE_META[role]?.color ?? '#64748b' }
+function getRoleName(role: string)     { return ROLE_META[role]?.name  ?? role }
+function getRoleInitials(role: string) { return role.slice(0, 2).toUpperCase() }
 
 // ── Action config ──────────────────────────────
 const ACTION_CONFIG: Record<string, { label: string; icon: string; badgeCls: string }> = {
-  login:                { label: 'Login',          icon: '🟢', badgeCls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
-  logout:               { label: 'Logout',         icon: '🔴', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
-  change_password:      { label: 'Password',       icon: '🔑', badgeCls: 'bg-slate-100 text-slate-700 border-slate-200' },
-  view_document:        { label: 'View',           icon: '🔵', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
-  download_document:    { label: 'Download',       icon: '⬇️', badgeCls: 'bg-sky-100 text-sky-700 border-sky-200' },
-  upload_document:      { label: 'Upload',         icon: '📤', badgeCls: 'bg-violet-100 text-violet-700 border-violet-200' },
-  upload_doc201:        { label: 'Upload',         icon: '📤', badgeCls: 'bg-violet-100 text-violet-700 border-violet-200' },
-  edit_document:        { label: 'Edited',         icon: '✏️', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
-  edit_journal:         { label: 'Edited',         icon: '✏️', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
-  edit_org_member:      { label: 'Edited',         icon: '✏️', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
-  update_personnel:     { label: 'Edited',         icon: '✏️', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
-  archive_document:     { label: 'Archive',        icon: '🗄️', badgeCls: 'bg-slate-200 text-slate-600 border-slate-300' },
-  archive_attachment:   { label: 'Archive',        icon: '🗄️', badgeCls: 'bg-slate-200 text-slate-600 border-slate-300' },
-  archive_journal:      { label: 'Archive',        icon: '🗄️', badgeCls: 'bg-slate-200 text-slate-600 border-slate-300' },
-  archive_library_item: { label: 'Archive',        icon: '🗄️', badgeCls: 'bg-slate-200 text-slate-600 border-slate-300' },
-  archive_special_order:{ label: 'Archive',        icon: '🗄️', badgeCls: 'bg-slate-200 text-slate-600 border-slate-300' },
-  restore_document:     { label: 'Restore',        icon: '↩️', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
-  delete_document:      { label: 'Delete',         icon: '🗑️', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
-  remove_org_member:    { label: 'Delete',         icon: '🗑️', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
-  request_access:       { label: 'Request Access', icon: '🟡', badgeCls: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
-  approve_request:      { label: 'Approve Request',icon: '✅', badgeCls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
-  reject_request:       { label: 'Reject Request', icon: '🚫', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
-  forward_document:     { label: 'Forward',        icon: '➡️', badgeCls: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
-  forward_attachment:   { label: 'Forward',        icon: '➡️', badgeCls: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
-  add_attachment:       { label: 'Create',         icon: '📎', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
-  create_journal:       { label: 'Create',         icon: '📒', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
-  create_personnel:     { label: 'Create',         icon: '👤', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
-  create_special_order: { label: 'Create',         icon: '📋', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
-  add_library_item:     { label: 'Create',         icon: '📚', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
-  add_org_member:       { label: 'Create',         icon: '🏛️', badgeCls: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
-  review_document:      { label: 'Review',         icon: '👁', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
-  approve_document:     { label: 'Approve',        icon: '✅', badgeCls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
-  reject_document:      { label: 'Reject',         icon: '❌', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
-  recall_inbox_item:    { label: 'Recall',         icon: '↩️', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
-  save_forwarded_document:      { label: 'Save',           icon: '💾', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
+  login:                  { label: 'Login',           icon: '🟢', badgeCls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  logout:                 { label: 'Logout',          icon: '🔴', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
+  change_password:        { label: 'Password',        icon: '🔑', badgeCls: 'bg-slate-100 text-slate-700 border-slate-200' },
+  view_document:          { label: 'View',            icon: '🔵', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
+  download_document:      { label: 'Download',        icon: '⬇️', badgeCls: 'bg-sky-100 text-sky-700 border-sky-200' },
+  upload_document:        { label: 'Upload',          icon: '📤', badgeCls: 'bg-violet-100 text-violet-700 border-violet-200' },
+  upload_doc201:          { label: 'Upload',          icon: '📤', badgeCls: 'bg-violet-100 text-violet-700 border-violet-200' },
+  edit_document:          { label: 'Edited',          icon: '✏️', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  edit_journal:           { label: 'Edited',          icon: '✏️', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  edit_org_member:        { label: 'Edited',          icon: '✏️', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  update_personnel:       { label: 'Edited',          icon: '✏️', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  archive_document:       { label: 'Archive',         icon: '🗄️', badgeCls: 'bg-slate-200 text-slate-600 border-slate-300' },
+  archive_attachment:     { label: 'Archive',         icon: '🗄️', badgeCls: 'bg-slate-200 text-slate-600 border-slate-300' },
+  archive_journal:        { label: 'Archive',         icon: '🗄️', badgeCls: 'bg-slate-200 text-slate-600 border-slate-300' },
+  archive_library_item:   { label: 'Archive',         icon: '🗄️', badgeCls: 'bg-slate-200 text-slate-600 border-slate-300' },
+  archive_special_order:  { label: 'Archive',         icon: '🗄️', badgeCls: 'bg-slate-200 text-slate-600 border-slate-300' },
+  restore_document:       { label: 'Restore',         icon: '↩️', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
+  delete_document:        { label: 'Delete',          icon: '🗑️', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
+  remove_org_member:      { label: 'Delete',          icon: '🗑️', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
+  request_access:         { label: 'Request Access',  icon: '🟡', badgeCls: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
+  approve_request:        { label: 'Approve Request', icon: '✅', badgeCls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  reject_request:         { label: 'Reject Request',  icon: '🚫', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
+  forward_document:       { label: 'Forward',         icon: '➡️', badgeCls: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+  forward_attachment:     { label: 'Forward',         icon: '➡️', badgeCls: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+  add_attachment:         { label: 'Create',          icon: '📎', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
+  create_journal:         { label: 'Create',          icon: '📒', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  create_personnel:       { label: 'Create',          icon: '👤', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
+  create_special_order:   { label: 'Create',          icon: '📋', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
+  add_library_item:       { label: 'Create',          icon: '📚', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  add_org_member:         { label: 'Create',          icon: '🏛️', badgeCls: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+  review_document:        { label: 'Review',          icon: '👁',  badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
+  approve_document:       { label: 'Approve',         icon: '✅', badgeCls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  reject_document:        { label: 'Reject',          icon: '❌', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
+  recall_inbox_item:      { label: 'Recall',          icon: '↩️', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
+  save_forwarded_document:{ label: 'Save',            icon: '💾', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
+  // ── Account management ────────────────────────────────────────────────────
+  disable_account:        { label: 'Disable Account', icon: '🚫', badgeCls: 'bg-red-100 text-red-800 border-red-300' },
+  enable_account:         { label: 'Enable Account',  icon: '🔓', badgeCls: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
 }
 
 function getActionConfig(action: string) {
@@ -135,8 +130,8 @@ function StatsBar({ logs }: { logs: AdminLog[] }) {
 
 // ── Main Page ──────────────────────────────────
 export default function LogHistoryPage() {
-  const { toast }   = useToast()
-  const supabase = useMemo(() => createClient(), [])
+  const { toast }  = useToast()
+  const supabase   = useMemo(() => createClient(), [])
 
   const [logs,     setLogs]     = useState<AdminLog[]>([])
   const [loading,  setLoading]  = useState(true)
@@ -182,14 +177,14 @@ export default function LogHistoryPage() {
   // ── Filtering ────────────────────────────────
   const filtered = useMemo(() => {
     return logs.filter(log => {
-      const q          = query.trim().toLowerCase()
-      const roleName   = getRoleName(log.role).toLowerCase()
-      const matchQ     = !q
+      const q        = query.trim().toLowerCase()
+      const roleName = getRoleName(log.role).toLowerCase()
+      const matchQ   = !q
         || log.description.toLowerCase().includes(q)
         || log.role.toLowerCase().includes(q)
         || log.action.toLowerCase().includes(q)
         || roleName.includes(q)
-      const matchRole   = roleFilter   === 'ALL' || log.role   === roleFilter
+      const matchRole   = roleFilter   === 'ALL' || log.role === roleFilter
       const matchAction = actionFilter === 'ALL' || getActionConfig(log.action).label === actionFilter
       const matchDate   = !dateFilter  || log.created_at.startsWith(dateFilter)
       return matchQ && matchRole && matchAction && matchDate
@@ -231,7 +226,6 @@ export default function LogHistoryPage() {
   }
 
   // ── Filter options ───────────────────────────
-  // Derived from actual log data — only shows roles/actions that exist in the DB
   const allRoles = Array.from(new Set(logs.map(l => l.role))).sort()
 
   const hiddenLabels  = new Set(['Approve', 'Approve Request', 'Create', 'Recall', 'Reject', 'Review'])
@@ -263,7 +257,6 @@ export default function LogHistoryPage() {
               className="max-w-xs flex-1"
             />
 
-            {/* Role filter — was adminFilter on admin_id, now uses role column */}
             <ToolbarSelect
               value={roleFilter}
               onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setRoleFilter(e.target.value)}
@@ -364,15 +357,15 @@ export default function LogHistoryPage() {
                 </thead>
                 <tbody>
                   {paginatedItems.map(log => {
-                    const cfg        = getActionConfig(log.action)
-                    const roleColor  = getRoleColor(log.role)
-                    const initials   = getRoleInitials(log.role)
-                    const roleName   = getRoleName(log.role)
+                    const cfg       = getActionConfig(log.action)
+                    const roleColor = getRoleColor(log.role)
+                    const initials  = getRoleInitials(log.role)
+                    const roleName  = getRoleName(log.role)
 
                     return (
                       <tr key={log.id} className="border-b border-slate-100 hover:bg-slate-50/60 transition">
 
-                        {/* Admin — shows role + full role name, no ADMIN_ACCOUNTS lookup */}
+                        {/* Admin */}
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-2.5">
                             <div
