@@ -29,36 +29,37 @@ export async function registerSession(role: string, userId: string): Promise<str
   const supabase = createClient()
   const token = generateToken()
 
+  // Explicitly delete any existing row for this role first.
+  // This is belt-and-suspenders: even if the DB lacks a UNIQUE constraint
+  // on `role`, we never end up with two rows for the same role.
+  // Without this, upsert may INSERT a second row instead of updating,
+  // causing isSessionValid()'s maybeSingle() to return null (multiple rows)
+  // and log out BOTH browsers 30 seconds later.
+  await supabase
+    .from('active_sessions')
+    .delete()
+    .eq('role', role)
+
   const { error } = await supabase
     .from('active_sessions')
-    .upsert(
-      {
-        role,
-        session_token: token,
-        user_id: userId,
-        logged_in_at: new Date().toISOString(),
-      },
-      { onConflict: 'role' }   // explicit — ensures upsert key is always `role`
-    )
+    .insert({
+      role,
+      session_token: token,
+      user_id: userId,
+      logged_in_at: new Date().toISOString(),
+    })
 
   if (error) {
     throw new Error(error.message)
   }
 
-  // Save to localStorage AFTER the DB write succeeds
+  // Save to localStorage only after the DB write succeeds
   saveTokenLocally(token)
   return token
 }
 
 export async function isSessionValid(role: string): Promise<boolean> {
   const localToken = getLocalToken()
-
-  // No local token means this browser never registered (or was cleared).
-  // Return true here so we don't falsely kick out a restored session
-  // that hasn't re-registered yet (e.g. on hard refresh before init completes).
-  // The session polling in AuthGuard only starts after user+isLoading are stable,
-  // so by the time this is called the token should always be present.
-  // Treat missing token as invalid — but callers must guard with isLoading.
   if (!localToken) return false
 
   const supabase = createClient()
@@ -66,7 +67,7 @@ export async function isSessionValid(role: string): Promise<boolean> {
     .from('active_sessions')
     .select('session_token')
     .eq('role', role)
-    .maybeSingle()             // use maybeSingle so missing row = null, not an error
+    .maybeSingle()  // returns null instead of error when 0 or multiple rows
 
   if (error || !data) return false
   return data.session_token === localToken
@@ -76,13 +77,12 @@ export async function clearSession(role: string): Promise<void> {
   const supabase = createClient()
   const localToken = getLocalToken()
 
-  // Always clear the local token first so subsequent checks fail fast
+  // Clear local token first so re-entrant calls are no-ops
   clearLocalToken()
 
   if (!localToken) return
 
-  // Only delete the row if we own it (token matches).
-  // This prevents Browser 1 from deleting the row that Browser 2 just wrote.
+  // Only delete our own row — don't wipe the session of whoever took over
   await supabase
     .from('active_sessions')
     .delete()
