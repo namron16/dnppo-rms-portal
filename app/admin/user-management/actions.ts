@@ -101,22 +101,32 @@ export async function getSingleUser(userId: string) {
 // the OLD is_active value on any in-flight request, allowing a brief window
 // where the account is signed out but the middleware would re-admit them.
 // Writing metadata first closes that window completely.
+//
+// FIX: Step 1 now uses the admin client (service role) instead of the regular
+// server client. The regular client is subject to RLS, and the profiles RLS
+// policy only allows users to update their OWN row — so an admin trying to
+// update someone else's profile would be silently blocked (no error thrown,
+// nothing saved). The admin client bypasses RLS entirely, ensuring the
+// is_active change is actually persisted to the database.
 
 export async function setUserActive(userId: string, isActive: boolean) {
   await assertSuperAdmin()
 
-  const supabase = await createServerClient()
-  const admin    = getAdminClient()
+  const admin = getAdminClient()
 
   // 1. Source of truth: profiles table
-  const { error: profileError } = await supabase
+  //    Must use the admin client here — the regular server client is bound by
+  //    RLS, which only permits a user to UPDATE their own profile row.
+  //    Using it to update another user's row would silently no-op (0 rows
+  //    affected, no error), causing the button to reset on page refresh.
+  const { error: profileError } = await admin
     .from('profiles')
     .update({ is_active: isActive })
     .eq('id', userId)
 
   if (profileError) throw profileError
 
-  // 2. Sync into user_metadata for middleware checks
+  // 2. Sync into user_metadata for middleware checks.
   //    Fetch the current metadata first so we don't wipe other fields.
   const { data: authUser, error: fetchError } = await admin.auth.admin.getUserById(userId)
   if (fetchError) throw fetchError
