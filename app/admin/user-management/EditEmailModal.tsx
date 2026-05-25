@@ -3,11 +3,11 @@
 import { useState } from 'react'
 
 interface Props {
-  userId:      string
-  displayName: string
+  userId:        string
+  displayName:   string
   currentEmail?: string
-  onClose:     () => void
-  onSuccess:   (newEmail: string) => void
+  onClose:       () => void
+  onSuccess:     (newEmail: string) => void
 }
 
 export function EditEmailModal({ userId, displayName, currentEmail, onClose, onSuccess }: Props) {

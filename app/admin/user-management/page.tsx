@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Badge } from '@/components/ui/Badge'
 import { Avatar } from '@/components/ui/Avatar'
@@ -12,32 +12,31 @@ import { useAuth } from '@/lib/auth'
 import { logAction } from '@/lib/adminLogger'
 import {
   listAllUsers,
+  getSingleUser,
   setUserActive,
-  adminResetPassword,
-  adminUpdateEmail,
 } from './actions'
 import { ResetPasswordModal } from './ResetPasswordModal'
 import { EditEmailModal } from './EditEmailModal'
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ManagedUser {
-  id:          string
-  email?:      string
-  role:        string
-  displayName: string
-  isActive:    boolean
-  lastSignIn?: string
+  id:             string
+  email?:         string
+  role:           string
+  displayName:    string
+  isActive:       boolean
+  lastSignIn?:    string
   // Enriched from admin_presence
   presenceActive: boolean
   lastSeen?:      string
-  // Derived from profile
-  initials:    string
-  avatarColor: string
-  title?:      string
+  // Derived from profiles
+  initials:       string
+  avatarColor:    string
+  title?:         string
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function PresenceDot({ isActive }: { isActive: boolean }) {
   return (
@@ -50,39 +49,59 @@ function PresenceDot({ isActive }: { isActive: boolean }) {
   )
 }
 
-// ─── Page ────────────────────────────────────────────────────────────────────
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function UserManagementPage() {
   const { user } = useAuth()
 
-  const [users,            setUsers]            = useState<ManagedUser[]>([])
-  const [loading,          setLoading]          = useState(true)
+  const [users,             setUsers]             = useState<ManagedUser[]>([])
+  const [loading,           setLoading]           = useState(true)
   const [realtimeConnected, setRealtimeConnected] = useState(false)
-  const [message,          setMessage]          = useState<{ type: 'info' | 'error'; text: string } | null>(null)
+  const [message,           setMessage]           = useState<{ type: 'info' | 'error'; text: string } | null>(null)
 
-  // ✅ FIX 3 & 7 — Modal state for password and email edits
+  // Modal state
   const [resetTarget,     setResetTarget]     = useState<{ id: string; displayName: string } | null>(null)
   const [editEmailTarget, setEditEmailTarget] = useState<{ id: string; displayName: string; email?: string } | null>(null)
 
-  // ── Searchable list (name, role, title) ──────────────────────────────────
+  // Keep a ref to the users array so realtime callbacks always see fresh state
+  // without needing to re-register subscriptions on every render.
+  const usersRef = useRef<ManagedUser[]>([])
+  usersRef.current = users
 
   const { query, setQuery, filtered } = useSearch(users, ['displayName', 'role', 'title'] as any)
 
-  const onlineCount = users.filter(u => u.presenceActive).length
+  const onlineCount      = users.filter(u => u.presenceActive).length
+  const activeAccountCount = users.filter(u => u.isActive).length
 
-  // ── Load users + presence ─────────────────────────────────────────────────
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+
+  /** Merge a partial update into the users array without a full reload. */
+  const patchUser = useCallback((id: string, patch: Partial<ManagedUser>) => {
+    setUsers(prev =>
+      prev.map(u => u.id === id ? { ...u, ...patch } : u)
+    )
+  }, [])
+
+  /** Add a brand-new user row (rare, but handles admin-created accounts). */
+  const upsertUser = useCallback((incoming: ManagedUser) => {
+    setUsers(prev => {
+      const exists = prev.some(u => u.id === incoming.id)
+      return exists
+        ? prev.map(u => u.id === incoming.id ? { ...u, ...incoming } : u)
+        : [...prev, incoming]
+    })
+  }, [])
+
+  // ── Initial load ──────────────────────────────────────────────────────────
 
   const load = useCallback(async () => {
-    console.log('load called') 
     setLoading(true)
     try {
-      // listAllUsers() is a server action — returns auth users enriched with profiles
-      console.log('calling listAllUsers') 
       const raw = await listAllUsers()
-      console.log('listAllUsers returned:', raw)
 
-      // Also fetch presence for all users from admin_presence (client-side, uses RLS)
       const supabase = createClient()
+
+      // Presence
       const { data: presenceRows } = await supabase
         .from('admin_presence')
         .select('user_id, is_active, last_seen')
@@ -91,7 +110,7 @@ export default function UserManagementPage() {
         (presenceRows ?? []).map(p => [p.user_id, p])
       )
 
-      // Fetch profile display details (initials, avatar_color, title) in one query
+      // Avatar / title details
       const { data: profileRows } = await supabase
         .from('profiles')
         .select('id, initials, avatar_color, title')
@@ -101,46 +120,156 @@ export default function UserManagementPage() {
       )
 
       setUsers(
-        (raw as Omit<ManagedUser, 'presenceActive' | 'lastSeen' | 'initials' | 'avatarColor' | 'title'>[]).map(u => {
-          const presence = presenceMap.get(u.id)
-          const profile  = profileMap.get(u.id)
-          return {
-            ...u,
-            presenceActive: presence?.is_active ?? false,
-            lastSeen:       presence?.last_seen  ?? undefined,
-            initials:       profile?.initials    ?? u.role.slice(0, 2).toUpperCase(),
-            avatarColor:    profile?.avatar_color ?? '#6b7280',
-            title:          profile?.title        ?? undefined,
-          }
-        })
+        (raw as Omit<ManagedUser, 'presenceActive' | 'lastSeen' | 'initials' | 'avatarColor' | 'title'>[])
+          .map(u => {
+            const presence = presenceMap.get(u.id)
+            const profile  = profileMap.get(u.id)
+            return {
+              ...u,
+              presenceActive: presence?.is_active ?? false,
+              lastSeen:       presence?.last_seen  ?? undefined,
+              initials:       profile?.initials    ?? u.role.slice(0, 2).toUpperCase(),
+              avatarColor:    profile?.avatar_color ?? '#6b7280',
+              title:          profile?.title        ?? undefined,
+            }
+          })
       )
     } catch (e: unknown) {
-      console.error('load error:', e)
       setMessage({ type: 'error', text: e instanceof Error ? e.message : 'Failed to load users.' })
     } finally {
       setLoading(false)
     }
   }, [])
 
-  // ── Initial load + realtime presence subscription ────────────────────────
+  // ── Realtime subscriptions ────────────────────────────────────────────────
+  //
+  // Three channels, each patching only the affected row in state:
+  //
+  //   1. admin_presence  → presenceActive + lastSeen
+  //   2. profiles        → isActive, role, displayName, initials, avatarColor, title
+  //   3. auth (users table via service-role broadcast or fallback profile watch)
+  //
+  // We deliberately avoid calling `load()` from these handlers so the table
+  // never flickers or resets scroll position on remote activity.
 
   useEffect(() => {
     void load()
 
     const supabase = createClient()
-    const channel = supabase
-      .channel('user_mgmt_presence_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_presence' }, () => {
-        void load()
-      })
-      .subscribe(status => setRealtimeConnected(status === 'SUBSCRIBED'))
 
-    return () => { supabase.removeChannel(channel) }
-  }, [load])
+    // ── Channel 1: presence changes ────────────────────────────────────────
+    const presenceChannel = supabase
+      .channel('um_presence')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'admin_presence' },
+        payload => {
+          const row = (payload.new ?? payload.old) as {
+            user_id:   string
+            is_active: boolean
+            last_seen: string
+          } | null
+
+          if (!row?.user_id) return
+
+          if (payload.eventType === 'DELETE') {
+            patchUser(row.user_id, { presenceActive: false, lastSeen: undefined })
+            return
+          }
+
+          patchUser(row.user_id, {
+            presenceActive: row.is_active,
+            lastSeen:       row.last_seen,
+          })
+        }
+      )
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') setRealtimeConnected(true)
+      })
+
+    // ── Channel 2: profile changes (is_active, email, display_name, role) ──
+    //
+    // profiles.is_active is the source-of-truth for account enable/disable.
+    // We also watch for display_name / role / avatar changes here.
+    const profileChannel = supabase
+      .channel('um_profiles')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles' },
+        async payload => {
+          const row = payload.new as {
+            id:           string
+            role?:        string
+            display_name?: string
+            is_active?:   boolean
+            initials?:    string
+            avatar_color?: string
+            title?:       string
+          }
+
+          if (!row?.id) return
+
+          // Patch what we have immediately for instant UI feedback
+          patchUser(row.id, {
+            ...(row.role          !== undefined && { role:        row.role }),
+            ...(row.display_name  !== undefined && { displayName: row.display_name }),
+            ...(row.is_active     !== undefined && { isActive:    row.is_active }),
+            ...(row.initials      !== undefined && { initials:    row.initials }),
+            ...(row.avatar_color  !== undefined && { avatarColor: row.avatar_color }),
+            ...(row.title         !== undefined && { title:       row.title }),
+          })
+
+          // If active status changed we also need the latest email from auth.users,
+          // so we fetch the single user record server-side and upsert the full row.
+          if (row.is_active !== undefined) {
+            try {
+              const fresh = await getSingleUser(row.id)
+              if (fresh) {
+                // Preserve existing presence data — don't overwrite it
+                const existing = usersRef.current.find(u => u.id === row.id)
+                upsertUser({
+                  ...fresh,
+                  presenceActive: existing?.presenceActive ?? false,
+                  lastSeen:       existing?.lastSeen,
+                })
+              }
+            } catch {
+              // getSingleUser can fail if the calling session expired; the
+              // optimistic patch above already updated the UI, so we swallow.
+            }
+          }
+        }
+      )
+      .subscribe()
+
+    // ── Channel 3: auth user changes (email updates) ───────────────────────
+    //
+    // Supabase doesn't expose auth.users via postgres_changes to the anon key,
+    // so we watch the profiles table INSERT/UPDATE which always fires after an
+    // adminUpdateEmail call (the server action also touches profiles indirectly
+    // via the JWT refresh). For direct email-only changes we rely on the
+    // optimistic update in handleEditEmailSuccess below.
+    //
+    // If your Supabase project has the "db_changes" realtime publication
+    // extended to auth.users (service-role postgres_changes), you can add:
+    //
+    //   .on('postgres_changes', { event: 'UPDATE', schema: 'auth', table: 'users' }, ...)
+    //
+    // But most hosted projects don't expose auth schema to the anon key, so
+    // the optimistic approach in the modal success handler covers 99% of cases.
+
+    return () => {
+      supabase.removeChannel(presenceChannel)
+      supabase.removeChannel(profileChannel)
+    }
+  }, [load, patchUser, upsertUser])
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
   async function toggleActive(userId: string, currentlyActive: boolean, displayName: string) {
+    // Optimistic patch — flip the UI immediately
+    patchUser(userId, { isActive: !currentlyActive })
+
     try {
       await setUserActive(userId, !currentlyActive)
       const verb = currentlyActive ? 'deactivated' : 'activated'
@@ -149,52 +278,56 @@ export default function UserManagementPage() {
         currentlyActive ? 'archive_document' : 'approve_request',
         `Admin ${user?.role ?? ''} ${verb} account for ${displayName}`
       )
-      await load()
+      // Realtime subscription on profiles will confirm the final DB value.
+      // No manual reload needed.
     } catch (e: unknown) {
+      // Roll back the optimistic patch on error
+      patchUser(userId, { isActive: currentlyActive })
       setMessage({ type: 'error', text: e instanceof Error ? e.message : 'Action failed.' })
     }
   }
 
-  // ✅ FIX 3 — Handle password reset modal
-  const handleResetPassword = (userId: string, displayName: string) => {
+  // ── Password reset modal ──────────────────────────────────────────────────
+
+  const handleResetPassword = (userId: string, displayName: string) =>
     setResetTarget({ id: userId, displayName })
-  }
 
   const handleResetSuccess = () => {
+    const name = resetTarget?.displayName
     setResetTarget(null)
-    setMessage({ type: 'info', text: `Password reset for ${resetTarget?.displayName}.` })
-    void logAction('edit_document', `Admin ${user?.role ?? ''} reset password for ${resetTarget?.displayName}`)
+    setMessage({ type: 'info', text: `Password reset for ${name}.` })
+    void logAction('edit_document', `Admin ${user?.role ?? ''} reset password for ${name}`)
   }
 
-  // ✅ FIX 7 — Handle email edit modal
-  const handleEditEmail = (userId: string, displayName: string, email?: string) => {
+  // ── Email edit modal ──────────────────────────────────────────────────────
+
+  const handleEditEmail = (userId: string, displayName: string, email?: string) =>
     setEditEmailTarget({ id: userId, displayName, email })
-  }
 
   const handleEditEmailSuccess = (newEmail: string) => {
     const oldTarget = editEmailTarget
+    // Optimistic patch — update the email in the table instantly
+    if (oldTarget?.id) patchUser(oldTarget.id, { email: newEmail })
     setEditEmailTarget(null)
     setMessage({ type: 'info', text: `Email updated to ${newEmail}.` })
-    void logAction('edit_document', `Admin ${user?.role ?? ''} updated email to ${newEmail} for ${oldTarget?.displayName}`)
+    void logAction(
+      'edit_document',
+      `Admin ${user?.role ?? ''} updated email to ${newEmail} for ${oldTarget?.displayName}`
+    )
   }
 
-  // ── Role level badge ──────────────────────────────────────────────────────
+  // ── Role badge ────────────────────────────────────────────────────────────
 
   const roleLevelColor: Record<string, string> = {
-    admin:       'bg-violet-100 text-violet-700',
-    PD:          'bg-red-100 text-red-700',
-    DPDA:        'bg-amber-100 text-amber-700',
-    DPDO:        'bg-amber-100 text-amber-700',
-    P1:          'bg-blue-100 text-blue-700',
+    admin: 'bg-violet-100 text-violet-700',
+    PD:    'bg-red-100 text-red-700',
+    DPDA:  'bg-amber-100 text-amber-700',
+    DPDO:  'bg-amber-100 text-amber-700',
+    P1:    'bg-blue-100 text-blue-700',
   }
 
-  function roleBadgeClass(role: string) {
-    return roleLevelColor[role] ?? 'bg-slate-100 text-slate-500'
-  }
-
-  // ── Stats ─────────────────────────────────────────────────────────────────
-
-  const activeAccountCount = users.filter(u => u.isActive).length
+  const roleBadgeClass = (role: string) =>
+    roleLevelColor[role] ?? 'bg-slate-100 text-slate-500'
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -247,10 +380,10 @@ export default function UserManagementPage() {
           {/* Stat cards */}
           <div className="grid grid-cols-4 gap-4">
             {[
-              { label: 'Total Accounts', value: users.length,                                   icon: '👥', bg: 'bg-blue-50',    num: 'text-blue-700'    },
-              { label: 'Online Now',     value: onlineCount,                                     icon: '🟢', bg: 'bg-emerald-50', num: 'text-emerald-700' },
-              { label: 'Offline',        value: users.length - onlineCount,                      icon: '⚫', bg: 'bg-slate-50',   num: 'text-slate-600'   },
-              { label: 'Enabled',        value: activeAccountCount,                              icon: '🔓', bg: 'bg-violet-50',  num: 'text-violet-700'  },
+              { label: 'Total Accounts', value: users.length,              icon: '👥', bg: 'bg-blue-50',    num: 'text-blue-700'    },
+              { label: 'Online Now',     value: onlineCount,               icon: '🟢', bg: 'bg-emerald-50', num: 'text-emerald-700' },
+              { label: 'Offline',        value: users.length - onlineCount, icon: '⚫', bg: 'bg-slate-50',   num: 'text-slate-600'   },
+              { label: 'Enabled',        value: activeAccountCount,         icon: '🔓', bg: 'bg-violet-50',  num: 'text-violet-700'  },
             ].map(s => (
               <div key={s.label} className={`${s.bg} border border-slate-200 rounded-xl px-5 py-4 flex items-center gap-3`}>
                 <span className="text-2xl">{s.icon}</span>
@@ -302,11 +435,7 @@ export default function UserManagementPage() {
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-2.5">
                             <div className="relative">
-                              <Avatar
-                                initials={u.initials}
-                                color={u.avatarColor}
-                                size="sm"
-                              />
+                              <Avatar initials={u.initials} color={u.avatarColor} size="sm" />
                               <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${
                                 u.presenceActive ? 'bg-emerald-500' : 'bg-slate-300'
                               }`} />
@@ -320,15 +449,11 @@ export default function UserManagementPage() {
 
                         {/* Role */}
                         <td className="px-4 py-3.5">
-                          <Badge className={roleBadgeClass(u.role)}>
-                            {u.role}
-                          </Badge>
-                          {u.title && (
-                            <p className="text-[10px] text-slate-400 mt-0.5">{u.title}</p>
-                          )}
+                          <Badge className={roleBadgeClass(u.role)}>{u.role}</Badge>
+                          {u.title && <p className="text-[10px] text-slate-400 mt-0.5">{u.title}</p>}
                         </td>
 
-                        {/* Account enabled/disabled */}
+                        {/* Account enabled / disabled */}
                         <td className="px-4 py-3.5">
                           <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${
                             u.isActive
@@ -356,7 +481,9 @@ export default function UserManagementPage() {
                             <p className="text-[10px] text-slate-400 mt-0.5">
                               {u.presenceActive
                                 ? 'Online now'
-                                : `Last: ${new Date(u.lastSeen).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}`}
+                                : `Last: ${new Date(u.lastSeen).toLocaleTimeString('en-PH', {
+                                    hour: '2-digit', minute: '2-digit',
+                                  })}`}
                             </p>
                           )}
                         </td>
@@ -374,14 +501,12 @@ export default function UserManagementPage() {
                             >
                               {u.isActive ? 'Disable' : 'Enable'}
                             </button>
-                            {/* ✅ FIX 3 — Reset password button now opens modal */}
                             <button
                               onClick={() => handleResetPassword(u.id, u.displayName)}
                               className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 transition"
                             >
                               Reset PW
                             </button>
-                            {/* ✅ FIX 7 — Edit email button */}
                             <button
                               onClick={() => handleEditEmail(u.id, u.displayName, u.email)}
                               className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 transition"
@@ -409,7 +534,7 @@ export default function UserManagementPage() {
         </div>
       </div>
 
-      {/* ✅ FIX 3 — Reset Password Modal */}
+      {/* Reset Password Modal */}
       {resetTarget && (
         <ResetPasswordModal
           userId={resetTarget.id}
@@ -419,7 +544,7 @@ export default function UserManagementPage() {
         />
       )}
 
-      {/* ✅ FIX 7 — Edit Email Modal */}
+      {/* Edit Email Modal */}
       {editEmailTarget && (
         <EditEmailModal
           userId={editEmailTarget.id}

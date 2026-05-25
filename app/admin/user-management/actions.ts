@@ -1,9 +1,9 @@
-
 'use server'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient }  from '@supabase/supabase-js'
 
-// Admin client with service role — bypasses RLS
+// ── Admin client (service role — bypasses RLS) ────────────────────────────
+
 function getAdminClient() {
   return createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,7 +12,8 @@ function getAdminClient() {
   )
 }
 
-// Get the calling user's role to ensure only 'admin' can call these actions
+// ── Guard: only 'admin' role may call these actions ───────────────────────
+
 async function assertSuperAdmin() {
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -27,17 +28,15 @@ async function assertSuperAdmin() {
   if (profile?.role !== 'admin') throw new Error('Forbidden')
 }
 
-// ── List all users ──────────────────────────
+// ── List ALL users (initial load only) ───────────────────────────────────
 
 export async function listAllUsers() {
   await assertSuperAdmin()
-  
-  const admin = getAdminClient()
 
+  const admin = getAdminClient()
   const { data, error } = await admin.auth.admin.listUsers()
   if (error) throw error
 
-  // ✅ FIX 1 — use admin client to bypass RLS when reading all profiles
   const { data: profiles } = await admin
     .from('profiles')
     .select('id, role, display_name, is_active')
@@ -51,13 +50,45 @@ export async function listAllUsers() {
     email:       u.email,
     lastSignIn:  u.last_sign_in_at,
     createdAt:   u.created_at,
-    role:        profileMap[u.id]?.role        ?? 'unknown',
+    role:        profileMap[u.id]?.role         ?? 'unknown',
     displayName: profileMap[u.id]?.display_name ?? u.email,
-    isActive:    profileMap[u.id]?.is_active    ?? true,
+    isActive:    profileMap[u.id]?.is_active     ?? true,
   }))
 }
 
-// ── Toggle active status ──────────────────────
+// ── Fetch a single user by ID (used by realtime patch callbacks) ──────────
+// Returns null when the user no longer exists (deleted edge case).
+
+export async function getSingleUser(userId: string) {
+  await assertSuperAdmin()
+
+  const admin = getAdminClient()
+
+  const { data: authUser, error } = await admin.auth.admin.getUserById(userId)
+  if (error) return null
+
+  const { data: profile } = await admin
+    .from('profiles')
+    .select('id, role, display_name, is_active, initials, avatar_color, title')
+    .eq('id', userId)
+    .single()
+
+  const u = authUser.user
+  return {
+    id:          u.id,
+    email:       u.email,
+    lastSignIn:  u.last_sign_in_at,
+    createdAt:   u.created_at,
+    role:        profile?.role         ?? 'unknown',
+    displayName: profile?.display_name ?? u.email,
+    isActive:    profile?.is_active     ?? true,
+    initials:    profile?.initials      ?? (profile?.role ?? 'UN').slice(0, 2).toUpperCase(),
+    avatarColor: profile?.avatar_color  ?? '#6b7280',
+    title:       profile?.title         ?? undefined,
+  }
+}
+
+// ── Toggle active/inactive ─────────────────────────────────────────────────
 
 export async function setUserActive(userId: string, isActive: boolean) {
   await assertSuperAdmin()
@@ -65,7 +96,7 @@ export async function setUserActive(userId: string, isActive: boolean) {
   const supabase = await createServerClient()
   const admin    = getAdminClient()
 
-  // 1. Update profiles table (source of truth for the UI)
+  // 1. Source of truth: profiles table
   const { error: profileError } = await supabase
     .from('profiles')
     .update({ is_active: isActive })
@@ -73,8 +104,7 @@ export async function setUserActive(userId: string, isActive: boolean) {
 
   if (profileError) throw profileError
 
-  // 2. Sync into user_metadata so the middleware can check without a DB call.
-  //    We merge so we don't accidentally wipe other keys (e.g. role).
+  // 2. Sync into user_metadata for middleware checks
   const { data: authUser, error: fetchError } = await admin.auth.admin.getUserById(userId)
   if (fetchError) throw fetchError
 
@@ -88,13 +118,13 @@ export async function setUserActive(userId: string, isActive: boolean) {
   })
   if (metaError) throw metaError
 
-  // 3. If deactivating, immediately invalidate all existing sessions
+  // 3. Immediately invalidate all sessions when deactivating
   if (!isActive) {
     await admin.auth.admin.signOut(userId, 'global')
   }
 }
 
-// ── Reset a user's password ─────────────────
+// ── Reset password ─────────────────────────────────────────────────────────
 
 export async function adminResetPassword(userId: string, newPassword: string) {
   await assertSuperAdmin()
@@ -106,13 +136,8 @@ export async function adminResetPassword(userId: string, newPassword: string) {
   if (error) throw error
 }
 
-// ── Update email address ────────────────────────────────────────────
+// ── Update email address ───────────────────────────────────────────────────
 
-/**
- * Update a user's email address.
- * Only callable by a user with role = 'admin'.
- * Pass sendConfirmation: false to skip confirmation email (for internal accounts).
- */
 export async function adminUpdateEmail(
   userId: string,
   newEmail: string,
@@ -120,13 +145,11 @@ export async function adminUpdateEmail(
 ) {
   await assertSuperAdmin()
 
-  if (!newEmail.includes('@')) {
-    throw new Error('Invalid email address.')
-  }
+  if (!newEmail.includes('@')) throw new Error('Invalid email address.')
 
   const admin = getAdminClient()
   const { error } = await admin.auth.admin.updateUserById(userId, {
-    email: newEmail,
+    email:         newEmail,
     email_confirm: !(options?.sendConfirmation ?? false),
   })
 
