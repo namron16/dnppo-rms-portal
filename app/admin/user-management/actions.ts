@@ -99,7 +99,7 @@ export async function setUserActive(userId: string, isActive: boolean) {
 export async function adminResetPassword(userId: string, newPassword: string) {
   await assertSuperAdmin()
 
-  if (newPassword.length < 12) throw new Error('Password must be at least 12 characters.')
+  if (newPassword.length < 8) throw new Error('Password must be at least 8 characters.')
 
   const admin = getAdminClient()
   const { error } = await admin.auth.admin.updateUserById(userId, { password: newPassword })
