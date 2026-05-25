@@ -181,8 +181,8 @@ export function ProfileSettingsModal({
 
     if (!newPw)
       errors.next = 'New password is required.'
-    else if (newPw.length < 12)
-      errors.next = 'Password must be at least 12 characters.'
+    else if (newPw.length < 8)
+      errors.next = 'Password must be at least 8 characters.'
 
     if (!confirmPw)
       errors.confirm = 'Please confirm the new password.'
@@ -219,7 +219,7 @@ export function ProfileSettingsModal({
 
   const pwStrength = newPw.length >= 20 ? 4
     : newPw.length >= 16 ? 3
-    : newPw.length >= 12 ? 2
+    : newPw.length >= 8 ? 2
     : newPw.length > 0   ? 1
     : 0
   const pwStrengthColors = ['', 'bg-red-400', 'bg-amber-400', 'bg-blue-500', 'bg-emerald-500']
@@ -451,7 +451,7 @@ export function ProfileSettingsModal({
 
                 <div className="flex items-start gap-2 px-3 py-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
                   <span className="flex-shrink-0 mt-0.5">⚠️</span>
-                  <span>Use a strong password (min. 12 characters, mix of upper/lower, numbers &amp; symbols). You remain logged in after changing.</span>
+                  <span>Use a strong password (min. 8 characters, mix of upper/lower, numbers &amp; symbols). You remain logged in after changing.</span>
                 </div>
 
                 {/* Current password */}
@@ -485,7 +485,7 @@ export function ProfileSettingsModal({
                     <input
                       type={showPw.next ? 'text' : 'password'}
                       className={`${fieldCls(pwErrors.next)} pr-10`}
-                      placeholder="Min. 12 characters"
+                      placeholder="Min. 8 characters"
                       value={newPw}
                       onChange={e => { setNewPw(e.target.value); setPwErrors(p => ({ ...p, next: '' })) }}
                       disabled={saving}

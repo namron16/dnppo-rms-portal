@@ -175,6 +175,55 @@ export function Sidebar() {
     }
   }, [user])
 
+  // ── Realtime: sync profile changes across tabs/devices ──────────────────
+  useEffect(() => {
+    if (!user) return
+
+    const fetchLatestProfile = async () => {
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      if (!authUser) return
+
+      const { data } = await supabase
+        .from('profiles')
+        .select('display_name, avatar_url')
+        .eq('id', authUser.id)
+        .single()
+
+      if (data) {
+        if (data.display_name) setLocalDisplayName(data.display_name)
+        if (data.avatar_url)   setLocalAvatarUrl(data.avatar_url)
+      }
+    }
+
+    const channel = supabase
+      .channel('profile-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+        },
+        async (payload) => {
+          // Only react to updates for the current user's row
+          const { data: { user: authUser } } = await supabase.auth.getUser()
+          if (payload.new.id !== authUser?.id) return
+
+          const { display_name, avatar_url } = payload.new as {
+            display_name?: string
+            avatar_url?: string
+          }
+          if (display_name) setLocalDisplayName(display_name)
+          if (avatar_url)   setLocalAvatarUrl(avatar_url)
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [user])
+
   async function handleLogoutConfirm() {
     setShowLogoutConfirm(false)
     await logout()
@@ -193,8 +242,8 @@ export function Sidebar() {
   const isP1        = user?.role === 'P1'
 
   // Effective display values (auth sync > temporary local override)
-  const displayName = user?.name ?? localDisplayName ?? user?.role ?? ''
-  const avatarUrl   = user?.avatarUrl ?? localAvatarUrl ?? null
+  const displayName = localDisplayName ?? user?.name ?? user?.role ?? ''
+  const avatarUrl   = localAvatarUrl ?? user?.avatarUrl ?? null
   const initials    = displayName
     .split(' ')
     .filter(Boolean)
