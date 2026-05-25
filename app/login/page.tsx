@@ -272,9 +272,7 @@ function LoginForm() {
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className={labelCls} style={{ marginBottom: 0 }}>Password</label>
-                </div>
+                <label className={labelCls}>Password</label>
                 <input
                   type="password"
                   value={password}
@@ -284,17 +282,19 @@ function LoginForm() {
                   disabled={loading}
                   autoComplete="current-password"
                 />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFpRoleId(roleId)
-                    setFpError('')
-                    setView('forgot_role')
-                  }}
-                  className="text-xs text-[#1b365d]/60 hover:text-[#1b365d] underline underline-offset-2 transition font-medium"
-                >
-                  Forgot password?
-                </button>
+                <div className="text-right mt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFpRoleId(roleId)
+                      setFpError('')
+                      setView('forgot_role')
+                    }}
+                    className="text-xs text-[#1b365d]/60 hover:text-[#1b365d] underline underline-offset-2 transition font-medium"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
               </div>
 
               {/* ── Submit button ── */}
