@@ -1,16 +1,22 @@
 'use client'
 // components/modals/AddSpecialOrderModal.tsx
-// FIX: stores uploaded_by (user.role) on the SO record so each user
-//      only sees their own orders when the page filters by uploaded_by.
+//
+// FIX: Upload is now open to all P1–P10, WCPD, and PPSMU accounts.
+//      Each SO is tagged with uploaded_by = user.role so the page
+//      only shows each user their own orders (privileged roles see all).
+//      The Drive gateway routes the file to the uploader's own connected
+//      Google Drive account — never another user's Drive.
 
 import { useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
 import { Button }   from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { AddSpecialOrderSchema, zodErrors } from '@/lib/validations'
+import { assertCanUpload } from '@/lib/rbac'
 import { useDriveUpload } from '@/hooks/useGDriveTool'
 import { useAuth } from '@/lib/auth'
 import type { SpecialOrder } from '@/types'
+import type { AdminRole } from '@/lib/auth'
 import { FileText, Image as ImageIcon, Paperclip } from 'lucide-react'
 import { logUploadDocument } from '@/lib/adminLogger'
 
@@ -20,7 +26,7 @@ type SOWithUrl = SpecialOrder & {
   gdrive_url?:      string
   pool_account_id?: string
   download_url?:    string
-  uploaded_by?:     string   // FIX: track who uploaded this order
+  uploaded_by?:     string   // tracks who uploaded this order
 }
 
 interface Props {
@@ -65,6 +71,14 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
   async function submit() {
     if (!user) { toast.error('Not authenticated.'); return }
 
+    // FIX: assertCanUpload now allows P1–P10, WCPD, PPSMU (not just P1)
+    try {
+      assertCanUpload(user.role as AdminRole)
+    } catch (err: any) {
+      toast.error(err.message ?? 'Upload denied.')
+      return
+    }
+
     const result = AddSpecialOrderSchema.safeParse(form)
     if (!result.success) {
       setErrors(zodErrors(result.error))
@@ -81,6 +95,7 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
     try {
       const soId = `so-${Date.now()}`
 
+      // Upload to THIS user's own connected Google Drive account.
       const driveResult = await uploadToDrive(file, 'special_orders', {
         uploadedBy: user.role,
         entityId:   soId,
@@ -92,7 +107,7 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
         return
       }
 
-      // FIX: include uploaded_by so the page can filter orders per user
+      // Tag the order with the uploader's role so the page can filter per user.
       const newSO: SOWithUrl = {
         id:          soId,
         reference:   result.data.reference,
@@ -107,7 +122,6 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
         pool_account_id:  driveResult.poolAccountId,
         download_url:     driveResult.downloadUrl,
 
-        // FIX: tag the order with the uploader's role/username
         uploaded_by: user.role,
       }
 

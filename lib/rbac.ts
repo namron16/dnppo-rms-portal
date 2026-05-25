@@ -2,7 +2,7 @@
 // Backend enforcement for all document access
 
 import { supabase } from './supabase'
-import { FULL_ACCESS_ROLES, VIEWER_ROLES } from './permissions'
+import { FULL_ACCESS_ROLES } from './permissions'
 import type { AdminRole } from './auth'
 
 // ══════════════════════════════════════════════
@@ -48,6 +48,15 @@ export interface AdminNotification {
   created_at: string
 }
 
+// ── Roles permitted to upload documents ───────────────────────────────────────
+// All P1–P10 accounts plus WCPD and PPSMU may upload to any document module.
+// admin, PD, DPDA, DPDO are view/review/approve roles only.
+const UPLOAD_ALLOWED_ROLES: AdminRole[] = [
+  'P1', 'P2', 'P3', 'P4', 'P5',
+  'P6', 'P7', 'P8', 'P9', 'P10',
+  'WCPD', 'PPSMU',
+]
+
 const TEMP_VIEW_ACCESS_MS = 24 * 60 * 60 * 1000
 
 function isWithin24Hours(isoDate?: string | null): boolean {
@@ -83,21 +92,33 @@ async function hasActiveApprovedViewRequest(
 
 // ══════════════════════════════════════════════
 // UPLOAD AUTHORIZATION GUARD
+//
+// FIX: previously only 'P1' was allowed.
+//      Now all P1–P10, WCPD, and PPSMU roles may upload documents.
+//      Each upload is stored in that user's own connected Google Drive
+//      account and is visible only to them (plus privileged roles).
 // ══════════════════════════════════════════════
 
+/**
+ * Throws if the given role is not permitted to upload documents.
+ * Call this at the start of any upload handler.
+ */
 export function assertCanUpload(role: AdminRole): void {
-  if (role !== 'P1') {
-    throw new Error(`Upload denied: role '${role}' is not authorized to upload documents. Only P1 may upload.`)
+  if (!UPLOAD_ALLOWED_ROLES.includes(role)) {
+    throw new Error(
+      `Upload denied: role '${role}' is not authorized to upload documents. ` +
+      `Only P1–P10, WCPD, and PPSMU accounts may upload.`
+    )
   }
 }
 
+/**
+ * Returns true if the given role is permitted to upload documents.
+ * Use this for conditional UI rendering (prefer assertCanUpload in handlers).
+ */
 export function checkCanUpload(role: AdminRole): boolean {
-  return role === 'P1'
+  return UPLOAD_ALLOWED_ROLES.includes(role)
 }
-
-
-
-
 
 // ══════════════════════════════════════════════
 // Check if document is unrestricted (open to all)

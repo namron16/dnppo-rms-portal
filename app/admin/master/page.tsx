@@ -1,10 +1,15 @@
 'use client'
 // app/admin/master/page.tsx
-// FIX: loadAll now filters getMasterDocuments() by user.role (uploaded_by)
-//      so each account only sees the documents they personally uploaded.
-//      DPDA and DPDO are privileged roles that can still see all documents.
 //
-// All other logic (attachments, realtime, navigation, modals) is unchanged.
+// FIX (upload access):
+//   Previously relied on UploadGuard which used assertCanUpload (P1-only).
+//   Now uses canUploadDocuments() from permissions.ts which allows P1–P10,
+//   WCPD, and PPSMU to upload.
+//
+// FIX (per-user visibility):
+//   loadAll filters getMasterDocuments() by uploaded_by = user.role so each
+//   account only sees documents they personally uploaded.
+//   Privileged roles (admin, DPDA, DPDO) still see everything.
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { PageHeader }       from '@/components/ui/PageHeader'
@@ -19,7 +24,6 @@ import { Pagination }       from '@/components/ui/Pagination'
 import { AddDocumentModal } from '@/components/modals/AddDocumentModal'
 import { ApprovalWorkflowModal }  from '@/components/modals/ApprovalWorkflowModal'
 import { ForwardDocumentModal } from '@/components/modals/ForwardDocumentModal'
-import { UploadGuard }      from '@/components/ui/UploadGuard'
 import { useModal, useDisclosure, usePagination } from '@/hooks'
 import { useToast }         from '@/components/ui/Toast'
 import { useAuth }          from '@/lib/auth'
@@ -37,7 +41,7 @@ import {
   type DocumentApproval,
 } from '@/lib/rbac'
 import { logDeleteDocument, logEditDocument, logRenameAttachment, logArchiveDocument } from '@/lib/adminLogger'
-import { hasFullDocumentAccess } from '@/lib/permissions'
+import { hasFullDocumentAccess, canUploadDocuments } from '@/lib/permissions'
 import type { MasterDocument, DocLevel } from '@/types'
 import type { AdminRole } from '@/lib/auth'
 
@@ -65,6 +69,12 @@ export interface DocAttachment {
   gdrive_url: string
   pool_account_id: string
   created_at: string
+}
+
+// ── Privileged roles that see ALL documents regardless of uploader ────────────
+const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
+function canSeeAllDocuments(role: string): boolean {
+  return PRIVILEGED_ROLES.includes(role)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -401,14 +411,6 @@ function flattenDocs(docs: DocEnriched[], depth = 0): FlatNode[] {
   ])
 }
 
-// ── Privileged roles that can see ALL documents regardless of uploader ──────
-// FIX: DPDA, DPDO, and admin see everything; all other roles see only their own.
-const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
-
-function canSeeAllDocuments(role: string): boolean {
-  return PRIVILEGED_ROLES.includes(role)
-}
-
 // ══════════════════════════════════════════════
 // MAIN PAGE
 // ══════════════════════════════════════════════
@@ -416,6 +418,12 @@ function canSeeAllDocuments(role: string): boolean {
 export default function MasterPage() {
   const { toast } = useToast()
   const { user }  = useAuth()
+
+  // FIX: use canUploadDocuments (P1–P10, WCPD, PPSMU) instead of P1-only check
+  const canUpload          = user?.role ? canUploadDocuments(user.role as AdminRole) : false
+  const isP1               = user?.role === 'P1'
+  const isPrivileged       = user ? hasFullDocumentAccess(user.role as AdminRole) : false
+  const canModifyDocuments = user ? !['DPDA', 'DPDO'].includes(user.role) : false
 
   const [documents,      setDocuments]      = useState<DocEnriched[]>([])
   const [query,          setQuery]          = useState('')
@@ -441,10 +449,6 @@ export default function MasterPage() {
   const approvalModal  = useModal()
   const [attachmentNavStack, setAttachmentNavStack] = useState<AttachmentNavEntry[]>([])
 
-  const isP1            = user?.role === 'P1'
-  const isPrivileged    = user ? hasFullDocumentAccess(user.role) : false
-  const canModifyDocuments = user ? !['DPDA', 'DPDO'].includes(user.role) : false
-
   useRealtimeMasterDocs({ setDocuments, setAttachmentsMap, user, isPrivileged, isP1 })
 
   const handleDownloadFile = useCallback(async (
@@ -453,7 +457,6 @@ export default function MasterPage() {
     try {
       setDownloadingKey(downloadKey)
       await saveFileFromUrl(fileUrl, suggestedName)
-
       toast.success(`Downloaded "${suggestedName}" successfully.`)
     } catch { toast.error('Could not download the file.') }
     finally { setDownloadingKey(current => current === downloadKey ? null : current) }
@@ -462,12 +465,11 @@ export default function MasterPage() {
   const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, _sourceDocumentId?: string) => {
     try {
       await printFileFromUrl(fileUrl)
-
       toast.success(`Opened print preview for "${fileName}".`)
     } catch { toast.error('Could not print the file.') }
   }, [toast])
 
-  // ── Load — FIX: filter by uploaded_by unless user is privileged ─────────
+  // Load — filter by uploaded_by unless user is privileged
   useEffect(() => {
     async function loadAll() {
       if (!user) return
@@ -480,14 +482,11 @@ export default function MasterPage() {
             .map((id: string) => id.replace('arc-md-', ''))
         )
 
-        // FIX: privileged roles (DPDA, DPDO, admin) see all documents.
-        //      All other roles (P1–P10) see only documents they uploaded.
+        // Privileged roles see all; everyone else sees only their own uploads.
         const activeDocs = docs.filter((d: DocWithUrl) => {
           if (archivedIds.has(d.id)) return false
-          if (canSeeAllDocuments(user.role)) return true        // privileged: see all
-          return !d.uploaded_by || d.uploaded_by === user.role  // own docs only
-          //      ↑ `!d.uploaded_by` keeps legacy docs (no tag) visible
-          //        during migration. Remove once all records are backfilled.
+          if (canSeeAllDocuments(user.role)) return true
+          return !d.uploaded_by || d.uploaded_by === user.role
         })
 
         const enriched: DocEnriched[] = await Promise.all(
@@ -770,11 +769,12 @@ export default function MasterPage() {
               <option value="PROVINCIAL">Provincial</option>
               <option value="STATION">Station</option>
             </ToolbarSelect>
-            <UploadGuard showDisabled>
+            {/* FIX: Show Upload button for all allowed roles (P1–P10, WCPD, PPSMU) */}
+            {canUpload && (
               <Button variant="primary" size="sm" className="ml-auto" onClick={uploadModal.open}>
                 + Upload
               </Button>
-            </UploadGuard>
+            )}
           </div>
 
           {/* Split view */}
@@ -912,10 +912,7 @@ export default function MasterPage() {
                             <Printer size={13} /> Print
                           </button>
                           <button
-                            onClick={() => {
-                              setViewerFile({ url: selection.fileUrl!, name: selection.title, sourceDocumentId: selection.id })
-
-                            }}
+                            onClick={() => setViewerFile({ url: selection.fileUrl!, name: selection.title, sourceDocumentId: selection.id })}
                             className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition">
                             👁 View
                           </button>
@@ -957,7 +954,7 @@ export default function MasterPage() {
                         </div>
                       </div>
 
-                      {/* Inline breadcrumb trail within panel */}
+                      {/* Inline breadcrumb within panel */}
                       {attachmentNavStack.length > 1 && (
                         <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/70">
                           <div className="flex items-center gap-1 flex-wrap">
@@ -992,9 +989,7 @@ export default function MasterPage() {
                           <p className="text-sm font-semibold text-slate-500">No attachments yet</p>
                           {canModifyDocuments && (
                             <>
-                              <p className="text-xs text-slate-400 mt-1">
-                                Click + Attach file to upload supporting documents.
-                              </p>
+                              <p className="text-xs text-slate-400 mt-1">Click + Attach file to upload supporting documents.</p>
                               <Button variant="outline" size="sm" className="mt-3"
                                 onClick={() => attachmentInputRef.current?.click()}>
                                 + Attach file
@@ -1101,9 +1096,7 @@ export default function MasterPage() {
                                     <td className="px-4 py-3">
                                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button
-                                          onClick={() => {
-                                            setViewerFile({ url: att.gdrive_url, name: label, sourceDocumentId: att.master_document_id })
-                                          }}
+                                          onClick={() => setViewerFile({ url: att.gdrive_url, name: label, sourceDocumentId: att.master_document_id })}
                                           className="text-[10px] font-semibold px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition">
                                           👁 View
                                         </button>

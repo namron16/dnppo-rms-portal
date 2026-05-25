@@ -1,8 +1,14 @@
 'use client'
 // app/admin/admin-orders/page.tsx
-// FIX: loadAll now filters special orders by user.role (uploaded_by)
-//      so each account only sees the orders they personally uploaded.
-//      DPDA, DPDO, and admin are privileged roles that see all orders.
+//
+// FIX (upload access):
+//   The "+ New SO" button is now visible to all roles that canUploadDocuments
+//   (P1–P10, WCPD, PPSMU) instead of being gated behind P1-only assertCanUpload.
+//
+// FIX (per-user visibility):
+//   loadAll filters special orders by uploaded_by = user.role so each account
+//   only sees the orders they personally uploaded.
+//   DPDA, DPDO, and admin are privileged roles that see all orders.
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { PageHeader }           from '@/components/ui/PageHeader'
@@ -33,11 +39,11 @@ import { statusBadgeClass }     from '@/lib/utils'
 import { logAction, logDeleteDocument, logRenameAttachment } from '@/lib/adminLogger'
 import { useAuth } from '@/lib/auth'
 import type { AdminRole } from '@/lib/auth'
+import { canUploadDocuments } from '@/lib/permissions'
 import { useRealtimeSpecialOrders } from '@/hooks/useRealtimeSpecialOrders'
 import type { SpecialOrder }    from '@/types'
 
 // ── Privileged roles that can see ALL orders regardless of uploader ──────────
-// FIX: DPDA, DPDO, and admin see everything; all other roles see only their own.
 const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
 function canSeeAllDocuments(role: string): boolean {
   return PRIVILEGED_ROLES.includes(role)
@@ -51,7 +57,7 @@ type SOWithUrl = SpecialOrder & {
   gdrive_url?:      string
   pool_account_id?: string
   download_url?:    string
-  uploaded_by?:     string   // FIX: who uploaded this order
+  uploaded_by?:     string
 }
 
 export interface SOAttachment {
@@ -863,6 +869,9 @@ function OrderListNode({
 export default function AdminOrdersPage() {
   const { toast } = useToast()
   const { user }  = useAuth()
+
+  // FIX: use canUploadDocuments (P1–P10, WCPD, PPSMU) for the "+ New SO" button
+  const canUpload    = user?.role ? canUploadDocuments(user.role as AdminRole) : false
   const canEditOrder = user ? !['DPDA', 'DPDO'].includes(user.role) : false
 
   const [orders,         setOrders]         = useState<SOWithUrl[]>([])
@@ -896,7 +905,7 @@ export default function AdminOrdersPage() {
     }
   }, [currentEntry, attachmentsMap])
 
-  // ── Load — FIX: filter by uploaded_by unless user is privileged ─────────
+  // Load — filter by uploaded_by unless user is privileged
   useEffect(() => {
     async function loadAll() {
       if (!user) return
@@ -909,12 +918,11 @@ export default function AdminOrdersPage() {
             .map((id: string) => id.replace('arc-so-', ''))
         )
 
-        // FIX: privileged roles see all orders; everyone else sees only their own.
+        // Privileged roles see all orders; everyone else sees only their own.
         const activeOrders = data.filter((o: SOWithUrl) => {
           if (o.status === 'ARCHIVED' || archivedIds.has(o.id)) return false
-          if (canSeeAllDocuments(user.role)) return true        // privileged: see all
-          return !o.uploaded_by || o.uploaded_by === user.role  // own orders only
-          //      ↑ `!o.uploaded_by` keeps legacy records visible during migration
+          if (canSeeAllDocuments(user.role)) return true
+          return !o.uploaded_by || o.uploaded_by === user.role
         })
 
         setOrders(activeOrders)
@@ -1110,7 +1118,6 @@ export default function AdminOrdersPage() {
   const handleDownloadFile = useCallback(async (fileUrl: string, fileName: string) => {
     try {
       await saveFileFromUrl(fileUrl, getSuggestedFileName(fileName, fileUrl))
-
       toast.success(`Downloaded "${fileName}" successfully.`)
     } catch { toast.error('Could not download the file.') }
   }, [toast])
@@ -1118,7 +1125,6 @@ export default function AdminOrdersPage() {
   const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, _sourceDocumentId?: string) => {
     try {
       await printFileFromUrl(fileUrl)
-
       toast.success(`Opened print preview for "${fileName}".`)
     } catch { toast.error('Could not print the file.') }
   }, [toast])
@@ -1166,9 +1172,12 @@ export default function AdminOrdersPage() {
               <option value="ACTIVE">Active</option>
               <option value="PENDING">Pending</option>
             </ToolbarSelect>
-            <Button variant="primary" size="sm" className="ml-auto" onClick={newSOModal.open}>
-              + New SO
-            </Button>
+            {/* FIX: Show "+ New SO" for all allowed roles (P1–P10, WCPD, PPSMU) */}
+            {canUpload && (
+              <Button variant="primary" size="sm" className="ml-auto" onClick={newSOModal.open}>
+                + New SO
+              </Button>
+            )}
           </div>
 
           {/* Split view */}
@@ -1243,7 +1252,10 @@ export default function AdminOrdersPage() {
                     icon="📋"
                     title="Select an order"
                     description="Click any order from the list on the left to view its attachments."
-                    action={<Button variant="primary" size="sm" onClick={newSOModal.open}>+ New SO</Button>}
+                    action={canUpload
+                      ? <Button variant="primary" size="sm" onClick={newSOModal.open}>+ New SO</Button>
+                      : undefined
+                    }
                   />
                 </div>
               ) : (

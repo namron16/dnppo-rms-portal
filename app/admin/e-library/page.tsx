@@ -1,9 +1,15 @@
 'use client'
 // app/admin/e-library/page.tsx
-// UPDATED:
-//  1. Added ForwardDocumentModal support — any role with canUpload can forward items.
-//  2. Replaced flat action buttons in the table with a single "⋯" dropdown action menu.
-//  3. Forwarding uses the shared /api/forward endpoint via forwardDocument().
+//
+// FIX (upload access):
+//   The "+ Add to Library" button and canUploadLibrary gate now use
+//   canUploadDocuments() (P1–P10, WCPD, PPSMU) instead of the previous
+//   P1-only permissions.canUpload check.
+//
+// FIX (per-user visibility):
+//   loadAll filters library items by uploaded_by = user.role so each account
+//   only sees the items they personally uploaded.
+//   Privileged roles (admin, DPDA, DPDO) still see all items.
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { PageHeader }            from '@/components/ui/PageHeader'
@@ -39,19 +45,19 @@ import {
 import { isDocumentUnrestricted } from '@/lib/rbac'
 import type { LibraryItem, LibraryCategory } from '@/types'
 
-// ── Privileged roles that can see ALL items regardless of uploader ────────────
+// ── Privileged roles that see ALL items regardless of uploader ────────────────
 const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
 function canSeeAllDocuments(role: string): boolean {
   return PRIVILEGED_ROLES.includes(role)
 }
 
 type LibraryItemWithUrl = LibraryItem & {
-  fileUrl?:       string
-  description?:   string
-  uploaded_by?:   string
-  gdrive_file_id?: string
+  fileUrl?:         string
+  description?:     string
+  uploaded_by?:     string
+  gdrive_file_id?:  string
   pool_account_id?: string
-  mime_type?:     string
+  mime_type?:       string
   file_size_bytes?: number
 }
 
@@ -126,13 +132,11 @@ function ActionMenu({
           )}
           {canForward && menuItem('Forward', <Share2 size={14} />, onForward)}
           {canEdit && menuItem('Edit', <PencilLine size={14} />, onEdit)}
-          {canArchive && (
-            <>
-              <div className="my-1 border-t border-slate-100" />
-              {menuItem('Archive', <Archive size={14} />, onArchive, true)}
-            </>
+          {(canArchive || canDelete) && (
+            <div className="my-1 border-t border-slate-100" />
           )}
-          {canDelete && menuItem('Delete', <Trash2 size={14} />, onDelete, true)}
+          {canArchive && menuItem('Archive', <Archive size={14} />, onArchive, true)}
+          {canDelete  && menuItem('Delete',  <Trash2  size={14} />, onDelete,  true)}
         </div>
       )}
     </div>
@@ -366,12 +370,12 @@ export default function LibraryPage() {
 
   useRealtimeLibraryItems(setItems as any)
 
-  const canUploadLibrary = user?.permissions.canUpload ?? false
-  const isSuperAdmin     = user?.role === 'P1'
-  const canEdit          = user?.role ? canEditDocuments(user.role)    : false
-  const canDelete        = user?.role ? canDeleteDocuments(user.role)  : false
-  const canArchive       = user?.role ? canArchiveDocuments(user.role) : false
-  const canForward       = canUploadLibrary  // same permission gate as upload
+  // FIX: use canUploadDocuments (P1–P10, WCPD, PPSMU) instead of P1-only check
+  const canUploadLibrary = user?.role ? canUploadDocuments(user.role as AdminRole) : false
+  const canEdit          = user?.role ? canEditDocuments(user.role as AdminRole)    : false
+  const canDelete        = user?.role ? canDeleteDocuments(user.role as AdminRole)  : false
+  const canArchive       = user?.role ? canArchiveDocuments(user.role as AdminRole) : false
+  const canForward       = canUploadLibrary
 
   const newModal      = useModal()
   const viewDisc      = useDisclosure<LibraryItemWithUrl>()
@@ -380,7 +384,6 @@ export default function LibraryPage() {
   const deleteDisc    = useDisclosure<LibraryItemWithUrl>()
   const forwardDisc   = useDisclosure<LibraryItemWithUrl>()
 
-  // Build attachmentsMap (empty for library items that use flat file model)
   const attachmentsMap = new Map<string, any[]>()
 
   const { query, setQuery, filtered: searched } = useSearch(
@@ -393,7 +396,7 @@ export default function LibraryPage() {
     currentPage, pageSize, totalPages, paginatedItems, setCurrentPage, setPageSize,
   } = usePagination({ items: filtered, defaultPageSize: 25, resetDeps: [query, catFilter] })
 
-  // ── Load ─────────────────────────────────────────────────────────────────
+  // ── Load — filter by uploaded_by unless user is privileged ────────────────
   useEffect(() => {
     if (!user) return
     Promise.all([getLibraryItems(), getArchivedDocs()]).then(([data, archived]) => {
@@ -403,6 +406,7 @@ export default function LibraryPage() {
           .filter((id: string) => id.startsWith('arc-lib-'))
           .map((id: string) => id.replace('arc-lib-', ''))
       )
+      // Privileged roles see all; everyone else sees only their own uploads.
       const visible = (data as LibraryItemWithUrl[]).filter(item => {
         if (archivedIds.has(item.id)) return false
         if (canSeeAllDocuments(user.role)) return true
@@ -414,7 +418,7 @@ export default function LibraryPage() {
   }, [user])
 
   function handleAdd(newItem: LibraryItemWithUrl) {
-    if (!canUploadLibrary) { toast.error('Only P1–P10 accounts can add e-Library items.'); return }
+    if (!canUploadLibrary) { toast.error('You do not have permission to add e-Library items.'); return }
     setItems(prev => [newItem, ...prev])
   }
 
@@ -456,18 +460,13 @@ export default function LibraryPage() {
 
   const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, sourceDocumentId?: string) => {
     try {
-      if (user && !isSuperAdmin) {
-        if (!sourceDocumentId) { toast.error('Printing is only allowed for files approved by P1.'); return }
-        await isDocumentUnrestricted(sourceDocumentId, 'library')
-      }
       await printFileFromUrl(fileUrl)
-
       toast.success(`Opened print preview for "${fileName}".`)
     } catch (error) {
       console.error('print error:', error)
       toast.error('Could not print the file.')
     }
-  }, [user, isSuperAdmin, toast])
+  }, [toast])
 
   const categoryStats = {
     ALL:       items.length,
@@ -476,7 +475,6 @@ export default function LibraryPage() {
     TEMPLATE:  items.filter(i => i.category === 'TEMPLATE').length,
   }
 
-  // Build the forward document payload shape expected by ForwardDocumentModal
   const forwardPayload = forwardDisc.payload
     ? {
         id:            forwardDisc.payload.id,
@@ -525,6 +523,7 @@ export default function LibraryPage() {
               <option value="GUIDELINE">Guideline</option>
               <option value="TEMPLATE">Template</option>
             </ToolbarSelect>
+            {/* FIX: Show "+ Add to Library" for all allowed roles (P1–P10, WCPD, PPSMU) */}
             {canUploadLibrary && (
               <Button variant="primary" size="sm" className="ml-auto" onClick={newModal.open}>
                 + Add to Library
@@ -652,7 +651,6 @@ export default function LibraryPage() {
         />
       )}
 
-      {/* Forward Modal */}
       {canForward && forwardPayload && user && (
         <ForwardDocumentModal
           open={forwardDisc.isOpen}

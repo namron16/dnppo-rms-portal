@@ -1,7 +1,11 @@
 'use client'
 // components/modals/AddDocumentModal.tsx
-// FIX: stores uploaded_by (user.role) on the document record so each user
-//      only sees their own documents when the page filters by uploaded_by.
+//
+// FIX: Upload is now open to all P1–P10, WCPD, and PPSMU accounts.
+//      Each document is tagged with uploaded_by = user.role so the page
+//      only shows each user their own documents (privileged roles see all).
+//      The Drive gateway routes the file to the uploader's own connected
+//      Google Drive account — never another user's Drive.
 
 import { useState, useRef } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -21,7 +25,7 @@ type DocWithUrl = MasterDocument & {
   gdrive_url?:      string
   pool_account_id?: string
   download_url?:    string
-  uploaded_by?:     string   // FIX: track who uploaded this document
+  uploaded_by?:     string   // tracks who uploaded this document
 }
 
 interface AddDocumentModalProps {
@@ -56,10 +60,10 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
     setFile(incoming)
     setErrors(prev => ({ ...prev, file: '' }))
     const ext = incoming.name.split('.').pop()?.toUpperCase() ?? ''
-    if (['PDF','DOCX','DOC','XLSX','XLS'].includes(ext)) {
+    if (['PDF', 'DOCX', 'DOC', 'XLSX', 'XLS'].includes(ext)) {
       const mapped = ext.startsWith('DOC') ? 'DOCX' : ext.startsWith('XLS') ? 'XLSX' : ext
       setForm(prev => ({ ...prev, type: mapped }))
-    } else if (['JPG','JPEG','PNG','WEBP'].includes(ext)) {
+    } else if (['JPG', 'JPEG', 'PNG', 'WEBP'].includes(ext)) {
       setForm(prev => ({ ...prev, type: 'Image' }))
     }
   }
@@ -74,8 +78,10 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
 
   async function handleSubmit() {
     if (!user) { toast.error('Not authenticated.'); return }
+
+    // FIX: assertCanUpload now allows P1–P10, WCPD, PPSMU (not just P1)
     try {
-      assertCanUpload(user.role)
+      assertCanUpload(user.role as AdminRole)
     } catch (err: any) {
       toast.error(err.message ?? 'Upload denied.')
       return
@@ -95,6 +101,9 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
     try {
       const newDocId = `md-${Date.now()}`
 
+      // Upload to THIS user's own connected Google Drive account.
+      // The gateway uses uploadedBy to scope the Drive account selection —
+      // it will never route to another user's Drive.
       const driveResult = await uploadToDrive(file, 'master_documents', {
         uploadedBy: user.role,
         entityId:   newDocId,
@@ -108,7 +117,8 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
 
       const fileSize = (file.size / 1024 / 1024).toFixed(1) + ' MB'
 
-      // FIX: include uploaded_by so the page can filter documents per user
+      // Tag the document with the uploader's role so the page can filter
+      // and show each user only their own documents.
       const newDoc: DocWithUrl = {
         id:      newDocId,
         title:   result.data.title,
@@ -124,7 +134,6 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
         pool_account_id:  driveResult.poolAccountId,
         download_url:     driveResult.downloadUrl,
 
-        // FIX: tag the document with the uploader's role/username
         uploaded_by: user.role,
       }
 
@@ -178,7 +187,7 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
             </select>
           </div>
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widests text-slate-500 mb-1.5">Tag</label>
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Tag</label>
             <select className={cls('tag')} value={form.tag} onChange={e => handleChange('tag', e.target.value)} disabled={uploading}>
               <option value="COMPLIANCE">Compliance</option>
               <option value="DIRECTIVE">Directive</option>

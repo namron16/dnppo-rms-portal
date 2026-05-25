@@ -1,15 +1,21 @@
 'use client'
 // components/modals/AddLibraryItemModal.tsx
-// FIX: stores uploaded_by (user.role) on the library item so each user
-//      only sees their own items when the page filters by uploaded_by.
+//
+// FIX: Upload is now open to all P1–P10, WCPD, and PPSMU accounts.
+//      Each item is tagged with uploaded_by = user.role so the page
+//      only shows each user their own items (privileged roles see all).
+//      The Drive gateway routes the file to the uploader's own connected
+//      Google Drive account — never another user's Drive.
 
 import { useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
 import { Button }   from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { AddLibraryItemSchema, zodErrors } from '@/lib/validations'
+import { assertCanUpload } from '@/lib/rbac'
 import { useDriveUpload } from '@/hooks/useGDriveTool'
 import { useAuth } from '@/lib/auth'
+import type { AdminRole } from '@/lib/auth'
 import { addLibraryItem } from '@/lib/data'
 import { logAddLibraryItem } from '@/lib/adminLogger'
 import type { LibraryCategory } from '@/types'
@@ -23,7 +29,7 @@ type LibraryItemWithUrl = {
   fileUrl?:     string
   description?: string
   created_at?:  string
-  uploaded_by?: string   // FIX: track who uploaded this item
+  uploaded_by?: string   // tracks who uploaded this item
 }
 
 interface Props {
@@ -69,6 +75,16 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
   }
 
   async function submit() {
+    if (!user) { toast.error('Not authenticated.'); return }
+
+    // FIX: assertCanUpload now allows P1–P10, WCPD, PPSMU (not just P1)
+    try {
+      assertCanUpload(user.role as AdminRole)
+    } catch (err: any) {
+      toast.error(err.message ?? 'Upload denied.')
+      return
+    }
+
     const nextErrors: Record<string, string> = {}
     if (!form.title.trim())       nextErrors.title       = 'Title is required.'
     if (!form.category.trim())    nextErrors.category    = 'Category is required.'
@@ -93,9 +109,9 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
       const today  = new Date().toISOString().split('T')[0]
       const now    = new Date().toISOString()
 
-      // Upload file to Google Drive
+      // Upload to THIS user's own connected Google Drive account.
       const uploadResult = await uploadToDrive(file!, 'library_items', {
-        uploadedBy: user?.role ?? 'unknown',
+        uploadedBy: user.role,
         entityId:   itemId,
         entityType: 'library_item',
       })
@@ -109,7 +125,7 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
         ? `${(file!.size / 1024).toFixed(1)} KB`
         : `${(file!.size / 1024 / 1024).toFixed(1)} MB`
 
-      // FIX: include uploaded_by so the page can filter items per user
+      // Tag the item with the uploader's role so the page can filter per user.
       const newItem: LibraryItemWithUrl = {
         id:          itemId,
         title:       result.data.title.trim(),
@@ -119,7 +135,7 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
         fileUrl:     uploadResult.fileUrl,
         description: form.description.trim() || undefined,
         created_at:  now,
-        uploaded_by: user?.role,   // FIX: tag with uploader's role/username
+        uploaded_by: user.role,
       }
 
       await addLibraryItem(newItem)

@@ -1,7 +1,11 @@
 'use client'
 // components/modals/AddJournalEntryModal.tsx
-// FIX: passes uploaded_by (user.role) back through onSubmit so the page
+//
+// FIX: Upload is now open to all P1–P10, WCPD, and PPSMU accounts.
+//      uploaded_by (user.role) is passed back through onSubmit so the page
 //      can tag the journal entry and filter by user on next load.
+//      The Drive gateway routes the file to the uploader's own connected
+//      Google Drive account — never another user's Drive.
 
 import { useEffect, useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -9,8 +13,10 @@ import { Button }   from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { Paperclip } from 'lucide-react'
 import { AddJournalEntrySchema, zodErrors, type AddJournalEntryInput } from '@/lib/validations'
+import { assertCanUpload } from '@/lib/rbac'
 import { useDriveUpload } from '@/hooks/useGDriveTool'
 import { useAuth } from '@/lib/auth'
+import type { AdminRole } from '@/lib/auth'
 
 type JournalEntryFormInput = AddJournalEntryInput & { file?: File }
 type JournalFormState = {
@@ -40,7 +46,7 @@ interface Props {
   title?: string
   submitLabel?: string
   initialValue?: Partial<AddJournalEntryInput> & { content?: string; fileUrl?: string }
-  // FIX: onSubmit now also receives uploaded_by so the page can persist it
+  // onSubmit also receives uploaded_by so the page can persist it
   onSubmit?: (entry: JournalEntryFormInput & { driveFileUrl?: string; uploaded_by?: string }) => void | Promise<void>
 }
 
@@ -109,6 +115,16 @@ export function AddJournalEntryModal({
   }
 
   async function submit() {
+    if (!user) { toast.error('Not authenticated.'); return }
+
+    // FIX: assertCanUpload now allows P1–P10, WCPD, PPSMU (not just P1)
+    try {
+      assertCanUpload(user.role as AdminRole)
+    } catch (err: any) {
+      toast.error(err.message ?? 'Upload denied.')
+      return
+    }
+
     const result = AddJournalEntrySchema.safeParse(form)
     if (!result.success) {
       setErrors(zodErrors(result.error))
@@ -126,8 +142,9 @@ export function AddJournalEntryModal({
       if (file) {
         const journalId = `jnl-${Date.now()}`
 
+        // Upload to THIS user's own connected Google Drive account.
         const uploadResult = await uploadToDrive(file, 'daily_journals', {
-          uploadedBy: user?.role ?? 'unknown',
+          uploadedBy: user.role,
           entityId:   journalId,
           entityType: 'daily_journal',
         })
@@ -140,12 +157,12 @@ export function AddJournalEntryModal({
         driveFileUrl = uploadResult.fileUrl
       }
 
-      // FIX: pass uploaded_by so the page can persist and filter by it
+      // Pass uploaded_by so the page can persist and filter by it
       await onSubmit?.({
         ...result.data,
         file:         file ?? undefined,
         driveFileUrl,
-        uploaded_by:  user?.role,
+        uploaded_by:  user.role,
       })
 
       toast.success(`Journal entry "${result.data.title}" saved.`)

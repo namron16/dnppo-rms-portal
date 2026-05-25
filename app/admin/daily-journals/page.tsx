@@ -1,9 +1,14 @@
 'use client'
 // app/admin/daily-journals/page.tsx
-// UPDATED:
-//  1. Added ForwardDocumentModal support — any role with canUpload can forward entries.
-//  2. Replaced flat action buttons in the table with a single "⋯" dropdown action menu.
-//  3. Forwarding uses the shared /api/forward endpoint via forwardDocument().
+//
+// FIX (upload access):
+//   The "+ Add Entry" button and canUpload gate now use canUploadDocuments()
+//   (P1–P10, WCPD, PPSMU) instead of the previous isSuperAdmin-only check.
+//
+// FIX (per-user visibility):
+//   loadAll filters daily journals by uploaded_by = user.role so each account
+//   only sees the entries they personally uploaded.
+//   Privileged roles (admin, DPDA, DPDO) still see all entries.
 
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { PageHeader }             from '@/components/ui/PageHeader'
@@ -39,7 +44,7 @@ import {
 } from '@/lib/permissions'
 import { Archive, Copy, Eye, PencilLine, Share2, Trash2, MoreHorizontal } from 'lucide-react'
 
-// ── Privileged roles ──────────────────────────────────────────────────────────
+// ── Privileged roles that see ALL entries regardless of uploader ──────────────
 const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
 function canSeeAllDocuments(role: string): boolean {
   return PRIVILEGED_ROLES.includes(role)
@@ -91,7 +96,9 @@ function statusBadgeClass(status: JournalStatus) {
 
 function ActionMenu({
   entry,
-  isSuperAdmin,
+  canEdit,
+  canDelete,
+  canArchive,
   canForward,
   onView,
   onEdit,
@@ -101,7 +108,9 @@ function ActionMenu({
   onCopyTitle,
 }: {
   entry: JournalRecord
-  isSuperAdmin: boolean
+  canEdit: boolean
+  canDelete: boolean
+  canArchive: boolean
   canForward: boolean
   onView: () => void
   onEdit: () => void
@@ -149,14 +158,12 @@ function ActionMenu({
           {item('View', <Eye size={14} />, onView)}
           {item('Copy Title', <Copy size={14} />, onCopyTitle)}
           {canForward && item('Forward', <Share2 size={14} />, onForward)}
-          {isSuperAdmin && item('Edit', <PencilLine size={14} />, onEdit)}
-          {isSuperAdmin && (
-            <>
-              <div className="my-1 border-t border-slate-100" />
-              {item('Archive', <Archive size={14} />, onArchive, true)}
-              {item('Delete', <Trash2 size={14} />, onDelete, true)}
-            </>
+          {canEdit && item('Edit', <PencilLine size={14} />, onEdit)}
+          {(canArchive || canDelete) && (
+            <div className="my-1 border-t border-slate-100" />
           )}
+          {canArchive && item('Archive', <Archive size={14} />, onArchive, true)}
+          {canDelete  && item('Delete',  <Trash2  size={14} />, onDelete,  true)}
         </div>
       )}
     </div>
@@ -194,7 +201,7 @@ function ViewJournalModal({
               <Badge className={statusBadgeClass(entry.status)}>{entry.status}</Badge>
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Author</p>
+              <p className="text-[11px] font-semibold uppercase tracking-widests text-slate-400 mb-1">Author</p>
               <p className="font-semibold text-slate-700">{entry.author}</p>
             </div>
             <div>
@@ -285,12 +292,12 @@ function ViewJournalAttachmentModal({
 export default function DailyJournalsPage() {
   const { toast } = useToast()
   const { user }  = useAuth()
-  const isSuperAdmin = user?.role === 'P1'
 
-  const canUpload  = user?.role ? canUploadDocuments(user.role)  : false
-  const canEdit    = user?.role ? canEditDocuments(user.role)    : false
-  const canDelete  = user?.role ? canDeleteDocuments(user.role)  : false
-  const canArchive = user?.role ? canArchiveDocuments(user.role) : false
+  // FIX: use canUploadDocuments (P1–P10, WCPD, PPSMU) instead of isSuperAdmin
+  const canUpload  = user?.role ? canUploadDocuments(user.role as AdminRole)  : false
+  const canEdit    = user?.role ? canEditDocuments(user.role as AdminRole)    : false
+  const canDelete  = user?.role ? canDeleteDocuments(user.role as AdminRole)  : false
+  const canArchive = user?.role ? canArchiveDocuments(user.role as AdminRole) : false
   const canForward = canUpload  // same gate as upload
 
   const addModal           = useModal()
@@ -328,7 +335,7 @@ export default function DailyJournalsPage() {
     log:    entries.filter(e => e.type === 'LOG').length,
   }), [entries])
 
-  // ── Load ──────────────────────────────────────────────────────────────────
+  // ── Load — filter by uploaded_by unless user is privileged ──────────────
   useEffect(() => {
     const role = user?.role ?? ''
     if (!role) return
@@ -337,6 +344,7 @@ export default function DailyJournalsPage() {
       try {
         const data = await getDailyJournals()
         if (!isMounted) return
+        // Privileged roles see all; everyone else sees only their own uploads.
         const visible = data.filter((entry: any) => {
           if (canSeeAllDocuments(role)) return true
           return !entry.uploaded_by || entry.uploaded_by === role
@@ -502,10 +510,10 @@ export default function DailyJournalsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3 self-start">
               {[
-                { label: 'Total Entries', value: journalStats.all,    icon: '📒', bg: 'bg-blue-50',   text: 'text-blue-700'   },
-                { label: 'Memos',         value: journalStats.memo,   icon: '📝', bg: 'bg-amber-50',  text: 'text-amber-700'  },
-                { label: 'Reports',       value: journalStats.report, icon: '📋', bg: 'bg-violet-50', text: 'text-violet-700' },
-                { label: 'Logs',          value: journalStats.log,    icon: '🗂️', bg: 'bg-emerald-50', text: 'text-emerald-700'},
+                { label: 'Total Entries', value: journalStats.all,    icon: '📒', bg: 'bg-blue-50',    text: 'text-blue-700'   },
+                { label: 'Memos',         value: journalStats.memo,   icon: '📝', bg: 'bg-amber-50',   text: 'text-amber-700'  },
+                { label: 'Reports',       value: journalStats.report, icon: '📋', bg: 'bg-violet-50',  text: 'text-violet-700' },
+                { label: 'Logs',          value: journalStats.log,    icon: '🗂️', bg: 'bg-emerald-50', text: 'text-emerald-700' },
               ].map(card => (
                 <div key={card.label} className={`${card.bg} rounded-xl border border-slate-200 px-4 py-3 flex items-center gap-3`}>
                   <span className="text-2xl">{card.icon}</span>
@@ -529,7 +537,8 @@ export default function DailyJournalsPage() {
               <option value="REPORT">Report</option>
               <option value="LOG">Log</option>
             </ToolbarSelect>
-            {isSuperAdmin && (
+            {/* FIX: Show "+ Add Entry" for all allowed roles (P1–P10, WCPD, PPSMU) */}
+            {canUpload && (
               <Button variant="primary" size="sm" className="ml-auto" onClick={addModal.open}>
                 + Add Entry
               </Button>
@@ -550,7 +559,7 @@ export default function DailyJournalsPage() {
                     ? 'Try adjusting your search or type filter.'
                     : 'Create the first journal entry to populate this register.'
                 }
-                action={!query && activeType === 'ALL' && isSuperAdmin
+                action={!query && activeType === 'ALL' && canUpload
                   ? <Button variant="primary" size="sm" onClick={addModal.open}>+ Add Entry</Button>
                   : undefined
                 }
@@ -590,7 +599,9 @@ export default function DailyJournalsPage() {
                         <td className="px-4 py-3.5 align-top">
                           <ActionMenu
                             entry={entry}
-                            isSuperAdmin={isSuperAdmin}
+                            canEdit={canEdit}
+                            canDelete={canDelete}
+                            canArchive={canArchive}
                             canForward={canForward}
                             onView={() => viewDisc.open(entry)}
                             onEdit={() => editDisc.open(entry)}
@@ -623,7 +634,7 @@ export default function DailyJournalsPage() {
       </div>
 
       {/* Modals */}
-      {isSuperAdmin && (
+      {canUpload && (
         <AddJournalEntryModal
           open={addModal.isOpen}
           onClose={addModal.close}
@@ -632,7 +643,7 @@ export default function DailyJournalsPage() {
           onSubmit={handleCreate}
         />
       )}
-      {isSuperAdmin && (
+      {canEdit && (
         <AddJournalEntryModal
           open={editDisc.isOpen}
           onClose={editDisc.close}
@@ -668,7 +679,7 @@ export default function DailyJournalsPage() {
         />
       )}
 
-      {isSuperAdmin && (
+      {canArchive && (
         <ConfirmDialog
           open={archiveDisc.isOpen}
           title="Archive Journal Entry"
