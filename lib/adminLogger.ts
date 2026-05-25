@@ -93,11 +93,7 @@ export const logLogin  = (role: AdminRole) =>
 export const logLogout = (role: AdminRole) =>
   logAction('logout', `${role} logged out`)
 
-export const logViewDocument = (docTitle: string) =>
-  logAction('view_document', `Viewed document "${docTitle}"`)
 
-export const logDownloadDocument = (docTitle: string) =>
-  logAction('download_document', `Downloaded document "${docTitle}"`)
 
 export const logUploadDocument = (docTitle: string) =>
   logAction('upload_document', `Uploaded document "${docTitle}"`)

@@ -21,7 +21,7 @@ import { useSearch, useModal, useDisclosure, usePagination } from '@/hooks'
 import { useRealtimeLibraryItems } from '@/hooks/useRealtimeCollections'
 import { useToast }              from '@/components/ui/Toast'
 import { Eye, PencilLine, Trash2, Download, Paperclip, Share2, Archive, MoreHorizontal } from 'lucide-react'
-import { logDeleteDocument, logEditLibraryItem, logViewDocument, logAddLibraryItem, logArchiveLibraryItem } from '@/lib/adminLogger'
+import { logDeleteDocument, logEditLibraryItem, logAddLibraryItem, logArchiveLibraryItem } from '@/lib/adminLogger'
 import {
   getLibraryItems,
   updateLibraryItem,
@@ -461,7 +461,7 @@ export default function LibraryPage() {
         await isDocumentUnrestricted(sourceDocumentId, 'library')
       }
       await printFileFromUrl(fileUrl)
-      await logViewDocument(fileName)
+
       toast.success(`Opened print preview for "${fileName}".`)
     } catch (error) {
       console.error('print error:', error)
@@ -602,7 +602,7 @@ export default function LibraryPage() {
                             canDelete={canDelete}
                             canArchive={canArchive}
                             canForward={canForward}
-                            onView={() => { viewDisc.open(item); logViewDocument(item.title).catch(() => {}) }}
+                            onView={() => viewDisc.open(item)}
                             onEdit={() => editDisc.open(item)}
                             onDelete={() => deleteDisc.open(item)}
                             onArchive={() => archiveDisc.open(item)}

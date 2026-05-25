@@ -20,7 +20,7 @@ import { AddJournalEntryModal }   from '@/components/modals/AddJournalEntryModal
 import { ForwardDocumentModal }   from '@/components/modals/ForwardDocumentModal'
 import { useDisclosure, useModal, useSearch, usePagination } from '@/hooks'
 import { useRealtimeDailyJournals } from '@/hooks/useRealtimeCollections'
-import { logDeleteDocument, logEditJournal, logViewDocument, logCreateJournal, logArchiveJournal } from '@/lib/adminLogger'
+import { logDeleteDocument, logEditJournal, logCreateJournal, logArchiveJournal } from '@/lib/adminLogger'
 import { useAuth }                from '@/lib/auth'
 import type { AdminRole }         from '@/lib/auth'
 import type { AddJournalEntryInput } from '@/lib/validations'
@@ -592,10 +592,7 @@ export default function DailyJournalsPage() {
                             entry={entry}
                             isSuperAdmin={isSuperAdmin}
                             canForward={canForward}
-                            onView={() => {
-                              viewDisc.open(entry)
-                              logViewDocument(entry.title).catch(() => {})
-                            }}
+                            onView={() => viewDisc.open(entry)}
                             onEdit={() => editDisc.open(entry)}
                             onArchive={() => archiveDisc.open(entry)}
                             onDelete={() => deleteDisc.open(entry)}

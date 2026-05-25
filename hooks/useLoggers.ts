@@ -6,8 +6,6 @@ import { useCallback } from 'react'
 import { useAuth } from '@/lib/auth'
 import {
   logAction,
-  logViewDocument,
-  logDownloadDocument,
   logUploadDocument,
   logEditDocument,
   logArchiveDocument,
@@ -38,8 +36,6 @@ export function useLogger() {
 
   return {
     log,
-    logViewDocument,
-    logDownloadDocument,
     logUploadDocument,
     logEditDocument,
     logArchiveDocument,

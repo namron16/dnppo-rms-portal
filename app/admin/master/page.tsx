@@ -36,7 +36,7 @@ import {
   createApproval,
   type DocumentApproval,
 } from '@/lib/rbac'
-import { logDeleteDocument, logEditDocument, logRenameAttachment, logViewDocument, logArchiveDocument, logDownloadDocument } from '@/lib/adminLogger'
+import { logDeleteDocument, logEditDocument, logRenameAttachment, logArchiveDocument } from '@/lib/adminLogger'
 import { hasFullDocumentAccess } from '@/lib/permissions'
 import type { MasterDocument, DocLevel } from '@/types'
 import type { AdminRole } from '@/lib/auth'
@@ -453,7 +453,7 @@ export default function MasterPage() {
     try {
       setDownloadingKey(downloadKey)
       await saveFileFromUrl(fileUrl, suggestedName)
-      await logDownloadDocument(suggestedName)
+
       toast.success(`Downloaded "${suggestedName}" successfully.`)
     } catch { toast.error('Could not download the file.') }
     finally { setDownloadingKey(current => current === downloadKey ? null : current) }
@@ -462,7 +462,7 @@ export default function MasterPage() {
   const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, _sourceDocumentId?: string) => {
     try {
       await printFileFromUrl(fileUrl)
-      await logViewDocument(fileName)
+
       toast.success(`Opened print preview for "${fileName}".`)
     } catch { toast.error('Could not print the file.') }
   }, [toast])
@@ -914,7 +914,7 @@ export default function MasterPage() {
                           <button
                             onClick={() => {
                               setViewerFile({ url: selection.fileUrl!, name: selection.title, sourceDocumentId: selection.id })
-                              if (user?.role) logViewDocument(selection.title).catch(() => {})
+
                             }}
                             className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition">
                             👁 View
@@ -1103,7 +1103,6 @@ export default function MasterPage() {
                                         <button
                                           onClick={() => {
                                             setViewerFile({ url: att.gdrive_url, name: label, sourceDocumentId: att.master_document_id })
-                                            if (user?.role) logViewDocument(label).catch(() => {})
                                           }}
                                           className="text-[10px] font-semibold px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition">
                                           👁 View
