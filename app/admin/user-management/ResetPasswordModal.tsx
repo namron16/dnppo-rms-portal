@@ -33,7 +33,7 @@ export function ResetPasswordModal({ userId, displayName, onClose, onSuccess }: 
     }
   }
 
-  const strong = password.length >= 12
+  const strong = password.length >= 8
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -59,7 +59,7 @@ export function ResetPasswordModal({ userId, displayName, onClose, onSuccess }: 
 
         {password && (
           <p className={`text-[11px] font-semibold ${strong ? 'text-emerald-600' : 'text-red-500'}`}>
-            {strong ? '✓ Minimum length met' : '✗ Must be at least 12 characters'}
+            {strong ? '✓ Minimum length met' : '✗ Must be at least 8 characters'}
           </p>
         )}
 
