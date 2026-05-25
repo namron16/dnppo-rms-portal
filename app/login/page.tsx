@@ -13,7 +13,7 @@ import { getDefaultAdminRoute, type SessionRole } from '@/lib/adminRouteAccess'
 const ROLE_IDS = [
   'admin', 'PD', 'DPDA', 'DPDO',
   'P1', 'P2', 'P3', 'P4', 'P5',
-  'P6', 'P7', 'P8', 'P9', 'P10',
+  'P6', 'P7', 'P8', 'P9', 'P10', 'PPSMU', 'WCPD',
 ] as const
 
 // The email map is kept here only for the loginPassword call (sign-in with
@@ -29,6 +29,8 @@ function getRoleLabel(id: string): string {
     case 'DPDA':  return 'DPDA — Deputy Director for Administration'
     case 'DPDO':  return 'DPDO — Deputy Director for Operations'
     case 'P1':    return 'P1 — Records Officer'
+    case 'PPSMU': return 'PPSMU — Provincial Police Strategy Management Unit'
+    case 'WCPD':  return 'WCPD — Women and Children Protection Desk'
     default:      return `${id} — Admin Officer ${id}`
   }
 }

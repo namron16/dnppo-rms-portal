@@ -1,4 +1,4 @@
-export type SessionRole = 'admin' | 'PD' | 'DPDA' | 'DPDO' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9' | 'P10'
+export type SessionRole = 'admin' | 'PD' | 'DPDA' | 'DPDO' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9' | 'P10' | 'PPSMU' | 'WCPD'
 
 const DOC_ROUTES = [
   '/admin/master',
@@ -59,6 +59,8 @@ const ROLE_DEFAULT_ROUTE: Record<SessionRole, string> = {
   P8: '/admin/master',
   P9: '/admin/master',
   P10: '/admin/master',
+  PPSMU: '/admin/master',
+  WCPD: '/admin/master',
 }
 
 function uniqueRoutes(routes: string[]): string[] {
@@ -70,7 +72,7 @@ export function getDefaultAdminRoute(role: SessionRole): string {
 }
 
 export function getAllowedAdminRoutes(role: SessionRole): string[] {
-  const viewerRoles = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10'] as const
+  const viewerRoles = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'PPSMU', 'WCPD'] as const
   const docs = role === 'admin'
     ? []
     : role === 'P2'

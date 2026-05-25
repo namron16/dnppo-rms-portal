@@ -189,7 +189,7 @@ export function Sidebar() {
   const isAdmin = user && ['admin'].includes(user.role)
   const isDPDA = user && ['DPDA', 'DPDO'].includes(user.role)
   const canSeeP2    = user?.role === 'P2'
-  const isViewerNo201 = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10'].includes(user?.role ?? '')
+  const isViewerNo201 = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'PPSMU', 'WCPD'].includes(user?.role ?? '')
   const isP1        = user?.role === 'P1'
 
   // Effective display values (auth sync > temporary local override)
