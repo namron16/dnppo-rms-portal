@@ -113,7 +113,7 @@ export default function UserManagementPage() {
       // Avatar / title details
       const { data: profileRows } = await supabase
         .from('profiles')
-        .select('id, initials, avatar_color, title')
+        .select('id, initials, avatar_color, title, is_active')
 
       const profileMap = new Map(
         (profileRows ?? []).map(p => [p.id, p])
@@ -131,6 +131,7 @@ export default function UserManagementPage() {
               initials:       profile?.initials    ?? u.role.slice(0, 2).toUpperCase(),
               avatarColor:    profile?.avatar_color ?? '#6b7280',
               title:          profile?.title        ?? undefined,
+              isActive:       profile?.is_active     ?? u.isActive,
             }
           })
       )
