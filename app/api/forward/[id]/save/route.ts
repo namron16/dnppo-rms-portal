@@ -1,49 +1,128 @@
 // app/api/forward/[id]/save/route.ts
-// FIXED:
-//  1. ATTACHMENT_FK_MAP: `master_document` was mapped to `master_document_id`
-//     but the map said `master_document_id` — that was actually correct.
-//     HOWEVER `admin_order` said `admin_order_id` and `daily_journal` said
-//     `daily_journal_id` — these must match the actual DB FK column names
-//     (`special_order_id`, `daily_journal_id`, `library_item_id`).
-//  2. Attachment row builder: `parent_id` was reading `att.parent_attachment_id`
-//     which is the forwarded_attachments column name, not the target table's column.
-//     The target tables all use `parent_id` — map correctly.
-//  3. DOCUMENT_TABLE_MAP: `admin_order` maps to `special_orders` (not `admin_orders`).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { logSaveForwardedDocument, setCurrentLogger } from '@/lib/adminLogger'
 import { AdminRole } from '@/lib/auth'
 
-// Maps document_type → Supabase table name
 const DOCUMENT_TABLE_MAP: Record<string, string> = {
   master_document: 'master_documents',
-  admin_order:     'special_orders',        // FIX: table is special_orders, not admin_orders
+  admin_order:     'special_orders',
   daily_journal:   'daily_journals',
   library:         'library_items',
 }
 
-// Maps document_type → attachments table name
 const ATTACHMENT_TABLE_MAP: Record<string, string> = {
   master_document: 'master_document_attachments',
-  admin_order:     'special_order_attachments',   // FIX: consistent with table name
+  admin_order:     'special_order_attachments',
   daily_journal:   'daily_journal_attachments',
   library:         'library_item_attachments',
 }
 
-// The FK column name used in each attachments table
-// FIX: these must exactly match the DB column names defined in the migration
 const ATTACHMENT_FK_MAP: Record<string, string> = {
-  master_document: 'master_document_id',   // master_document_attachments.master_document_id
-  admin_order:     'special_order_id',     // special_order_attachments.special_order_id
-  daily_journal:   'daily_journal_id',     // daily_journal_attachments.daily_journal_id
-  library:         'library_item_id',      // library_item_attachments.library_item_id
+  master_document: 'master_document_id',
+  admin_order:     'special_order_id',
+  daily_journal:   'daily_journal_id',
+  library:         'library_item_id',
+}
+
+/**
+ * Builds a document insert payload tailored to each table's schema.
+ * All four tables now have the Drive-pool columns after the migration,
+ * but each table also has its own required columns that differ.
+ */
+function buildDocumentPayload(
+  fwd: any,
+  uploaderRole: string
+): Record<string, any> {
+  // Shared Drive-pool fields — present in all four tables after migration
+  const driveFields = {
+    gdrive_file_id:  fwd.gdrive_file_id  ?? null,
+    gdrive_url:      fwd.gdrive_url       ?? null,
+    pool_account_id: fwd.pool_account_id  ?? null,
+    file_name:       fwd.file_name        ?? null,
+    file_size_bytes: fwd.file_size_bytes  ?? null,
+    mime_type:       fwd.mime_type        ?? null,
+    source:          'forwarded',
+    forwarded_from:  fwd.sender_role,
+    uploaded_by:     uploaderRole,
+  }
+
+  switch (fwd.document_type) {
+    case 'master_document':
+      return {
+        // master_documents uses app-generated text PKs
+        id:    `md-${Date.now()}`,
+        title: fwd.title,
+        level: 'REGIONAL',
+        type:  fwd.mime_type?.includes('pdf')  ? 'PDF'
+             : fwd.mime_type?.includes('word') ? 'DOCX'
+             : fwd.mime_type?.includes('sheet') ? 'XLSX'
+             : 'PDF',
+        date:  new Date().toISOString().split('T')[0],
+        size:  fwd.file_size_bytes
+                 ? `${(fwd.file_size_bytes / 1024 / 1024).toFixed(1)} MB`
+                 : '0 MB',
+        tag:   'COMPLIANCE',
+        // file_url kept for backward-compat with existing queries
+        file_url: fwd.gdrive_url ?? null,
+        ...driveFields,
+      }
+
+    case 'admin_order':
+      return {
+        id:          `so-${Date.now()}`,
+        reference:   fwd.title,
+        subject:     fwd.title,
+        date:        new Date().toISOString().split('T')[0],
+        attachments: 0,
+        status:      'ACTIVE',
+        file_url:    fwd.gdrive_url ?? null,
+        ...driveFields,
+      }
+
+    case 'daily_journal':
+      return {
+        id:          `dj-${Date.now()}`,
+        title:       fwd.title,
+        type:        'MEMO',
+        author:      uploaderRole,
+        date:        new Date().toISOString().split('T')[0],
+        status:      'Draft',
+        attachments: 0,
+        archived:    false,
+        file_url:    fwd.gdrive_url ?? null,
+        ...driveFields,
+      }
+
+    case 'library':
+      return {
+        id:          `lib-${Date.now()}`,
+        title:       fwd.title,
+        category:    'TEMPLATE',
+        size:        fwd.file_size_bytes
+                       ? `${(fwd.file_size_bytes / 1024 / 1024).toFixed(1)} MB`
+                       : '0 MB',
+        date_added:  new Date().toISOString(),
+        file_url:    fwd.gdrive_url ?? null,
+        ...driveFields,
+      }
+
+    default:
+      return {
+        title:    fwd.title,
+        file_url: fwd.gdrive_url ?? null,
+        ...driveFields,
+      }
+  }
 }
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
+
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -62,7 +141,7 @@ export async function POST(
   const { data: fwd, error: fetchError } = await supabase
     .from('forwarded_documents')
     .select('*, forwarded_attachments(*)')
-    .eq('id', params.id)
+    .eq('id', id)
     .eq('recipient_role', profile.role)
     .single()
 
@@ -88,46 +167,35 @@ export async function POST(
     )
   }
 
-  // 2. Insert new document row into the correct table
+  // 2. Build table-specific payload and insert
+  const payload = buildDocumentPayload(fwd, profile.role)
+
   const { data: newDoc, error: docError } = await supabase
     .from(targetTable)
-    .insert({
-      title:           fwd.title,
-      gdrive_file_id:  fwd.gdrive_file_id,
-      gdrive_url:      fwd.gdrive_url,
-      pool_account_id: fwd.pool_account_id,
-      file_name:       fwd.file_name,
-      file_size_bytes: fwd.file_size_bytes,
-      mime_type:       fwd.mime_type,
-      source:          'forwarded',
-      forwarded_from:  fwd.sender_role,
-      uploaded_by:     profile.role,
-    })
+    .insert(payload)
     .select()
     .single()
 
   if (docError || !newDoc) {
+    console.error('Document insert error:', docError?.message, 'Payload keys:', Object.keys(payload))
     return NextResponse.json(
       { error: docError?.message ?? 'Failed to save document' },
       { status: 500 }
     )
   }
 
-  // 3. Insert attachments
+  // 3. Insert attachments (non-fatal if they fail)
   const attachments = fwd.forwarded_attachments ?? []
   if (attachments.length > 0) {
     const attRows = attachments.map((att: any) => ({
-      // FIX: use the correct FK column name for this document type
       [attachmentFk]:  newDoc.id,
       title:           att.title,
-      file_name:       att.file_name,
-      file_size_bytes: att.file_size_bytes,
-      mime_type:       att.mime_type,
+      file_name:       att.file_name   ?? null,
+      file_size_bytes: att.file_size_bytes ?? null,
+      mime_type:       att.mime_type   ?? null,
       gdrive_file_id:  att.gdrive_file_id,
       gdrive_url:      att.gdrive_url,
       pool_account_id: att.pool_account_id,
-      // FIX: source column is `parent_attachment_id` in forwarded_attachments,
-      //      but the target attachment tables all use `parent_id`.
       parent_id:       att.parent_attachment_id ?? null,
       depth:           att.depth ?? 0,
     }))
@@ -137,8 +205,7 @@ export async function POST(
       .insert(attRows)
 
     if (attError) {
-      console.error('Attachment save error:', attError)
-      // Non-fatal — document was saved successfully
+      console.error('Attachment save error (non-fatal):', attError.message)
     }
   }
 
@@ -153,7 +220,7 @@ export async function POST(
     .eq('id', fwd.id)
 
   if (updateError) {
-    console.error('Status update error:', updateError)
+    console.error('Status update error:', updateError.message)
   }
 
   await logSaveForwardedDocument(fwd.title, fwd.sender_role, targetTable)

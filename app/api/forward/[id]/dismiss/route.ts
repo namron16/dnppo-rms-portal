@@ -5,8 +5,10 @@ import { createClient } from '@/lib/supabase/server'
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
+
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -21,7 +23,7 @@ export async function PATCH(
   const { error } = await supabase
     .from('forwarded_documents')
     .update({ status: 'dismissed' })
-    .eq('id', params.id)
+    .eq('id', id)
     .eq('recipient_role', profile?.role ?? '')
     .eq('status', 'pending')
 
