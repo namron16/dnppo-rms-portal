@@ -175,7 +175,7 @@ export default function DPDAInboxPage() {
                 <Inbox className="w-7 h-7 text-white" />
               </div>
               <div>
-                <h1 className="text-3xl font-bold text-slate-900">DPDA Inbox</h1>
+                <h1 className="text-3xl font-bold text-slate-900">Forwarded</h1>
                 <p className="text-slate-600 text-sm mt-0.5">
                   Document review and approval workflow
                 </p>
