@@ -8,8 +8,8 @@ create table public.forwarded_attachments (
                             on delete cascade,
 
   -- Original identity (for deduplication / audit)
-  original_attachment_id  uuid,
-  parent_attachment_id    uuid,         -- null = direct child of root document
+  original_attachment_id  text,
+  parent_attachment_id    text,         -- null = direct child of root document
   depth                   int          not null default 0,
 
   -- File metadata

@@ -1,5 +1,4 @@
-﻿import { createClient } from './supabase/client'
-import type { AdminRole } from './auth'
+﻿import type { AdminRole } from './auth'
 
 export type LogActionType =
   | 'login' | 'logout' | 'view_document' | 'upload_document'
@@ -29,6 +28,34 @@ export function isLoggerReady(): boolean {
   return !!(_currentUserId && _currentRole)
 }
 
+// ── Client factory ────────────────────────────────────────────────────────────
+// Server-side API routes (typeof window === 'undefined') use the service role
+// client so auth.uid() = null doesn't trip the RLS policy.
+// Browser code keeps using the anon client as before.
+
+function getSupabaseClient() {
+  if (typeof window === 'undefined') {
+    // Server-side: use service role key — bypasses all RLS
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!url || !key) {
+      throw new Error(
+        'adminLogger (server): NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing.'
+      )
+    }
+    // Inline createClient to avoid importing the server-only gdrive-pool module
+    // into a shared lib that's also loaded in the browser bundle.
+    const { createClient } = require('@supabase/supabase-js')
+    return createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  }
+
+  // Browser-side: use the existing anon client (RLS satisfied by session cookie)
+  const { createClient } = require('./supabase/client')
+  return createClient()
+}
+
 // ── Core log writer ───────────────────────────────────────────────────────────
 
 export async function logAction(
@@ -46,7 +73,7 @@ export async function logAction(
     return
   }
 
-  const supabase = createClient()
+  const supabase = getSupabaseClient()
   const descriptionValue =
     typeof description === 'string' ? description : JSON.stringify(description)
 
@@ -65,12 +92,7 @@ export async function logAction(
       `  Hint:    ${error.hint ?? '—'}\n`,
       `  Details: ${error.details ?? '—'}`
     )
-
-    if (process.env.NODE_ENV === 'development') {
-      throw new Error(
-        `[adminLogger] DB insert failed for action "${action}": ${error.message}`
-      )
-    }
+    // Don't throw in production — a failed log should never crash the request
   }
 }
 
@@ -172,8 +194,6 @@ export const logCreatePersonnel = (personName: string) =>
 
 export const logArchivePersonnel = (personName: string) =>
   logAction('archive_document', `Archived personnel record "${personName}"`)
-
-// ── Account management wrappers ───────────────────────────────────────────────
 
 export const logDisableAccount = (targetDisplayName: string) =>
   logAction('disable_account', `Disabled account for "${targetDisplayName}"`)

@@ -6,7 +6,7 @@ create table public.forwarded_documents (
   recipient_role      text        not null,
 
   -- Source document identity
-  original_doc_id     uuid        not null,
+  original_doc_id     text        not null,
   document_type       text        not null check (document_type in (
                         'master_document',
                         'admin_order',
@@ -32,7 +32,7 @@ create table public.forwarded_documents (
                       )),
   received_at         timestamptz not null default now(),
   saved_at            timestamptz,
-  saved_doc_id        uuid,         -- ID of the new row created when recipient saves
+  saved_doc_id        text,         -- ID of the new row created when recipient saves
 
   created_at          timestamptz not null default now()
 );
