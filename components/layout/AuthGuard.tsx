@@ -16,12 +16,8 @@ interface AuthGuardProps {
   children: React.ReactNode
 }
 
-const LOADING_TIMEOUT_MS      = 8_000
+const LOADING_TIMEOUT_MS        = 8_000
 const SESSION_CHECK_INTERVAL_MS = 30_000
-// Delay before the VERY FIRST session check after login/refresh.
-// This gives registerSession() time to finish writing the new token to the DB
-// before we read it back — preventing a false "session taken" logout on Browser 2
-// immediately after it kicks out Browser 1.
 const INITIAL_SESSION_CHECK_DELAY_MS = 3_000
 
 export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
@@ -39,25 +35,17 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
       setTimedOut(false)
       return
     }
-
     timerRef.current = setTimeout(() => setTimedOut(true), LOADING_TIMEOUT_MS)
-
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
-    }
+    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
   }, [isLoading])
 
   // ── Session lock polling ───────────────────────────────────────────────────
   useEffect(() => {
-    // Clear any previous interval whenever user/loading state changes
     if (intervalRef.current) {
       clearInterval(intervalRef.current)
       intervalRef.current = null
     }
 
-    // Don't start polling until auth is fully resolved AND we have a user.
-    // This is the critical guard — it prevents the check from firing during
-    // the login transition or before the session token is written to the DB.
     if (isLoading || !user) return
 
     let cancelled = false
@@ -67,18 +55,18 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
       const valid = await isSessionValid(user.role)
       if (cancelled || valid) return
 
+      // ── CRITICAL FIX ──────────────────────────────────────────────────────
+      // Use scope:'local' so we only clear THIS browser's Supabase session.
+      // The default (scope:'global') revokes the token server-side, which
+      // invalidates the JWT for ALL browsers logged in as this user — causing
+      // Browser 2 to also get logged out when it was the one that should stay.
       clearLocalToken()
-      await createClient().auth.signOut()
+      await createClient().auth.signOut({ scope: 'local' })
       router.replace('/login?reason=session_taken')
     }
 
-    // Delay the FIRST check so the DB write from registerSession() has time
-    // to propagate before we read it back. Without this delay, Browser 2 can
-    // call isSessionValid() before its own token is committed, see a mismatch,
-    // and immediately log itself out after kicking Browser 1.
     const delayRef = setTimeout(() => {
       void checkSessionLock()
-
       intervalRef.current = setInterval(() => {
         void checkSessionLock()
       }, SESSION_CHECK_INTERVAL_MS)
@@ -103,40 +91,16 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
       return
     }
 
-    void (async () => {
-      // NOTE: Do NOT call isSessionValid() here — the polling effect above
-      // already owns session validation. Calling it here too creates a race:
-      // both effects run concurrently on mount, and if one clears the token
-      // before the other reads it, Browser 2 gets falsely logged out.
-      //
-      // This effect only handles route access control.
-      if (pathname && !isAllowedAdminPath(pathname, user.role as SessionRole)) {
-        router.replace(getDefaultAdminRoute(user.role as SessionRole))
-      }
-    })()
+    if (pathname && !isAllowedAdminPath(pathname, user.role as SessionRole)) {
+      router.replace(getDefaultAdminRoute(user.role as SessionRole))
+    }
   }, [user, isLoading, timedOut, router, pathname])
 
-  // ── Render logic ───────────────────────────────────────────────────────────
-
-  if (isLoading && !timedOut) {
-    return <LoadingSpinner fullPage />
-  }
-
-  if (timedOut && user) {
-    // Fall through to render children below
-  }
-
-  if (timedOut && !user) {
-    return <LoadingSpinner fullPage />
-  }
-
-  if (!user) {
-    return <LoadingSpinner fullPage />
-  }
-
-  if (pathname && !isAllowedAdminPath(pathname, user.role as SessionRole)) {
-    return <LoadingSpinner fullPage />
-  }
+  // ── Render ─────────────────────────────────────────────────────────────────
+  if (isLoading && !timedOut)                                        return <LoadingSpinner fullPage />
+  if (timedOut && !user)                                             return <LoadingSpinner fullPage />
+  if (!user)                                                         return <LoadingSpinner fullPage />
+  if (pathname && !isAllowedAdminPath(pathname, user.role as SessionRole)) return <LoadingSpinner fullPage />
 
   return <>{children}</>
 }

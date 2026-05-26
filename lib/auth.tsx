@@ -59,8 +59,8 @@ function permissionsForRole(role: AdminRole): AdminUser['permissions'] {
 }
 
 function levelForRole(role: AdminRole): RoleLevel {
-  if (role === 'admin')                        return 'super_admin'
-  if (role === 'DPDA' || role === 'DPDO')      return 'deputy'
+  if (role === 'admin')               return 'super_admin'
+  if (role === 'DPDA' || role === 'DPDO') return 'deputy'
   return 'admin'
 }
 
@@ -102,7 +102,6 @@ async function fetchProfile(
       .select('role, display_name, title, initials, avatar_color, avatar_url')
       .eq('id', user.id)
       .single()
-
     if (error || !data) return null
     return buildAdminUser(user, data as ProfileRow)
   } catch {
@@ -120,9 +119,19 @@ export function maskEmail(email: string): string {
   return `${visible}${masked}@${domain}`
 }
 
-// ── Safe sign-out helper ──────────────────────────────────────────────────────
+// ── Safe sign-out helpers ─────────────────────────────────────────────────────
 
-async function safeSignOut(supabase: ReturnType<typeof createClient>): Promise<void> {
+// LOCAL sign-out: clears this browser's session only.
+// Use this when THIS browser is being kicked by another session taking over.
+// Does NOT revoke the token server-side, so the other browser stays logged in.
+async function safeSignOutLocal(supabase: ReturnType<typeof createClient>): Promise<void> {
+  await supabase.auth.signOut({ scope: 'local' })
+  await new Promise<void>(r => setTimeout(r, 200))
+}
+
+// GLOBAL sign-out: revokes the token server-side, logs out all browsers.
+// Use this for intentional logouts (disabled account, explicit logout button).
+async function safeSignOutGlobal(supabase: ReturnType<typeof createClient>): Promise<void> {
   await supabase.auth.signOut({ scope: 'global' })
   await new Promise<void>(r => setTimeout(r, 200))
 }
@@ -166,11 +175,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .eq('id', s.user.id)
             .single()
 
-          // Account was disabled while the user was already logged in —
-          // sign out silently and let the middleware redirect to /login?disabled=1.
-          // Do NOT call setCurrentLogger or logLogin here.
           if (profileRow?.is_active === false) {
-            await safeSignOut(supabase)
+            // Account disabled — global sign-out is correct here because
+            // a disabled account should not be active anywhere.
+            await safeSignOutGlobal(supabase)
             if (!cancelled) setIsLoading(false)
             return
           }
@@ -214,31 +222,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── Login ─────────────────────────────────────────────────────────────────
 
   const loginPassword = useCallback(async (role: string, password: string) => {
-    // Step 1 — resolve role → email
     const email = await resolveEmailByRole(role)
-    if (!email) {
-      return { error: 'Account not found. Please check your role selection.' }
-    }
+    if (!email) return { error: 'Account not found. Please check your role selection.' }
 
-    // Step 2 — sign in with resolved email + password
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error)      return { error: error.message }
     if (!data.user) return { error: 'No user returned.' }
 
-    // Step 3 — fetch the profile to build the AdminUser object
     const adminUser = await fetchProfile(supabase, data.user)
     if (!adminUser) return { error: 'Account profile not found. Contact your administrator.' }
 
-    // Step 4 — disabled account check.
-    //
-    // IMPORTANT: We sign out fully and wait for the browser to flush the
-    // cleared-cookie headers BEFORE returning the error. Returning early without
-    // this flush leaves a valid session cookie in the browser; React then navigates
-    // and the middleware lets the request through → "Failed to fetch RSC payload".
-    //
-    // We also deliberately do NOT call setCurrentLogger or logLogin here.
-    // A disabled account attempting to log in must never appear as "logged in"
-    // in the audit log.
     const { data: profileRow } = await supabase
       .from('profiles')
       .select('is_active')
@@ -246,24 +239,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .single()
 
     if (profileRow?.is_active === false) {
-      await safeSignOut(supabase)
+      // Disabled account — global sign-out is correct: they should not be
+      // logged in anywhere.
+      await safeSignOutGlobal(supabase)
       return { error: 'Your account has been disabled. Contact your administrator.' }
     }
 
-    // Step 5 — session lock registration
     try {
       await registerSession(adminUser.role, adminUser.id)
     } catch {
-      await safeSignOut(supabase)
+      await safeSignOutGlobal(supabase)
       return { error: 'Could not establish a session lock. Please try again.' }
     }
 
-    // Step 6 — mark presence, set logger, log the login event.
-    //
-    // setCurrentLogger MUST be called before logLogin so the logger module has
-    // a valid userId and role before the first write fires.
-    // We only reach this point when is_active is confirmed true (Step 4 above),
-    // so it is safe to log the login here.
     await setAdminActive(data.user.id)
     setCurrentLogger(adminUser.role, adminUser.id)
     await logLogin(adminUser.role)
@@ -274,7 +262,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: null }
   }, [supabase, resolveEmailByRole]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Logout ────────────────────────────────────────────────────────────────
+  // ── Logout (intentional — clears all devices) ─────────────────────────────
 
   const logout = useCallback(async () => {
     const roleForLog   = user?.role ?? null
@@ -285,35 +273,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await import('./adminLogger').then(({ logAction }) =>
           logAction('logout', `${roleForLog} logged out`)
         )
-      } catch {
-        // Never block logout on a log failure
-      }
+      } catch { /* never block logout on log failure */ }
     }
 
     if (roleForLog) {
-      try {
-        await clearSession(roleForLog)
-      } catch {
-        // Never block logout on a lock cleanup failure
-      }
+      try { await clearSession(roleForLog) } catch { /* never block logout */ }
     }
 
     if (userIdForLog) {
-      try {
-        await setAdminInactive(userIdForLog)
-      } catch {
-        // Never block logout on presence cleanup failure
-      }
+      try { await setAdminInactive(userIdForLog) } catch { /* never block logout */ }
     }
 
     setCurrentLogger(null)
     setUser(null)
     setSession(null)
-    await supabase.auth.signOut()
+    // Intentional logout → global scope is correct here: we want all devices
+    // signed out when a user explicitly logs out.
+    await supabase.auth.signOut({ scope: 'global' })
     window.location.href = '/login'
   }, [supabase, user])
 
-  // ── Change password (logged-in flow) ──────────────────────────────────────
+  // ── Change password ───────────────────────────────────────────────────────
 
   const changePassword = useCallback(async (current: string, next: string) => {
     if (!user?.email) return { error: 'Session error. Please log out and back in.' }
@@ -329,16 +309,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: null }
   }, [supabase, user])
 
-  // ── Send OTP for password reset (logged-out flow) ─────────────────────────
+  // ── Send OTP ──────────────────────────────────────────────────────────────
 
   const sendPasswordResetOTP = useCallback(async (role: string) => {
     const email = await resolveEmailByRole(role)
-
     if (!email) {
-      return {
-        maskedEmail: null,
-        error: 'Could not send code. Please check your role selection and try again.',
-      }
+      return { maskedEmail: null, error: 'Could not send code. Please check your role selection and try again.' }
     }
 
     const { error } = await supabase.auth.signInWithOtp({
@@ -347,16 +323,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })
 
     if (error) {
-      return {
-        maskedEmail: null,
-        error: 'Could not send code. Please check your role selection and try again.',
-      }
+      return { maskedEmail: null, error: 'Could not send code. Please check your role selection and try again.' }
     }
 
     return { maskedEmail: maskEmail(email), error: null }
   }, [supabase, resolveEmailByRole])
 
-  // ── Verify OTP and set new password (logged-out flow) ────────────────────
+  // ── Verify OTP + reset password ───────────────────────────────────────────
 
   const verifyOTPAndReset = useCallback(async (
     role: string,
@@ -364,39 +337,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     newPassword: string,
   ) => {
     const email = await resolveEmailByRole(role)
-    if (!email) {
-      return { error: 'Could not verify identity. Please restart the reset flow.' }
-    }
+    if (!email) return { error: 'Could not verify identity. Please restart the reset flow.' }
 
-    const { error: verifyError } = await supabase.auth.verifyOtp({
-      email,
-      token,
-      type: 'email',
-    })
-    if (verifyError) {
-      return { error: 'Invalid or expired code. Please request a new one.' }
-    }
+    const { error: verifyError } = await supabase.auth.verifyOtp({ email, token, type: 'email' })
+    if (verifyError) return { error: 'Invalid or expired code. Please request a new one.' }
 
     const { error: updateError } = await supabase.auth.updateUser({ password: newPassword })
-    if (updateError) {
-      return { error: updateError.message }
-    }
+    if (updateError) return { error: updateError.message }
 
     await supabase.auth.signOut()
-
     return { error: null }
   }, [supabase, resolveEmailByRole])
 
   return (
     <AuthContext.Provider value={{
-      user,
-      session,
-      isLoading,
-      loginPassword,
-      logout,
-      changePassword,
-      sendPasswordResetOTP,
-      verifyOTPAndReset,
+      user, session, isLoading,
+      loginPassword, logout, changePassword,
+      sendPasswordResetOTP, verifyOTPAndReset,
     }}>
       {children}
     </AuthContext.Provider>

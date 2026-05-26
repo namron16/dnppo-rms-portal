@@ -29,12 +29,10 @@ export async function registerSession(role: string, userId: string): Promise<str
   const supabase = createClient()
   const token = generateToken()
 
-  // Explicitly delete any existing row for this role first.
-  // This is belt-and-suspenders: even if the DB lacks a UNIQUE constraint
-  // on `role`, we never end up with two rows for the same role.
-  // Without this, upsert may INSERT a second row instead of updating,
-  // causing isSessionValid()'s maybeSingle() to return null (multiple rows)
-  // and log out BOTH browsers 30 seconds later.
+  // Delete any existing row for this role first.
+  // Even though `role` is a PRIMARY KEY (guaranteed unique), the explicit
+  // DELETE→INSERT pattern is safer than upsert because it avoids any edge
+  // cases with ON CONFLICT handling across Supabase client versions.
   await supabase
     .from('active_sessions')
     .delete()
@@ -49,11 +47,9 @@ export async function registerSession(role: string, userId: string): Promise<str
       logged_in_at: new Date().toISOString(),
     })
 
-  if (error) {
-    throw new Error(error.message)
-  }
+  if (error) throw new Error(error.message)
 
-  // Save to localStorage only after the DB write succeeds
+  // Only persist locally after the DB write succeeds
   saveTokenLocally(token)
   return token
 }
@@ -67,7 +63,7 @@ export async function isSessionValid(role: string): Promise<boolean> {
     .from('active_sessions')
     .select('session_token')
     .eq('role', role)
-    .maybeSingle()  // returns null instead of error when 0 or multiple rows
+    .maybeSingle()
 
   if (error || !data) return false
   return data.session_token === localToken
@@ -77,12 +73,12 @@ export async function clearSession(role: string): Promise<void> {
   const supabase = createClient()
   const localToken = getLocalToken()
 
-  // Clear local token first so re-entrant calls are no-ops
+  // Clear local token first so any re-entrant calls are immediate no-ops
   clearLocalToken()
 
   if (!localToken) return
 
-  // Only delete our own row — don't wipe the session of whoever took over
+  // Only delete the row we own — never wipe the row written by Browser 2
   await supabase
     .from('active_sessions')
     .delete()
