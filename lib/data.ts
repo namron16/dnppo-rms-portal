@@ -30,7 +30,7 @@ export const USERS: User[] = [
 /* ════════════════════════════════════════════
    MASTER DOCUMENTS
 ════════════════════════════════════════════ */
-export async function getMasterDocuments(): Promise<(MasterDocument & { fileUrl?: string })[]> {
+export async function getMasterDocuments(): Promise<(MasterDocument & { fileUrl?: string; uploaded_by?: string })[]> {
   const { data, error } = await supabase
     .from('master_documents').select('*').order('created_at', { ascending: true })
   if (error) { console.warn('Supabase unavailable (master_documents):', error.message); return [] }
@@ -38,15 +38,18 @@ export async function getMasterDocuments(): Promise<(MasterDocument & { fileUrl?
     id: d.id, title: d.title, level: d.level, type: d.type,
     date: d.date, size: d.size, tag: d.tag, fileUrl: d.file_url ?? undefined,
     created_at: d.created_at,
+    // FIX: return uploaded_by so the page can filter per-user visibility
+    uploaded_by: d.uploaded_by ?? undefined,
     taggedAdminAccess: Array.isArray(d.tagged_admin_access) ? d.tagged_admin_access : undefined,
   }))
 }
 
-export async function addMasterDocument(doc: MasterDocument & { fileUrl?: string }): Promise<void> {
+export async function addMasterDocument(doc: MasterDocument & { fileUrl?: string; uploaded_by?: string }): Promise<void> {
   const { error } = await supabase.from('master_documents').insert({
     id: doc.id, title: doc.title, level: doc.level, type: doc.type,
     date: doc.date, size: doc.size, tag: doc.tag, file_url: doc.fileUrl ?? null,
-    tagged_admin_access: doc.taggedAdminAccess && doc.taggedAdminAccess.length > 0 ? doc.taggedAdminAccess : null,
+    // FIX: persist the uploader's role so each user only sees their own documents
+    uploaded_by: doc.uploaded_by ?? null,
   })
   if (error) console.warn('Supabase unavailable (add master_document):', error.message)
 }
@@ -55,7 +58,6 @@ export async function updateMasterDocument(doc: MasterDocument & { fileUrl?: str
   const { error } = await supabase.from('master_documents')
     .update({
       title: doc.title, level: doc.level, type: doc.type, date: doc.date, tag: doc.tag,
-      tagged_admin_access: doc.taggedAdminAccess && doc.taggedAdminAccess.length > 0 ? doc.taggedAdminAccess : null,
     })
     .eq('id', doc.id)
   if (error) console.warn('Supabase unavailable (update master_document):', error.message)
@@ -74,7 +76,7 @@ export async function deleteMasterDocument(id: string): Promise<void> {
 /* ════════════════════════════════════════════
    SPECIAL ORDERS
 ════════════════════════════════════════════ */
-export async function getSpecialOrders(): Promise<(SpecialOrder & { fileUrl?: string })[]> {
+export async function getSpecialOrders(): Promise<(SpecialOrder & { fileUrl?: string; uploaded_by?: string })[]> {
   const { data, error } = await supabase
     .from('special_orders').select('*').order('created_at', { ascending: false })
   if (error) { console.warn('Supabase unavailable (special_orders):', error.message); return [] }
@@ -83,14 +85,18 @@ export async function getSpecialOrders(): Promise<(SpecialOrder & { fileUrl?: st
     date: d.date, attachments: d.attachments, status: d.status,
     fileUrl: d.file_url ?? undefined,
     created_at: d.created_at,
+    // FIX: return uploaded_by for per-user filtering
+    uploaded_by: d.uploaded_by ?? undefined,
   }))
 }
 
-export async function addSpecialOrder(so: SpecialOrder & { fileUrl?: string }): Promise<void> {
+export async function addSpecialOrder(so: SpecialOrder & { fileUrl?: string; uploaded_by?: string }): Promise<void> {
   const { error } = await supabase.from('special_orders').insert({
     id: so.id, reference: so.reference, subject: so.subject,
     date: so.date, attachments: so.attachments, status: so.status,
     file_url: so.fileUrl ?? null,
+    // FIX: persist the uploader's role
+    uploaded_by: so.uploaded_by ?? null,
   })
   if (error) console.warn('Supabase unavailable (add special_order):', error.message)
 }
@@ -251,7 +257,7 @@ export async function archiveSpecialOrder(id: string): Promise<void> {
 /* ════════════════════════════════════════════
    DAILY JOURNALS
 ════════════════════════════════════════════ */
-export async function getDailyJournals(): Promise<DailyJournalRecord[]> {
+export async function getDailyJournals(): Promise<(DailyJournalRecord & { uploaded_by?: string })[]> {
   const { data, error } = await supabase
     .from('daily_journals')
     .select('*')
@@ -276,10 +282,12 @@ export async function getDailyJournals(): Promise<DailyJournalRecord[]> {
     attachments: d.attachments ?? (d.file_url ? 1 : 0),
     archived: d.archived ?? false,
     created_at: d.created_at,
+    // FIX: return uploaded_by for per-user filtering
+    uploaded_by: d.uploaded_by ?? undefined,
   }))
 }
 
-export async function addDailyJournal(entry: DailyJournalRecord): Promise<void> {
+export async function addDailyJournal(entry: DailyJournalRecord & { uploaded_by?: string }): Promise<void> {
   const { error } = await supabase
     .from('daily_journals')
     .insert({
@@ -294,6 +302,8 @@ export async function addDailyJournal(entry: DailyJournalRecord): Promise<void> 
       status: entry.status,
       attachments: entry.attachments,
       archived: entry.archived ?? false,
+      // FIX: persist the uploader's role
+      uploaded_by: entry.uploaded_by ?? null,
     })
 
   if (error) throw new Error(`Unable to save daily journal: ${error.message}`)
@@ -426,7 +436,7 @@ export async function archiveConfidentialDoc(id: string): Promise<boolean> {
 /* ════════════════════════════════════════════
    LIBRARY ITEMS
 ════════════════════════════════════════════ */
-export async function getLibraryItems(): Promise<(LibraryItem & { fileUrl?: string; description?: string })[]> {
+export async function getLibraryItems(): Promise<(LibraryItem & { fileUrl?: string; description?: string; uploaded_by?: string })[]> {
   const { data, error } = await supabase
     .from('library_items').select('*').order('created_at', { ascending: false })
   if (error) { console.warn('Supabase unavailable (library_items):', error.message); return [] }
@@ -439,11 +449,13 @@ export async function getLibraryItems(): Promise<(LibraryItem & { fileUrl?: stri
     fileUrl:     d.file_url     ?? undefined,
     description: d.description  ?? undefined,
     created_at:  d.created_at,
+    // FIX: return uploaded_by for per-user filtering
+    uploaded_by: d.uploaded_by  ?? undefined,
   }))
 }
 
 export async function addLibraryItem(
-  item: LibraryItem & { fileUrl?: string; description?: string }
+  item: LibraryItem & { fileUrl?: string; description?: string; uploaded_by?: string }
 ): Promise<void> {
   const { error } = await supabase.from('library_items').insert({
     id:          item.id,
@@ -453,6 +465,8 @@ export async function addLibraryItem(
     date_added:  item.dateAdded,
     file_url:    item.fileUrl    ?? null,
     description: item.description ?? null,
+    // FIX: persist the uploader's role
+    uploaded_by: item.uploaded_by ?? null,
   })
   if (error) console.warn('Supabase unavailable (add library_item):', error.message)
 }

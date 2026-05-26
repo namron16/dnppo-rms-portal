@@ -486,7 +486,7 @@ export default function MasterPage() {
         const activeDocs = docs.filter((d: DocWithUrl) => {
           if (archivedIds.has(d.id)) return false
           if (canSeeAllDocuments(user.role)) return true
-          return !d.uploaded_by || d.uploaded_by === user.role
+          return d.uploaded_by === user.role
         })
 
         const enriched: DocEnriched[] = await Promise.all(

@@ -8,6 +8,9 @@
 //     handles it to prevent double-load / race condition. This hook now handles
 //     ONLY realtime INSERT / UPDATE / DELETE events.
 //  5. INSERT attachment: deduplication key fixed to use master_document_id.
+//  6. FIX (cross-user leak): INSERT handler now checks uploaded_by before
+//     adding a new document to state. Without this, every user's page received
+//     every other user's newly-uploaded documents in real time.
 
 import { useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -45,6 +48,9 @@ interface DocAttachment {
   pool_account_id: string
   created_at: string
 }
+
+// Roles that can see ALL documents regardless of uploader
+const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
 
 function normaliseDoc(row: any): DocEnriched {
   return {
@@ -98,8 +104,11 @@ export function useRealtimeMasterDocs({
 }: Options) {
   const setDocsRef = useRef(setDocuments)
   const setAttsRef = useRef(setAttachmentsMap)
-  useEffect(() => { setDocsRef.current = setDocuments },    [setDocuments])
+  // Keep a stable ref to user so the closure inside useEffect sees the current value
+  const userRef = useRef(user)
+  useEffect(() => { setDocsRef.current = setDocuments },      [setDocuments])
   useEffect(() => { setAttsRef.current = setAttachmentsMap }, [setAttachmentsMap])
+  useEffect(() => { userRef.current    = user },              [user])
 
   // ── Realtime subscriptions only ───────────────────────────────────────
   // NOTE: Initial data load is intentionally NOT here — the page component's
@@ -117,6 +126,18 @@ export function useRealtimeMasterDocs({
         payload => {
           const row = payload.new as any
           if (row.archived) return
+
+          // FIX: only add this document to the current user's state if they
+          // own it (uploaded_by matches) or they are a privileged role.
+          // Without this check, every user's page would receive every new
+          // document uploaded by anyone, in real time.
+          const currentUser = userRef.current
+          if (
+            currentUser &&
+            !PRIVILEGED_ROLES.includes(currentUser.role) &&
+            row.uploaded_by !== currentUser.role
+          ) return
+
           const doc = normaliseDoc(row)
           setDocsRef.current(prev => {
             if (prev.some(d => d.id === doc.id)) return prev
