@@ -24,7 +24,7 @@ import { AddSpecialOrderModal } from '@/components/modals/AddSpecialOrderModal'
 import { ForwardDocumentModal } from '@/components/modals/ForwardDocumentModal'
 import { useModal, useDisclosure, usePagination } from '@/hooks'
 import { useToast }             from '@/components/ui/Toast'
-import { FileText, Paperclip } from 'lucide-react'
+import { FileText, Paperclip, Eye, Download, FolderOpen, Pencil, Trash2, Printer, Send, Archive, ChevronRight, X } from 'lucide-react'
 import {
   getSpecialOrders,
   addSpecialOrder,
@@ -323,7 +323,7 @@ function InlineFileViewerModal({
               className="text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition flex items-center gap-1 disabled:opacity-60">
               {isDownloading ? '⬇ Saving…' : '⬇ Download'}
             </button>
-            <Button variant="outline" size="sm" onClick={onClose}>✕ Close</Button>
+            <Button variant="outline" size="sm" onClick={onClose} className="inline-flex items-center gap-1.5"><X size={16} />Close</Button>
           </div>
         </div>
         <div className="flex-1 overflow-auto bg-slate-100 min-h-0" style={{ minHeight: 400 }}>
@@ -577,30 +577,30 @@ function AttachmentsTablePanel({
 
         {!isDrillDown && (
           <div className="flex gap-2 flex-shrink-0">
-            {canEditOrder && <Button variant="primary" size="sm" onClick={onForwardOrder}>🔀 Forward</Button>}
-            {canEditOrder && <Button variant="outline" size="sm" onClick={onEditOrder}>✏ Edit</Button>}
-            {canEditOrder && <Button variant="danger"  size="sm" onClick={onArchiveOrder}>🗄️ Archive</Button>}
-            {canEditOrder && <Button variant="danger"  size="sm" onClick={onDeleteOrder}>🗑️ Delete</Button>}
+            {canEditOrder && <button onClick={onForwardOrder} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition"><Send size={16} />Forward</button>}
+            {canEditOrder && <button onClick={onEditOrder} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition"><Pencil size={16} />Edit</button>}
+            {canEditOrder && <button onClick={onArchiveOrder} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition"><Archive size={16} />Archive</button>}
+            {canEditOrder && <button onClick={onDeleteOrder} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition"><Trash2 size={16} />Delete</button>}
           </div>
         )}
 
         {isDrillDown && drillAtt && (
           <div className="flex gap-1.5 flex-shrink-0">
             <button onClick={() => onViewFile(drillAtt.gdrive_url, displayName(drillAtt))}
-              className="text-xs px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg font-semibold hover:bg-blue-100 transition">
-              👁 View File
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition">
+              <Eye size={14} /> View File
             </button>
             <button type="button" onClick={() => onDownloadFile(drillAtt.gdrive_url, displayName(drillAtt))}
-              className="text-xs px-2.5 py-1.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-lg font-semibold hover:bg-slate-200 transition">
-              ⬇ Download
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition">
+              <Download size={14} /> Download
             </button>
             <button type="button" onClick={() => onPrintFile(drillAtt.gdrive_url, displayName(drillAtt), drillAtt.special_order_id)}
-              className="text-xs px-2.5 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-lg font-semibold hover:bg-green-100 transition">
-              🖨️ Print
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition">
+              <Printer size={14} /> Print
             </button>
             <button onClick={() => canEditOrder && onDeleteAttachment(drillAtt)} disabled={!canEditOrder}
-              className="text-xs px-2.5 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded-lg font-semibold hover:bg-red-100 transition disabled:opacity-50">
-              🗑️ Delete
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition disabled:opacity-60">
+              <Trash2 size={14} /> Delete
             </button>
           </div>
         )}
@@ -608,24 +608,27 @@ function AttachmentsTablePanel({
 
       {/* Primary file preview strip (root order only) */}
       {!isDrillDown && currentOrder?.fileUrl && (
-        <div className="mb-4 flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
-          <span className="text-lg flex-shrink-0">📋</span>
+        <div className="mb-4 flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <FileText size={18} className="flex-shrink-0 text-blue-600" />
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold text-blue-800 truncate">Primary file</p>
             <p className="text-xs text-blue-600 truncate">{currentOrder.reference} – {currentOrder.subject}</p>
           </div>
           <div className="flex gap-1.5 flex-shrink-0">
             <button type="button" onClick={() => onDownloadFile(currentOrder.fileUrl!, currentOrder.reference)}
-              className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition">
-              ⬇ Download
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
+              <Download size={13} />
+              Download
             </button>
             <button type="button" onClick={() => onPrintFile(currentOrder.fileUrl!, currentOrder.reference, currentOrder.id)}
-              className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition">
-              🖨️ Print
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
+              <Printer size={13} />
+              Print
             </button>
             <button onClick={() => onViewFile(currentOrder.fileUrl!, currentOrder.reference)}
-              className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition">
-              👁 View
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
+              <Eye size={13} />
+              View
             </button>
           </div>
         </div>
@@ -741,8 +744,8 @@ function AttachmentsTablePanel({
                             </button>
                             <button
                               onClick={() => { setEditingId(null); setEditingName('') }}
-                              className="text-[10px] px-2 py-1 bg-slate-100 text-slate-600 rounded font-medium transition"
-                            >✕</button>
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-md hover:bg-slate-200 transition"
+                            ><X size={13} /></button>
                           </div>
                         ) : (
                           <div className="flex items-center gap-2.5">
@@ -780,29 +783,38 @@ function AttachmentsTablePanel({
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button onClick={() => onViewFile(att.gdrive_url, label)}
-                            className="text-[10px] font-semibold px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition">
-                            👁 View
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
+                            title="View file">
+                            <Eye size={14} />
+                            <span className="hidden sm:inline">View</span>
                           </button>
                           <button type="button" onClick={() => onDownloadFile(att.gdrive_url, label)}
-                            className="text-[10px] font-semibold px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition">
-                            ⬇
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition"
+                            title="Download file">
+                            <Download size={14} />
+                            <span className="hidden sm:inline">Download</span>
                           </button>
                           <button onClick={() => onDrillDown(att)}
-                            className="text-[10px] font-semibold px-2 py-1 bg-violet-50 text-violet-700 border border-violet-200 rounded hover:bg-violet-100 transition"
-                            title="Open & explore this file's attachments">
-                            📂 Open
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100 hover:border-violet-300 transition"
+                            title="Open & explore nested attachments">
+                            <FolderOpen size={14} />
+                            <span className="hidden sm:inline">Open</span>
                           </button>
                           <button
                             onClick={() => { setEditingId(att.id); setEditingName(att.title || att.file_name || '') }}
                             disabled={!canEditOrder}
-                            className="text-[10px] font-semibold px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition disabled:opacity-50">
-                            ✏️
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 hover:border-emerald-300 transition disabled:opacity-60"
+                            title="Rename attachment">
+                            <Pencil size={14} />
+                            <span className="hidden sm:inline">Edit</span>
                           </button>
                           <button onClick={() => canEditOrder && onDeleteAttachment(att)} disabled={!canEditOrder}
-                            className="text-[10px] font-semibold px-2 py-1 bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition disabled:opacity-50">
-                            🗑️
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 hover:border-red-300 transition disabled:opacity-60"
+                            title="Delete attachment">
+                            <Trash2 size={14} />
+                            <span className="hidden sm:inline">Delete</span>
                           </button>
                         </div>
                       </td>

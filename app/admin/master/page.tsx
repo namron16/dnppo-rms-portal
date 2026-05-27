@@ -10,6 +10,11 @@
 //   loadAll filters getMasterDocuments() by uploaded_by = user.role so each
 //   account only sees documents they personally uploaded.
 //   Privileged roles (admin, DPDA, DPDO) still see everything.
+//
+// FIX (attachment upload):
+//   handleUpload now routes attachment files through the Drive pool gateway
+//   (/api/gdrive/upload) instead of supabase.storage. The Drive file ID,
+//   URL, and pool account ID are stored in master_document_attachments.
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { PageHeader }       from '@/components/ui/PageHeader'
@@ -30,7 +35,7 @@ import { useAuth }          from '@/lib/auth'
 import { levelBadgeClass }  from '@/lib/utils'
 import { supabase }         from '@/lib/supabase'
 import { useRealtimeMasterDocs } from './useRealtimeMasterDocs'
-import { FileText, Paperclip, Printer } from 'lucide-react'
+import { FileText, Paperclip, Eye, Download, FolderOpen, Pencil, Trash2, Printer, Send, Archive, ChevronRight, X } from 'lucide-react'
 import {
   getMasterDocuments, addMasterDocument, updateMasterDocument,
   archiveMasterDocument, deleteMasterDocument, addArchivedDoc, getArchivedDocs,
@@ -69,6 +74,14 @@ export interface DocAttachment {
   gdrive_url: string
   pool_account_id: string
   created_at: string
+}
+
+// ── Drive attachment upload result ────────────────────────────────────────────
+interface DriveAttachmentResult {
+  gdriveFileId:  string
+  gdrive_url:    string
+  poolAccountId: string
+  fileSizeBytes: number
 }
 
 // ── Privileged roles that see ALL documents regardless of uploader ────────────
@@ -132,6 +145,52 @@ async function dbRenameAttachment(id: string, newTitle: string): Promise<boolean
     .eq('id', id)
   if (error) { console.error('renameAttachment error:', error.message); return false }
   return true
+}
+
+// ── Drive pool upload helper ───────────────────────────────────────────────────
+// Replaces the old supabase.storage.from('documents').upload() pattern.
+// Sends the file to /api/gdrive/upload which routes it through the pool
+// gateway into the uploading user's own connected Google Drive account.
+async function uploadAttachmentToDrive(
+  file: File,
+  uploadedBy: string,
+  parentDocId: string,
+  parentAttId: string | null,
+): Promise<DriveAttachmentResult | null> {
+  const formData = new FormData()
+  formData.append('file',        file)
+  formData.append('category',    'master_documents')
+  formData.append('uploadedBy',  uploadedBy)
+  formData.append('entityType',  parentAttId ? 'master_document_attachment' : 'master_document')
+  formData.append('entityId',    parentAttId ?? parentDocId)
+
+  try {
+    const res = await fetch('/api/gdrive/upload', { method: 'POST', body: formData })
+
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      console.error('[uploadAttachmentToDrive] API error:', json.error ?? res.status)
+      return null
+    }
+
+    const json = await res.json()
+    const r    = json.data
+
+    if (!r?.gdriveFileId && !r?.gdrive_file_id) {
+      console.error('[uploadAttachmentToDrive] Missing gdriveFileId in response', r)
+      return null
+    }
+
+    return {
+      gdriveFileId:  r.gdriveFileId  ?? r.gdrive_file_id,
+      gdrive_url:    r.fileUrl       ?? r.drive_url ?? `https://drive.google.com/file/d/${r.gdriveFileId}/view`,
+      poolAccountId: r.poolAccountId ?? r.pool_account_id,
+      fileSizeBytes: r.sizeBytes     ?? file.size,
+    }
+  } catch (err: any) {
+    console.error('[uploadAttachmentToDrive] Network error:', err.message)
+    return null
+  }
 }
 
 function fileInfoFromMime(mimeType: string | null, fileName: string | null) {
@@ -313,7 +372,7 @@ function InlineFileViewerModal({ fileUrl, fileName, open, onClose, onDownload, o
               className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition disabled:opacity-60">
               <Printer size={13} /> Print
             </button>
-            <Button variant="outline" size="sm" onClick={onClose}>✕ Close</Button>
+            <Button variant="outline" size="sm" onClick={onClose} className="inline-flex items-center gap-1.5"><X size={16} />Close</Button>
           </div>
         </div>
         <div className="flex-1 overflow-auto bg-slate-100 min-h-0" style={{ minHeight: 400 }}>
@@ -578,19 +637,29 @@ export default function MasterPage() {
     deleteDisc.close()
   }
 
+  // FIX: Attachment upload now routes through the Drive pool gateway.
+  // Previously used supabase.storage.from('documents').upload() which stored
+  // files in Supabase Storage. Now files go to the uploading user's own
+  // connected Google Drive account via /api/gdrive/upload.
   async function handleUpload(parentDocId: string, parentAttId: string | null, files: FileList) {
+    if (!user) { toast.error('Not authenticated.'); return }
+
     setUploadingId(parentAttId ?? parentDocId)
     let count = 0
-    for (const file of Array.from(files)) {
-      const folder = parentAttId
-        ? `master-docs/attachments/${parentDocId}/nested/${parentAttId}`
-        : `master-docs/attachments/${parentDocId}`
-      const filePath = `${folder}/${Date.now()}-${file.name.replace(/\s+/g, '_')}`
-      const { data: storageData, error: storageError } = await supabase.storage
-        .from('documents').upload(filePath, file, { cacheControl: '3600', upsert: false })
-      if (storageError) { toast.error(`Failed to upload "${file.name}".`); continue }
 
-      const { data: urlData } = supabase.storage.from('documents').getPublicUrl(storageData.path)
+    for (const file of Array.from(files)) {
+      // Upload to Google Drive via the pool gateway
+      const driveResult = await uploadAttachmentToDrive(
+        file,
+        user.role,
+        parentDocId,
+        parentAttId,
+      )
+
+      if (!driveResult) {
+        toast.error(`Failed to upload "${file.name}" to Google Drive.`)
+        continue
+      }
 
       const parentDepth = parentAttId
         ? (() => {
@@ -602,18 +671,20 @@ export default function MasterPage() {
           })()
         : 0
 
+      // Save metadata to Supabase — actual file lives in Google Drive
       const newAtt = await dbAddAttachment({
         master_document_id: parentDocId,
         parent_id:          parentAttId,
         depth:              parentDepth,
         title:              file.name,
         file_name:          file.name,
-        file_size_bytes:    file.size,
+        file_size_bytes:    driveResult.fileSizeBytes,
         mime_type:          file.type || null,
-        gdrive_file_id:     storageData.path,
-        gdrive_url:         urlData.publicUrl,
-        pool_account_id:    'supabase-storage',
+        gdrive_file_id:     driveResult.gdriveFileId,
+        gdrive_url:         driveResult.gdrive_url,
+        pool_account_id:    driveResult.poolAccountId,
       })
+
       if (newAtt) {
         const mapKey = parentAttId ?? parentDocId
         setAttachmentsMap(prev => {
@@ -626,6 +697,7 @@ export default function MasterPage() {
         count++
       }
     }
+
     if (count > 0) toast.success(`${count} file${count > 1 ? 's' : ''} attached.`)
     setUploadingId(null)
   }
@@ -880,10 +952,22 @@ export default function MasterPage() {
                       <div className="flex gap-2 flex-shrink-0 flex-wrap">
                         {canModifyDocuments && (
                           <>
-                            <Button variant="primary" size="sm" onClick={() => setForwardModalOpen(true)}>🔀 Forward</Button>
-                            <Button variant="outline" size="sm" onClick={editModal.open}>✏️ Edit</Button>
-                            <Button variant="danger" size="sm" onClick={() => archiveDisc.open(selection.title)}>🗄️ Archive</Button>
-                            <Button variant="danger" size="sm" onClick={() => deleteDisc.open(selection.title)}>🗑️ Delete</Button>
+                            <button onClick={() => setForwardModalOpen(true)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition">
+                              <Send size={16} />
+                              Forward
+                            </button>
+                            <button onClick={editModal.open} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
+                              <Pencil size={16} />
+                              Edit
+                            </button>
+                            <button onClick={() => archiveDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition">
+                              <Archive size={16} />
+                              Archive
+                            </button>
+                            <button onClick={() => deleteDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
+                              <Trash2 size={16} />
+                              Delete
+                            </button>
                           </>
                         )}
                       </div>
@@ -891,10 +975,8 @@ export default function MasterPage() {
 
                     {/* Primary file */}
                     {selection.fileUrl ? (
-                      <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
-                        <span className="text-lg flex-shrink-0">
-                          {selection.type === 'PDF' ? '📕' : selection.type === 'DOCX' ? '📘' : selection.type === 'XLSX' ? '📗' : '🖼️'}
-                        </span>
+                      <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
+                        <FileText size={18} className="flex-shrink-0 text-blue-600" />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-blue-800 truncate">Primary file</p>
                           <p className="text-xs text-blue-600 truncate">{selection.title}.{selection.type.toLowerCase()}</p>
@@ -903,18 +985,19 @@ export default function MasterPage() {
                           <button type="button"
                             onClick={() => handleDownloadFile(selection.fileUrl!, getSuggestedFileName(selection.title, selection.fileUrl!), `document-${selection.id}`, selection.id)}
                             disabled={downloadingKey === `document-${selection.id}`}
-                            className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition disabled:opacity-60">
-                            {downloadingKey === `document-${selection.id}` ? '⬇ Saving…' : '⬇ Download'}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition disabled:opacity-60">
+                            <Download size={13} />
+                            {downloadingKey === `document-${selection.id}` ? 'Downloading…' : 'Download'}
                           </button>
                           <button type="button"
                             onClick={() => handlePrintFile(selection.fileUrl!, selection.title, selection.id)}
-                            className="inline-flex items-center gap-1 text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition">
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
                             <Printer size={13} /> Print
                           </button>
                           <button
                             onClick={() => setViewerFile({ url: selection.fileUrl!, name: selection.title, sourceDocumentId: selection.id })}
-                            className="text-xs px-2.5 py-1 bg-white border border-blue-200 text-blue-700 rounded-md font-medium hover:bg-blue-100 transition">
-                            👁 View
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
+                            <Eye size={13} /> View
                           </button>
                         </div>
                       </div>
@@ -930,7 +1013,7 @@ export default function MasterPage() {
                           {uploadingId && (
                             <span className="flex items-center gap-1.5 text-xs text-blue-600 font-medium bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">
                               <span className="w-3 h-3 border border-blue-600 border-t-transparent rounded-full animate-spin block" />
-                              Uploading…
+                              Uploading to Drive…
                             </span>
                           )}
                           <input
@@ -1054,8 +1137,8 @@ export default function MasterPage() {
                                             </button>
                                             <button
                                               onClick={() => { setEditingAttachmentId(null); setEditingAttachmentName('') }}
-                                              className="text-[10px] px-2 py-1 bg-slate-100 text-slate-600 rounded font-medium transition"
-                                            >✕</button>
+                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-md hover:bg-slate-200 transition"
+                                            ><X size={13} /></button>
                                           </div>
                                         </div>
                                       ) : (
@@ -1094,39 +1177,49 @@ export default function MasterPage() {
                                       )}
                                     </td>
                                     <td className="px-4 py-3">
-                                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button
                                           onClick={() => setViewerFile({ url: att.gdrive_url, name: label, sourceDocumentId: att.master_document_id })}
-                                          className="text-[10px] font-semibold px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition">
-                                          👁 View
+                                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
+                                          title="View file">
+                                          <Eye size={14} strokeWidth={2} />
+                                          <span className="hidden sm:inline">View</span>
                                         </button>
                                         <button type="button"
                                           onClick={() => handleDownloadFile(att.gdrive_url, getSuggestedFileName(label, att.gdrive_url), `attachment-${att.id}`, att.master_document_id)}
                                           disabled={downloadingKey === `attachment-${att.id}`}
-                                          className="text-[10px] font-semibold px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition disabled:opacity-60">
-                                          {downloadingKey === `attachment-${att.id}` ? '…' : '⬇'}
+                                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition disabled:opacity-60"
+                                          title="Download file">
+                                          <Download size={14} />
+                                          <span className="hidden sm:inline">{downloadingKey === `attachment-${att.id}` ? 'Downloading' : 'Download'}</span>
                                         </button>
                                         <button type="button"
                                           onClick={() => handlePrintFile(att.gdrive_url, label, att.master_document_id)}
-                                          className="text-[10px] font-semibold px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition"
-                                          title="Print">
-                                          🖨️
+                                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition"
+                                          title="Print file">
+                                          <Printer size={14} />
+                                          <span className="hidden sm:inline">Print</span>
                                         </button>
                                         <button onClick={() => handleDrillDown(att)}
-                                          className="text-[10px] font-semibold px-2 py-1 bg-violet-50 text-violet-700 border border-violet-200 rounded hover:bg-violet-100 transition"
-                                          title="Open nested attachments">
-                                          📂 Open
+                                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100 hover:border-violet-300 transition"
+                                          title="Open & explore nested attachments">
+                                          <FolderOpen size={14} />
+                                          <span className="hidden sm:inline">Open</span>
                                         </button>
                                         {canModifyDocuments && (
                                           <>
                                             <button
                                               onClick={() => { setEditingAttachmentId(att.id); setEditingAttachmentName(att.title || att.file_name || '') }}
-                                              className="text-[10px] font-semibold px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition">
-                                              ✏️
+                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 hover:border-emerald-300 transition"
+                                              title="Rename attachment">
+                                              <Pencil size={14} />
+                                              <span className="hidden sm:inline">Edit</span>
                                             </button>
                                             <button onClick={() => deleteAttDisc.open(att)}
-                                              className="text-[10px] font-semibold px-2 py-1 bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition">
-                                              🗑️
+                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 hover:border-red-300 transition"
+                                              title="Delete attachment">
+                                              <Trash2 size={14} />
+                                              <span className="hidden sm:inline">Delete</span>
                                             </button>
                                           </>
                                         )}
