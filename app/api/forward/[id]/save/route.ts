@@ -1,13 +1,29 @@
 // app/api/forward/[id]/save/route.ts
-
+//
+// REVISED FLOW
+// ─────────────────────────────────────────────────────────────────────────────
+// The client (forwarded/page.tsx) now uploads the file to the recipient's own
+// Google Drive BEFORE calling this endpoint, using the same /api/gdrive/upload
+// path that AddDocumentModal uses. The Drive result is passed in the request body.
+//
+// This endpoint:
+//   1. Reads the forwarded_document row
+//   2. Builds the Supabase insert payload using the client-supplied Drive URLs
+//      (if provided) or falls back to sender's URLs (if client upload failed)
+//   3. Inserts into the correct document table
+//   4. Inserts attachments (using sender's URLs — attachment re-upload can be
+//      added later if needed)
+//   5. Marks the forwarded_document as saved
+//
+// No server-side Drive download/re-upload happens here at all.
+// ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { logSaveForwardedDocument, setCurrentLogger } from '@/lib/adminLogger'
 import { AdminRole } from '@/lib/auth'
-import { uploadViaPool } from '@/lib/gdrive-pool/migrate-modal'
-import { getDriveClient } from '@/lib/gdrive-pool/drive-client'
-import type { DocumentCategory } from '@/lib/gdrive-pool/types'
+
+// ─── Table maps ───────────────────────────────────────────────────────────────
 
 const DOCUMENT_TABLE_MAP: Record<string, string> = {
   master_document: 'master_documents',
@@ -30,120 +46,39 @@ const ATTACHMENT_FK_MAP: Record<string, string> = {
   library:         'library_item_id',
 }
 
-// Maps document_type → GDrive pool category string
-const DOCUMENT_CATEGORY_MAP: Record<string, DocumentCategory> = {
-  master_document: 'master_documents',
-  admin_order:     'special_orders',
-  daily_journal:   'daily_journals',
-  library:         'library_items',
-}
+// ─── Drive result shape sent by the client ────────────────────────────────────
 
-// Maps document_type → entity_type string used in records table
-const ENTITY_TYPE_MAP: Record<string, string> = {
-  master_document: 'master_document',
-  admin_order:     'special_order',
-  daily_journal:   'daily_journal',
-  library:         'library_item',
-}
-
-/**
- * Fetches a file from the SENDER's Google Drive and re-uploads it to the
- * RECIPIENT's own Drive pool. Returns the new Drive metadata.
- *
- * Falls back gracefully: if the re-upload fails, the caller logs a warning
- * but still proceeds with saving the Supabase metadata using the original URLs.
- */
-async function reuploadToRecipientDrive(params: {
-  gdriveFileId:    string    // sender's Drive file ID
-  poolAccountId:   string    // sender's pool account (used to fetch the file)
-  fileName:        string
-  mimeType:        string
-  fileSizeBytes:   number
-  recipientRole:   string    // recipient username → their Drive account
-  documentType:    string
-  newDocId:        string
-}): Promise<{
+interface ClientDriveResult {
+  gdriveFileId:  string
   fileUrl:       string
   downloadUrl:   string
-  previewUrl:    string
-  gdriveFileId:  string
   poolAccountId: string
   recordId:      string
   sizeBytes:     number
-} | null> {
-  try {
-    console.log(
-      `[ForwardSave] Re-uploading file "${params.fileName}" ` +
-      `from pool ${params.poolAccountId} → recipient ${params.recipientRole}`
-    )
-
-    // 1. Get the sender's Drive client and download the file bytes
-    const senderDrive = await getDriveClient(params.poolAccountId)
-
-    const response = await senderDrive.files.get(
-      { fileId: params.gdriveFileId, alt: 'media' },
-      { responseType: 'arraybuffer' }
-    )
-
-    const fileBuffer = Buffer.from(response.data as ArrayBuffer)
-    console.log(
-      `[ForwardSave] Downloaded ${fileBuffer.length} bytes ` +
-      `(expected ~${params.fileSizeBytes}) from sender's Drive`
-    )
-
-    // 2. Upload to the recipient's own Drive pool
-    const category   = DOCUMENT_CATEGORY_MAP[params.documentType] ?? 'master_documents'
-    const entityType = ENTITY_TYPE_MAP[params.documentType]       ?? params.documentType
-
-    const result = await uploadViaPool({
-      file:          fileBuffer,
-      fileName:      params.fileName ?? `forwarded-${Date.now()}`,
-      mimeType:      params.mimeType,
-      category,
-      entityType,
-      entityId:      params.newDocId,
-      uploadedBy:    params.recipientRole,
-      fileSizeBytes: fileBuffer.length,
-    })
-
-    console.log(
-      `[ForwardSave] Re-upload success → gdriveFileId=${result.gdriveFileId}, ` +
-      `pool=${result.poolAccountId}, owner=${params.recipientRole}`
-    )
-
-    return result
-  } catch (err: any) {
-    // Non-fatal: log and let caller fall back to original sender URLs
-    console.error(
-      `[ForwardSave] Re-upload to recipient Drive failed (non-fatal): ${err?.message}`,
-      err?.stack
-    )
-    return null
-  }
 }
 
+// ─── Supabase payload builder ─────────────────────────────────────────────────
+
 /**
- * Builds a document insert payload tailored to each table's schema.
- * Accepts an optional `driveOverride` that replaces the forwarded doc's
- * Drive references with the recipient's own uploaded copy.
+ * Builds the document row for the target table.
+ *
+ * Uses the recipient's own Drive URLs (driveResult) when the client upload
+ * succeeded. Falls back to the sender's original references otherwise.
+ *
+ * The newDocId comes from the client so Drive records created during the
+ * client-side upload already link to this ID correctly.
  */
 function buildDocumentPayload(
-  fwd: any,
+  fwd:         any,
   uploaderRole: string,
-  driveOverride?: {
-    fileUrl:       string
-    downloadUrl:   string
-    gdriveFileId:  string
-    poolAccountId: string
-    recordId:      string
-    sizeBytes:     number
-  } | null
+  newDocId:     string,
+  driveResult?: ClientDriveResult | null
 ): Record<string, any> {
-  // Prefer the recipient's own Drive copy; fall back to sender's references
-  const gdriveFileId  = driveOverride?.gdriveFileId  ?? fwd.gdrive_file_id  ?? null
-  const gdriveUrl     = driveOverride?.fileUrl        ?? fwd.gdrive_url      ?? null
-  const poolAccountId = driveOverride?.poolAccountId  ?? fwd.pool_account_id ?? null
-  const sizeBytes     = driveOverride?.sizeBytes      ?? fwd.file_size_bytes ?? 0
+  // Prefer recipient's own Drive copy; fall back to sender's
+  const gdriveFileId  = driveResult?.gdriveFileId  ?? fwd.gdrive_file_id  ?? null
+  const gdriveUrl     = driveResult?.fileUrl        ?? fwd.gdrive_url      ?? null
+  const poolAccountId = driveResult?.poolAccountId  ?? fwd.pool_account_id ?? null
+  const sizeBytes     = driveResult?.sizeBytes      ?? fwd.file_size_bytes ?? 0
 
   const driveFields = {
     gdrive_file_id:  gdriveFileId,
@@ -160,23 +95,23 @@ function buildDocumentPayload(
   switch (fwd.document_type) {
     case 'master_document':
       return {
-        id:    `md-${Date.now()}`,
+        id:    newDocId,
         title: fwd.title,
         level: 'REGIONAL',
         type:  fwd.mime_type?.includes('pdf')   ? 'PDF'
              : fwd.mime_type?.includes('word')  ? 'DOCX'
              : fwd.mime_type?.includes('sheet') ? 'XLSX'
              : 'PDF',
-        date:  new Date().toISOString().split('T')[0],
-        size:  sizeBytes ? `${(sizeBytes / 1024 / 1024).toFixed(1)} MB` : '0 MB',
-        tag:   'COMPLIANCE',
+        date:     new Date().toISOString().split('T')[0],
+        size:     sizeBytes ? `${(sizeBytes / 1024 / 1024).toFixed(1)} MB` : '0 MB',
+        tag:      'COMPLIANCE',
         file_url: gdriveUrl,
         ...driveFields,
       }
 
     case 'admin_order':
       return {
-        id:          `so-${Date.now()}`,
+        id:          newDocId,
         reference:   fwd.title,
         subject:     fwd.title,
         date:        new Date().toISOString().split('T')[0],
@@ -188,7 +123,7 @@ function buildDocumentPayload(
 
     case 'daily_journal':
       return {
-        id:          `dj-${Date.now()}`,
+        id:          newDocId,
         title:       fwd.title,
         type:        'MEMO',
         author:      uploaderRole,
@@ -202,23 +137,26 @@ function buildDocumentPayload(
 
     case 'library':
       return {
-        id:          `lib-${Date.now()}`,
-        title:       fwd.title,
-        category:    'TEMPLATE',
-        size:        sizeBytes ? `${(sizeBytes / 1024 / 1024).toFixed(1)} MB` : '0 MB',
-        date_added:  new Date().toISOString(),
-        file_url:    gdriveUrl,
+        id:         newDocId,
+        title:      fwd.title,
+        category:   'TEMPLATE',
+        size:       sizeBytes ? `${(sizeBytes / 1024 / 1024).toFixed(1)} MB` : '0 MB',
+        date_added: new Date().toISOString(),
+        file_url:   gdriveUrl,
         ...driveFields,
       }
 
     default:
       return {
+        id:       newDocId,
         title:    fwd.title,
         file_url: gdriveUrl,
         ...driveFields,
       }
   }
 }
+
+// ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(
   req: NextRequest,
@@ -240,7 +178,21 @@ export async function POST(
   if (!profile) return NextResponse.json({ error: 'Profile not found' }, { status: 403 })
   setCurrentLogger(profile.role as AdminRole, user.id)
 
-  // 1. Fetch the forwarded document
+  // ── Parse request body ────────────────────────────────────────────────────
+  //
+  // Body shape: { newDocId: string, driveResult?: ClientDriveResult }
+  //
+  // driveResult is present when the client successfully uploaded to Drive.
+  // newDocId is generated client-side so Drive records link correctly.
+  //
+  let body: { newDocId?: string; driveResult?: ClientDriveResult } = {}
+  try {
+    body = await req.json()
+  } catch {
+    // Empty body is fine — will generate newDocId server-side
+  }
+
+  // ── 1. Fetch the forwarded document ──────────────────────────────────────
   const { data: fwd, error: fetchError } = await supabase
     .from('forwarded_documents')
     .select('*, forwarded_attachments(*)')
@@ -270,44 +222,35 @@ export async function POST(
     )
   }
 
-  // 2. Re-upload the file to the RECIPIENT'S own Google Drive
-  //    (only if the forwarded doc has a valid Drive file reference)
-  let driveResult: Awaited<ReturnType<typeof reuploadToRecipientDrive>> = null
+  // ── 2. Resolve the doc ID ─────────────────────────────────────────────────
+  //
+  // Use the client-supplied newDocId so the Drive record created during
+  // the client-side upload already references this ID.
+  // Fall back to generating one here if the client didn't send it.
+  //
+  const newDocId = body.newDocId ?? (
+    fwd.document_type === 'master_document' ? `md-${Date.now()}`
+    : fwd.document_type === 'admin_order'   ? `so-${Date.now()}`
+    : fwd.document_type === 'daily_journal' ? `dj-${Date.now()}`
+    : `lib-${Date.now()}`
+  )
 
-  if (fwd.gdrive_file_id && fwd.pool_account_id && fwd.mime_type) {
-    // Generate the new doc ID first so the Drive record links correctly
-    const previewDocId =
-      fwd.document_type === 'master_document' ? `md-${Date.now()}`
-      : fwd.document_type === 'admin_order'   ? `so-${Date.now()}`
-      : fwd.document_type === 'daily_journal' ? `dj-${Date.now()}`
-      : `lib-${Date.now()}`
+  const driveResult = body.driveResult ?? null
 
-    driveResult = await reuploadToRecipientDrive({
-      gdriveFileId:  fwd.gdrive_file_id,
-      poolAccountId: fwd.pool_account_id,
-      fileName:      fwd.file_name ?? fwd.title,
-      mimeType:      fwd.mime_type,
-      fileSizeBytes: fwd.file_size_bytes ?? 0,
-      recipientRole: profile.role,
-      documentType:  fwd.document_type,
-      newDocId:      previewDocId,
-    })
-
-    if (!driveResult) {
-      console.warn(
-        `[ForwardSave] Drive re-upload failed for forwarded doc ${id}. ` +
-        `Proceeding with sender's Drive references as fallback.`
-      )
-    }
+  if (driveResult) {
+    console.log(
+      `[ForwardSave] Using client-uploaded Drive file: ` +
+      `gdriveFileId=${driveResult.gdriveFileId}, pool=${driveResult.poolAccountId}`
+    )
   } else {
     console.warn(
-      `[ForwardSave] Forwarded doc ${id} is missing gdrive_file_id, ` +
-      `pool_account_id, or mime_type — skipping Drive re-upload.`
+      `[ForwardSave] No client Drive result for forwarded doc ${id}. ` +
+      `Falling back to sender's Drive references.`
     )
   }
 
-  // 3. Build the Supabase payload (uses recipient's Drive URLs if re-upload succeeded)
-  const payload = buildDocumentPayload(fwd, profile.role, driveResult)
+  // ── 3. Build payload and insert document row ──────────────────────────────
+  const payload = buildDocumentPayload(fwd, profile.role, newDocId, driveResult)
 
   const { data: newDoc, error: docError } = await supabase
     .from(targetTable)
@@ -316,55 +259,50 @@ export async function POST(
     .single()
 
   if (docError || !newDoc) {
-    console.error('Document insert error:', docError?.message, 'Payload keys:', Object.keys(payload))
+    console.error(
+      '[ForwardSave] Document insert error:',
+      docError?.message,
+      'Payload keys:',
+      Object.keys(payload)
+    )
     return NextResponse.json(
       { error: docError?.message ?? 'Failed to save document' },
       { status: 500 }
     )
   }
 
-  // 4. Re-upload and insert attachments (non-fatal if they fail)
+  // ── 4. Insert attachments ─────────────────────────────────────────────────
+  //
+  // Attachments use the sender's Drive URLs for now.
+  // The file is still accessible to the recipient since it was shared
+  // with "anyone with link can view" when originally uploaded.
+  //
   const attachments = fwd.forwarded_attachments ?? []
+
   if (attachments.length > 0 && attachmentTable && attachmentFk) {
     for (const att of attachments) {
-      // Try to re-upload each attachment to the recipient's Drive
-      let attDriveResult: Awaited<ReturnType<typeof reuploadToRecipientDrive>> = null
-
-      if (att.gdrive_file_id && att.pool_account_id && att.mime_type) {
-        attDriveResult = await reuploadToRecipientDrive({
-          gdriveFileId:  att.gdrive_file_id,
-          poolAccountId: att.pool_account_id,
-          fileName:      att.file_name ?? att.title,
-          mimeType:      att.mime_type,
-          fileSizeBytes: att.file_size_bytes ?? 0,
-          recipientRole: profile.role,
-          documentType:  fwd.document_type,
-          newDocId:      newDoc.id,
-        })
-      }
-
       const { error: attError } = await supabase
         .from(attachmentTable)
         .insert({
           [attachmentFk]:  newDoc.id,
           title:           att.title,
-          file_name:       att.file_name   ?? null,
-          file_size_bytes: attDriveResult?.sizeBytes ?? att.file_size_bytes ?? null,
-          mime_type:       att.mime_type   ?? null,
-          gdrive_file_id:  attDriveResult?.gdriveFileId  ?? att.gdrive_file_id,
-          gdrive_url:      attDriveResult?.fileUrl       ?? att.gdrive_url,
-          pool_account_id: attDriveResult?.poolAccountId ?? att.pool_account_id,
+          file_name:       att.file_name      ?? null,
+          file_size_bytes: att.file_size_bytes ?? null,
+          mime_type:       att.mime_type       ?? null,
+          gdrive_file_id:  att.gdrive_file_id,
+          gdrive_url:      att.gdrive_url,
+          pool_account_id: att.pool_account_id,
           parent_id:       att.parent_attachment_id ?? null,
           depth:           att.depth ?? 0,
         })
 
       if (attError) {
-        console.error('Attachment save error (non-fatal):', attError.message)
+        console.error('[ForwardSave] Attachment save error (non-fatal):', attError.message)
       }
     }
   }
 
-  // 5. Mark forwarded record as saved
+  // ── 5. Mark forwarded record as saved ─────────────────────────────────────
   const { error: updateError } = await supabase
     .from('forwarded_documents')
     .update({
@@ -375,7 +313,7 @@ export async function POST(
     .eq('id', fwd.id)
 
   if (updateError) {
-    console.error('Status update error:', updateError.message)
+    console.error('[ForwardSave] Status update error:', updateError.message)
   }
 
   await logSaveForwardedDocument(fwd.title, fwd.sender_role, targetTable)
@@ -384,7 +322,7 @@ export async function POST(
     success:         true,
     savedDocId:      newDoc.id,
     table:           targetTable,
-    driveReupload:   driveResult ? 'success' : 'fallback_to_sender_drive',
+    driveReupload:   driveResult ? 'client_uploaded' : 'fallback_to_sender_drive',
     recipientDriveId: driveResult?.gdriveFileId ?? null,
   })
 }
