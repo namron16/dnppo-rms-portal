@@ -16,6 +16,9 @@ export type LogActionType =
   | 'disable_account' | 'enable_account'
 
 // ── Module-level state — set on login via setCurrentLogger() ─────────────────
+// _currentRole is still cached for convenience wrappers that pass the role
+// as a description string. _currentUserId is now only a fallback; the live
+// session is always preferred so auth.uid() and the inserted user_id match.
 let _currentUserId: string | null = null
 let _currentRole:   AdminRole | null = null
 
@@ -31,11 +34,11 @@ export function isLoggerReady(): boolean {
 // ── Client factory ────────────────────────────────────────────────────────────
 // Server-side API routes (typeof window === 'undefined') use the service role
 // client so auth.uid() = null doesn't trip the RLS policy.
-// Browser code keeps using the anon client as before.
+// Browser code uses the anon client whose session cookie satisfies RLS.
 
 function getSupabaseClient() {
   if (typeof window === 'undefined') {
-    // Server-side: use service role key — bypasses all RLS
+    // Server-side: service role key bypasses all RLS
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!url || !key) {
@@ -43,15 +46,13 @@ function getSupabaseClient() {
         'adminLogger (server): NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing.'
       )
     }
-    // Inline createClient to avoid importing the server-only gdrive-pool module
-    // into a shared lib that's also loaded in the browser bundle.
     const { createClient } = require('@supabase/supabase-js')
     return createClient(url, key, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
   }
 
-  // Browser-side: use the existing anon client (RLS satisfied by session cookie)
+  // Browser-side: anon client — session cookie satisfies RLS
   const { createClient } = require('./supabase/client')
   return createClient()
 }
@@ -63,23 +64,50 @@ export async function logAction(
   description: string | Record<string, any>,
 ): Promise<void> {
 
-  if (!_currentUserId || !_currentRole) {
+  const supabase = getSupabaseClient()
+  const descriptionValue =
+    typeof description === 'string' ? description : JSON.stringify(description)
+
+  // ── Resolve user_id and role ──────────────────────────────────────────────
+  // On the browser we always pull the live session so the inserted user_id
+  // equals auth.uid() — mismatches are what trigger the RLS 42501 error.
+  // On the server (service role) we fall back to the cached values because
+  // auth.getUser() is not meaningful with the service role key.
+  let resolvedUserId: string | null = _currentUserId
+  let resolvedRole:   string | null = _currentRole
+
+  if (typeof window !== 'undefined') {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        resolvedUserId = user.id
+        // If role wasn't cached yet, try to read it from user_metadata or app_metadata
+        if (!resolvedRole) {
+          resolvedRole =
+            (user.user_metadata?.role as string | undefined) ??
+            (user.app_metadata?.role  as string | undefined) ??
+            _currentRole
+        }
+      }
+    } catch {
+      // getUser() failure is non-fatal — fall back to cached values
+    }
+  }
+
+  if (!resolvedUserId || !resolvedRole) {
     if (process.env.NODE_ENV === 'development') {
       console.warn(
-        `[adminLogger] logAction("${action}") called before setCurrentLogger() — log dropped.\n` +
-        'Call setCurrentLogger(role, userId) immediately after auth resolves.'
+        `[adminLogger] logAction("${action}") called before auth resolved — log dropped.\n` +
+        'Ensure setCurrentLogger(role, userId) is called after login, or that the ' +
+        'Supabase session cookie is present before triggering uploads.'
       )
     }
     return
   }
 
-  const supabase = getSupabaseClient()
-  const descriptionValue =
-    typeof description === 'string' ? description : JSON.stringify(description)
-
   const { error } = await supabase.from('admin_logs').insert({
-    user_id:     _currentUserId,
-    role:        _currentRole,
+    user_id:     resolvedUserId,
+    role:        resolvedRole,
     action,
     description: descriptionValue,
   })
@@ -92,7 +120,7 @@ export async function logAction(
       `  Hint:    ${error.hint ?? '—'}\n`,
       `  Details: ${error.details ?? '—'}`
     )
-    // Don't throw in production — a failed log should never crash the request
+    // Never throw — a failed log must not crash the caller
   }
 }
 
