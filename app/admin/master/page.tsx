@@ -1180,46 +1180,40 @@ export default function MasterPage() {
                                       <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button
                                           onClick={() => setViewerFile({ url: att.gdrive_url, name: label, sourceDocumentId: att.master_document_id })}
-                                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
+                                          className="inline-flex items-center justify-center px-1.5 py-1.5 text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
                                           title="View file">
                                           <Eye size={14} strokeWidth={2} />
-                                          <span className="hidden sm:inline">View</span>
                                         </button>
                                         <button type="button"
                                           onClick={() => handleDownloadFile(att.gdrive_url, getSuggestedFileName(label, att.gdrive_url), `attachment-${att.id}`, att.master_document_id)}
                                           disabled={downloadingKey === `attachment-${att.id}`}
-                                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition disabled:opacity-60"
+                                          className="inline-flex items-center justify-center px-1.5 py-1.5 text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition disabled:opacity-60"
                                           title="Download file">
                                           <Download size={14} />
-                                          <span className="hidden sm:inline">{downloadingKey === `attachment-${att.id}` ? 'Downloading' : 'Download'}</span>
                                         </button>
                                         <button type="button"
                                           onClick={() => handlePrintFile(att.gdrive_url, label, att.master_document_id)}
-                                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition"
+                                          className="inline-flex items-center justify-center px-1.5 py-1.5 text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition"
                                           title="Print file">
                                           <Printer size={14} />
-                                          <span className="hidden sm:inline">Print</span>
                                         </button>
                                         <button onClick={() => handleDrillDown(att)}
-                                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100 hover:border-violet-300 transition"
+                                          className="inline-flex items-center justify-center px-1.5 py-1.5 text-violet-600 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100 hover:border-violet-300 transition"
                                           title="Open & explore nested attachments">
                                           <FolderOpen size={14} />
-                                          <span className="hidden sm:inline">Open</span>
                                         </button>
                                         {canModifyDocuments && (
                                           <>
                                             <button
                                               onClick={() => { setEditingAttachmentId(att.id); setEditingAttachmentName(att.title || att.file_name || '') }}
-                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 hover:border-emerald-300 transition"
+                                              className="inline-flex items-center justify-center px-1.5 py-1.5 text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 hover:border-emerald-300 transition"
                                               title="Rename attachment">
                                               <Pencil size={14} />
-                                              <span className="hidden sm:inline">Edit</span>
                                             </button>
                                             <button onClick={() => deleteAttDisc.open(att)}
-                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 hover:border-red-300 transition"
+                                              className="inline-flex items-center justify-center px-1.5 py-1.5 text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 hover:border-red-300 transition"
                                               title="Delete attachment">
                                               <Trash2 size={14} />
-                                              <span className="hidden sm:inline">Delete</span>
                                             </button>
                                           </>
                                         )}
