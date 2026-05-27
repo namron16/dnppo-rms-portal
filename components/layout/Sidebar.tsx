@@ -62,7 +62,7 @@ const DPDA_NAV: NavItem[] = [
   { label: 'Organization',          icon: '🏛️', href: '/admin/organization' },
   { label: 'e-Library',             icon: '📚', href: '/admin/e-library' },
   { label: 'Archive',               icon: '🗄️', href: '/admin/archive' },
-  { label: 'DPDA Inbox',            icon: '📮', href: '/admin/dpda-inbox' },
+  { label: 'Forwarded',             icon: '📮', href: '/admin/dpda-inbox' },
 ]
 
 function NavLink({ item, active, onNavigate, badgeCount }: {
