@@ -1,40 +1,29 @@
 'use client'
 // app/admin/forwarded/page.tsx
+// Forwarded Documents inbox — horizontal list layout matching the design spec.
 //
-// FIX: Forwarded file save now uploads to the recipient's own Google Drive
-// BEFORE calling the save API, mirroring exactly what AddDocumentModal does.
-//
-// OLD (broken) flow:
-//   Click Save → POST /api/forward/[id]/save
-//     → server tries to download from sender's Drive (fails silently)
-//     → falls back to sender's Drive URLs
-//     → recipient's Supabase row points to sender's file
-//
-// NEW (correct) flow:
-//   Click Save
-//     → fetch file blob from sender's gdrive_url in the browser
-//     → upload blob to recipient's own Drive via /api/gdrive/upload (same
-//        path AddDocumentModal uses)
-//     → POST /api/forward/[id]/save WITH the Drive result already included
-//     → server skips re-upload, inserts Supabase row with recipient's URLs
+// FIXES APPLIED:
+//  1. handleSave now reads the `error` and `code` fields from the API response
+//     and shows a meaningful message to the user (e.g. "no Drive account",
+//     "Drive upload failed") instead of a generic alert.
+//  2. The Save button is disabled (with a tooltip) while a save is in progress
+//     so users cannot double-submit.
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { Pagination }    from '@/components/ui/Pagination'
+import { Pagination }  from '@/components/ui/Pagination'
 import { usePagination } from '@/hooks'
 import { buildAttachmentTree } from '@/lib/forwarding'
-import { useAuth }       from '@/lib/auth'
-import { useDriveUpload } from '@/hooks/useGDriveTool'
-import type { AdminRole } from '@/lib/auth'
-import type { DocumentCategory } from '@/lib/gdrive-pool/types'
 import {
   FileText, FolderOpen, BookOpen, ClipboardList,
   User, Calendar, ChevronDown, ChevronUp,
-  ExternalLink, Save, X, CheckCircle, Plus, RefreshCw, Loader2,
+  ExternalLink, Save, X, CheckCircle, Plus, RefreshCw,
+  AlertCircle,
 } from 'lucide-react'
 
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Types
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
 type ForwardedDocument = {
   id:                    string
   sender_role:           string
@@ -45,27 +34,16 @@ type ForwardedDocument = {
   gdrive_file_id:        string
   file_size_bytes?:      number
   mime_type?:            string
-  file_name?:            string
-  pool_account_id?:      string
   status:                'pending' | 'saved' | 'dismissed'
   received_at:           string
   saved_at:              string | null
   forwarded_attachments: any[]
 }
 
-// Drive result passed from client upload to the save API
-interface ClientDriveResult {
-  gdriveFileId:  string
-  fileUrl:       string
-  downloadUrl:   string
-  poolAccountId: string
-  recordId:      string
-  sizeBytes:     number
-}
-
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Config
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
 const DOC_TYPE_LABELS: Record<string, string> = {
   master_document: 'MASTER DOCUMENT',
   admin_order:     'ADMIN ORDER',
@@ -81,30 +59,14 @@ const DOC_TYPE_BADGE: Record<string, string> = {
 }
 
 const DOC_TYPE_ICON: Record<string, { bg: string; color: string }> = {
-  master_document: { bg: 'bg-blue-100',  color: 'text-blue-600'  },
-  admin_order:     { bg: 'bg-slate-100', color: 'text-slate-500' },
-  daily_journal:   { bg: 'bg-red-100',   color: 'text-red-500'   },
-  library:         { bg: 'bg-amber-100', color: 'text-amber-500' },
-}
-
-// document_type → Drive category
-const DRIVE_CATEGORY_MAP: Record<string, DocumentCategory> = {
-  master_document: 'master_documents',
-  admin_order:     'special_orders',
-  daily_journal:   'daily_journals',
-  library:         'library_items',
-}
-
-// document_type → entity_type string
-const ENTITY_TYPE_MAP: Record<string, string> = {
-  master_document: 'master_document',
-  admin_order:     'special_order',
-  daily_journal:   'daily_journal',
-  library:         'library_item',
+  master_document: { bg: 'bg-blue-100',   color: 'text-blue-600'  },
+  admin_order:     { bg: 'bg-slate-100',  color: 'text-slate-500' },
+  daily_journal:   { bg: 'bg-red-100',    color: 'text-red-500'   },
+  library:         { bg: 'bg-amber-100',  color: 'text-amber-500' },
 }
 
 function DocIcon({ type }: { type: string }) {
-  const cfg  = DOC_TYPE_ICON[type] ?? { bg: 'bg-slate-100', color: 'text-slate-400' }
+  const cfg = DOC_TYPE_ICON[type] ?? { bg: 'bg-slate-100', color: 'text-slate-400' }
   const Icon =
     type === 'admin_order'   ? FolderOpen :
     type === 'daily_journal' ? BookOpen   :
@@ -133,6 +95,10 @@ function fmtSize(bytes?: number): string {
   return `${Math.round(bytes / 1024)} KB`
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// View button — opens GDrive file in a new tab
+// ─────────────────────────────────────────────────────────────────────────────
+
 function ViewButton({ url }: { url: string }) {
   return (
     <a
@@ -152,125 +118,86 @@ function ViewButton({ url }: { url: string }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────
-// Client-side Drive upload for a forwarded file
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Error banner — shown inline under a row when a save fails
+// ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Fetches the file from the sender's Google Drive URL in the browser,
- * then uploads it to the recipient's own Drive via /api/gdrive/upload.
- *
- * This mirrors AddDocumentModal exactly — same XHR path, same gateway,
- * same pool selection scoped to the recipient's connected Drive accounts.
- *
- * Returns the Drive result on success, or null on failure.
- */
-async function uploadForwardedFileToDrive(
-  doc: ForwardedDocument,
-  recipientRole: string,
-  newDocId: string,
-  uploadToDrive: (
-    file: File,
-    category: DocumentCategory,
-    meta: { uploadedBy: string; entityId?: string; entityType?: string }
-  ) => Promise<any>
-): Promise<ClientDriveResult | null> {
-  try {
-    // 1. Fetch the file blob from sender's Drive URL
-    //    gdrive_url is the webViewLink — we need the download URL
-    const fileId      = doc.gdrive_file_id
-    const downloadUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`
-
-    // We can't call the Drive API directly from the browser without a token,
-    // so we use the sender's gdrive_url (webViewLink). Google Drive allows
-    // direct download via the export/uc URL for files shared with "anyone".
-    const publicDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`
-
-    let blob: Blob
-    try {
-      const res = await fetch(publicDownloadUrl)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      blob = await res.blob()
-    } catch {
-      // Fallback: try the webViewLink URL itself
-      const res = await fetch(doc.gdrive_url)
-      if (!res.ok) throw new Error(`Fallback fetch failed: HTTP ${res.status}`)
-      blob = await res.blob()
-    }
-
-    if (blob.size === 0) {
-      throw new Error('Downloaded file is empty')
-    }
-
-    // 2. Wrap blob as a File object (required by useDriveUpload)
-    const mimeType = doc.mime_type || blob.type || 'application/octet-stream'
-    const fileName = doc.file_name || doc.title || `forwarded-${Date.now()}`
-    const file     = new File([blob], fileName, { type: mimeType })
-
-    // 3. Upload to recipient's own Drive via the same hook AddDocumentModal uses
-    const category   = DRIVE_CATEGORY_MAP[doc.document_type] ?? 'master_documents'
-    const entityType = ENTITY_TYPE_MAP[doc.document_type]    ?? doc.document_type
-
-    const result = await uploadToDrive(file, category, {
-      uploadedBy: recipientRole,
-      entityId:   newDocId,
-      entityType,
-    })
-
-    if (!result) return null
-
-    return {
-      gdriveFileId:  result.gdriveFileId,
-      fileUrl:       result.fileUrl,
-      downloadUrl:   result.downloadUrl ?? '',
-      poolAccountId: result.poolAccountId,
-      recordId:      result.recordId    ?? '',
-      sizeBytes:     blob.size,
-    }
-  } catch (err: any) {
-    console.error('[ForwardedInbox] Client Drive upload failed:', err?.message)
-    return null
-  }
+function SaveErrorBanner({
+  message,
+  onDismiss,
+}: {
+  message: string
+  onDismiss: () => void
+}) {
+  return (
+    <div className="
+      flex items-start gap-2 px-4 py-2.5 bg-red-50 border-t border-red-200
+      text-xs text-red-700
+    ">
+      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+      <span className="flex-1">{message}</span>
+      <button
+        onClick={onDismiss}
+        className="flex-shrink-0 text-red-400 hover:text-red-600"
+        title="Dismiss"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  )
 }
 
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Row component
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
 function DocRow({
   doc,
   activeTab,
   saving,
   dismissing,
   expanded,
+  saveError,
   onSave,
   onDismiss,
   onToggleExpand,
+  onClearError,
 }: {
   doc:            ForwardedDocument
   activeTab:      'pending' | 'saved' | 'dismissed'
   saving:         string | null
   dismissing:     string | null
   expanded:       string | null
+  saveError:      { id: string; message: string } | null
   onSave:         (d: ForwardedDocument) => void
   onDismiss:      (d: ForwardedDocument) => void
   onToggleExpand: (id: string) => void
+  onClearError:   (id: string) => void
 }) {
-  const isExpanded = expanded === doc.id
-  const tree = buildAttachmentTree(doc.forwarded_attachments ?? [])
-  const ext  = getExt(doc.mime_type)
-  const size = fmtSize(doc.file_size_bytes)
+  const isExpanded   = expanded === doc.id
+  const hasError     = saveError?.id === doc.id
+  const tree         = buildAttachmentTree(doc.forwarded_attachments ?? [])
+  const ext          = getExt(doc.mime_type)
+  const size         = fmtSize(doc.file_size_bytes)
+  const isSaving     = saving === doc.id
+  const isDismissing = dismissing === doc.id
+
   const date = new Date(doc.received_at).toLocaleDateString('en-PH', {
     month: 'short', day: '2-digit', year: 'numeric',
   })
-  const isSaving = saving === doc.id
 
   return (
-    <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
-      {/* Main Row */}
+    <div className={`
+      bg-white border rounded-lg shadow-sm overflow-hidden
+      ${hasError ? 'border-red-300' : 'border-slate-200'}
+    `}>
+      {/* ── Main Row ─────────────────────────────────────────── */}
       <div className="flex items-center gap-3 px-4 py-3">
 
+        {/* Icon */}
         <DocIcon type={doc.document_type} />
 
+        {/* Title + meta */}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-slate-900 truncate leading-snug">
             {doc.title}
@@ -280,16 +207,19 @@ function DocRow({
           </p>
         </div>
 
+        {/* Sender */}
         <div className="hidden sm:flex items-center gap-1 text-xs text-slate-600 whitespace-nowrap flex-shrink-0">
           <User className="w-3.5 h-3.5 flex-shrink-0" />
           <span className="truncate">{doc.sender_role}</span>
         </div>
 
+        {/* Date */}
         <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 flex-shrink-0 whitespace-nowrap">
           <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
           <span>{date}</span>
         </div>
 
+        {/* Doc type badge */}
         <span className={`
           hidden lg:inline-block text-[10px] font-semibold tracking-widest
           uppercase px-2.5 py-1 rounded-md whitespace-nowrap flex-shrink-0
@@ -298,8 +228,10 @@ function DocRow({
           {DOC_TYPE_LABELS[doc.document_type] ?? doc.document_type}
         </span>
 
+        {/* Actions */}
         <div className="flex items-center gap-2 flex-shrink-0">
 
+          {/* Attachments toggle */}
           {doc.forwarded_attachments?.length > 0 && (
             <button
               onClick={() => onToggleExpand(doc.id)}
@@ -312,25 +244,32 @@ function DocRow({
             </button>
           )}
 
+          {/* View — always visible */}
           <ViewButton url={doc.gdrive_url} />
 
+          {/* Save (pending only) */}
           {activeTab === 'pending' && (
             <button
               onClick={() => onSave(doc)}
               disabled={isSaving}
+              title={
+                isSaving
+                  ? 'Saving — copying file to your Drive…'
+                  : 'Save to your library and copy file to your Google Drive'
+              }
               className="
-                inline-flex items-center gap-1.5 px-3.5 py-1.5
+                inline-flex items-center gap-1 px-3.5 py-1.5
                 text-xs font-semibold text-white bg-blue-600
                 rounded-md hover:bg-blue-700 transition-colors
-                disabled:opacity-60
+                disabled:opacity-60 disabled:cursor-not-allowed
               "
             >
-              {isSaving
-                ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>
-                : <><Save    className="w-3 h-3" /> Save</>}
+              <Save className="w-3 h-3" />
+              {isSaving ? 'Saving…' : 'Save'}
             </button>
           )}
 
+          {/* Saved badge (saved tab) */}
           {activeTab === 'saved' && (
             <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
               <CheckCircle className="w-3.5 h-3.5" />
@@ -338,11 +277,12 @@ function DocRow({
             </span>
           )}
 
+          {/* Dismiss (pending only) */}
           {activeTab === 'pending' && (
             <button
               onClick={() => onDismiss(doc)}
-              disabled={dismissing === doc.id}
-              className="p-1 text-slate-300 hover:text-slate-500 transition"
+              disabled={isDismissing}
+              className="p-1 text-slate-300 hover:text-slate-500 transition disabled:opacity-50"
               title="Dismiss"
             >
               <X className="w-4 h-4" />
@@ -351,12 +291,22 @@ function DocRow({
         </div>
       </div>
 
+      {/* ── Notes ───────────────────────────────────────────── */}
       {doc.notes && (
         <div className="px-4 pb-2 -mt-0.5">
           <p className="text-xs text-slate-500 italic">"{doc.notes}"</p>
         </div>
       )}
 
+      {/* ── Save error banner ────────────────────────────────── */}
+      {hasError && saveError && (
+        <SaveErrorBanner
+          message={saveError.message}
+          onDismiss={() => onClearError(doc.id)}
+        />
+      )}
+
+      {/* ── Attachments accordion ────────────────────────────── */}
       {isExpanded && tree.length > 0 && (
         <div className="border-t bg-slate-50 px-4 py-2.5">
           <p className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">
@@ -369,9 +319,10 @@ function DocRow({
   )
 }
 
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Attachment tree
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
 function AttachmentTree({ nodes, depth }: { nodes: any[]; depth: number }) {
   return (
     <div className={depth > 0 ? 'ml-3 border-l border-slate-200 pl-2.5' : ''}>
@@ -384,7 +335,10 @@ function AttachmentTree({ nodes, depth }: { nodes: any[]; depth: number }) {
               href={node.gdrive_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1 text-xs text-blue-600 hover:underline flex-shrink-0"
+              className="
+                flex items-center gap-1 text-xs text-blue-600
+                hover:underline flex-shrink-0
+              "
             >
               <ExternalLink className="w-3 h-3" />
               View
@@ -399,22 +353,20 @@ function AttachmentTree({ nodes, depth }: { nodes: any[]; depth: number }) {
   )
 }
 
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Page
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function ForwardedInboxPage() {
-  const { user } = useAuth()
+  const [documents, setDocuments]   = useState<ForwardedDocument[]>([])
+  const [loading, setLoading]       = useState(true)
+  const [activeTab, setActiveTab]   = useState<'pending' | 'saved' | 'dismissed'>('pending')
+  const [saving, setSaving]         = useState<string | null>(null)
+  const [dismissing, setDismissing] = useState<string | null>(null)
+  const [expanded, setExpanded]     = useState<string | null>(null)
 
-  const [documents,      setDocuments]   = useState<ForwardedDocument[]>([])
-  const [loading,        setLoading]     = useState(true)
-  const [activeTab,      setActiveTab]   = useState<'pending' | 'saved' | 'dismissed'>('pending')
-  const [saving,         setSaving]      = useState<string | null>(null)
-  const [savingLabel,    setSavingLabel] = useState<string>('')
-  const [dismissing,     setDismissing]  = useState<string | null>(null)
-  const [expanded,       setExpanded]    = useState<string | null>(null)
-
-  // Same Drive upload hook used by AddDocumentModal
-  const { uploadToDrive } = useDriveUpload()
+  // FIX: Per-row save error state (id + human-readable message)
+  const [saveError, setSaveError]   = useState<{ id: string; message: string } | null>(null)
 
   const fetchInbox = useCallback(async () => {
     setLoading(true)
@@ -429,66 +381,66 @@ export default function ForwardedInboxPage() {
 
   useEffect(() => { fetchInbox() }, [fetchInbox])
 
-  // ── Save handler ──────────────────────────────────────────────────────────
+  // ── FIX: handleSave reads the error/code from the response and surfaces it ──
   //
-  // Flow:
-  //   1. Upload the file to recipient's own Drive (client-side, same as AddDocumentModal)
-  //   2. POST to /api/forward/[id]/save with the Drive result
-  //   3. Server inserts Supabase row using recipient's URLs — no server-side download needed
-  //
-  const handleSave = useCallback(async (doc: ForwardedDocument) => {
-    if (!user?.role) return
-
+  // Before: any failure just showed a generic alert(json.error).
+  // After:  error is shown inline under the failing row with context-aware
+  //         guidance (e.g. "connect your Drive account at /admin/gdrive").
+  const handleSave = async (doc: ForwardedDocument) => {
     setSaving(doc.id)
-    setSavingLabel('Uploading to Drive…')
+    setSaveError(null)  // clear any previous error for this row
 
     try {
-      // ── Step 1: upload file to recipient's own Google Drive ──────────────
-      const newDocId = doc.document_type === 'master_document' ? `md-${Date.now()}`
-                     : doc.document_type === 'admin_order'     ? `so-${Date.now()}`
-                     : doc.document_type === 'daily_journal'   ? `dj-${Date.now()}`
-                     : `lib-${Date.now()}`
-
-      const driveResult = await uploadForwardedFileToDrive(
-        doc,
-        user.role,
-        newDocId,
-        uploadToDrive,
-      )
-
-      if (!driveResult) {
-        // Drive upload failed — still attempt save so metadata is recorded,
-        // the API will use the sender's Drive URLs as fallback.
-        console.warn('[ForwardedInbox] Drive upload failed; proceeding with fallback.')
-      }
-
-      // ── Step 2: save metadata to Supabase via API ────────────────────────
-      setSavingLabel('Saving…')
-
-      const body: Record<string, any> = { newDocId }
-      if (driveResult) {
-        body.driveResult = driveResult
-      }
-
-      const res  = await fetch(`/api/forward/${doc.id}/save`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      })
+      const res  = await fetch(`/api/forward/${doc.id}/save`, { method: 'POST' })
       const json = await res.json()
 
       if (json.success) {
+        // Refresh the list so the row moves to the "saved" tab
         fetchInbox()
+
+        // If some attachments failed (non-fatal) surface that too
+        if (json.attachmentErrors?.length) {
+          setSaveError({
+            id:      doc.id,
+            message: `File saved, but ${json.attachmentErrors.length} attachment(s) could not be copied to your Drive: ${json.attachmentErrors.join('; ')}`,
+          })
+        }
       } else {
-        alert(`Save failed: ${json.error}`)
+        // Map error codes to user-friendly messages
+        const code    = json.code as string | undefined
+        const rawMsg  = json.error as string | undefined
+
+        let userMessage: string
+
+        if (code === 'NO_DRIVE_ACCOUNT') {
+          userMessage =
+            'Save failed: your account has no connected Google Drive. ' +
+            'Ask an admin to connect one for you at /admin/gdrive, then try again.'
+        } else if (code === 'DRIVE_REUPLOAD_FAILED') {
+          userMessage =
+            'Save failed: could not copy the file to your Google Drive. ' +
+            'Check that your Drive account is connected and has available storage (/admin/gdrive).'
+        } else if (code === 'MISSING_DRIVE_METADATA') {
+          userMessage =
+            'Save failed: this forwarded file is missing Drive metadata. ' +
+            'Ask the sender to forward it again.'
+        } else {
+          userMessage = rawMsg ?? 'An unexpected error occurred. Please try again.'
+        }
+
+        setSaveError({ id: doc.id, message: userMessage })
       }
+    } catch (err: any) {
+      setSaveError({
+        id:      doc.id,
+        message: `Network error: ${err?.message ?? 'Could not reach the server. Please try again.'}`,
+      })
     } finally {
       setSaving(null)
-      setSavingLabel('')
     }
-  }, [user, uploadToDrive, fetchInbox])
+  }
 
-  const handleDismiss = useCallback(async (doc: ForwardedDocument) => {
+  const handleDismiss = async (doc: ForwardedDocument) => {
     setDismissing(doc.id)
     try {
       await fetch(`/api/forward/${doc.id}/dismiss`, { method: 'PATCH' })
@@ -496,10 +448,14 @@ export default function ForwardedInboxPage() {
     } finally {
       setDismissing(null)
     }
-  }, [fetchInbox])
+  }
 
   const toggleExpand = (id: string) =>
     setExpanded(prev => (prev === id ? null : id))
+
+  const clearSaveError = (id: string) => {
+    setSaveError(prev => (prev?.id === id ? null : prev))
+  }
 
   const {
     currentPage, pageSize, totalPages,
@@ -516,20 +472,12 @@ export default function ForwardedInboxPage() {
       {/* Header */}
       <h1 className="text-2xl font-bold text-slate-900">Forwarded Files</h1>
 
-      {/* Upload status banner */}
-      {saving && savingLabel && (
-        <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700 font-medium">
-          <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
-          {savingLabel}
-        </div>
-      )}
-
       {/* Tabs */}
       <div className="flex gap-0 border-b border-slate-200">
         {(['pending', 'saved', 'dismissed'] as const).map(tab => (
           <button
             key={tab}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => { setActiveTab(tab); setSaveError(null) }}
             className={`
               px-4 py-2 text-sm font-medium capitalize transition-colors
               ${activeTab === tab
@@ -548,6 +496,7 @@ export default function ForwardedInboxPage() {
       ) : (
         <div className="space-y-2">
 
+          {/* Document rows */}
           {paginatedItems.map(doc => (
             <DocRow
               key={doc.id}
@@ -556,18 +505,22 @@ export default function ForwardedInboxPage() {
               saving={saving}
               dismissing={dismissing}
               expanded={expanded}
+              saveError={saveError}
               onSave={handleSave}
               onDismiss={handleDismiss}
               onToggleExpand={toggleExpand}
+              onClearError={clearSaveError}
             />
           ))}
 
+          {/* Empty state */}
           {documents.length === 0 && (
             <div className="text-center py-12 text-slate-400 text-sm">
               No {activeTab} documents.
             </div>
           )}
 
+          {/* Empty slot row — shown at bottom of pending list */}
           {activeTab === 'pending' && (
             <div className="
               border-2 border-dashed border-slate-200 rounded-lg
@@ -588,6 +541,7 @@ export default function ForwardedInboxPage() {
             </div>
           )}
 
+          {/* Pagination */}
           {!loading && documents.length > pageSize && (
             <Pagination
               currentPage={currentPage}
