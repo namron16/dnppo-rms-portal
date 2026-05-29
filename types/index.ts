@@ -30,6 +30,7 @@ export interface MasterDocument {
   type: string
   size: string
   tag: string
+  archived?: boolean
   created_at?: string
   children?: MasterDocument[]
 }
@@ -41,6 +42,7 @@ export interface SpecialOrder {
   date: string
   attachments: number
   status: DocStatus
+  archived?: boolean
   created_at?: string
 }
 
@@ -50,6 +52,7 @@ export interface JournalEntry {
   type: JournalType
   author: string
   date: string
+  archived?: boolean
 }
 
 export interface ConfidentialDoc {
@@ -67,6 +70,7 @@ export interface LibraryItem {
   category: LibraryCategory
   size: string
   dateAdded: string
+  archived: boolean
   created_at?: string
 }
 

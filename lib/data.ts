@@ -71,6 +71,7 @@ export async function getMasterDocuments(): Promise<(MasterDocument & {
     tag:             d.tag,
     fileUrl:         d.file_url          ?? undefined,
     created_at:      d.created_at,
+    archived:        d.archived         ?? false,
     uploaded_by:     d.uploaded_by       ?? undefined,
     // FIX: return Drive pool columns so ForwardDocumentModal gets them
     gdrive_file_id:  d.gdrive_file_id    ?? undefined,
@@ -167,6 +168,7 @@ export async function getSpecialOrders(): Promise<(SpecialOrder & {
     status:          d.status,
     fileUrl:         d.file_url          ?? undefined,
     created_at:      d.created_at,
+    archived:        d.archived         ?? false,
     uploaded_by:     d.uploaded_by       ?? undefined,
     // FIX: return Drive pool columns
     gdrive_file_id:  d.gdrive_file_id    ?? undefined,
@@ -598,6 +600,7 @@ export async function getLibraryItems(): Promise<(LibraryItem & {
     fileUrl:         d.file_url          ?? undefined,
     description:     d.description       ?? undefined,
     created_at:      d.created_at,
+    archived:        d.archived         ?? false,
     uploaded_by:     d.uploaded_by       ?? undefined,
     // FIX: return Drive pool columns
     gdrive_file_id:  d.gdrive_file_id    ?? undefined,
