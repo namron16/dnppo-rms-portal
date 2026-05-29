@@ -368,16 +368,29 @@ export default function DailyJournalsPage() {
   }, [user?.role]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Create ────────────────────────────────────────────────────────────────
+  // FIX: handleCreate now accepts and forwards Drive pool fields
+  // (gdriveFileId, poolAccountId, mimeType, fileSizeBytes) from the modal
+  // so addDailyJournal() can persist them to the DB.
+  // Without this, gdrive_file_id and pool_account_id stayed null, making
+  // the document impossible to forward successfully later.
   async function handleCreate(
-    input: AddJournalEntryInput & { file?: File; driveFileUrl?: string; uploaded_by?: string }
+    input: AddJournalEntryInput & {
+      file?:          File
+      driveFileUrl?:  string
+      uploaded_by?:   string
+      gdriveFileId?:  string   // FIX: from modal upload result
+      poolAccountId?: string   // FIX: from modal upload result
+      mimeType?:      string   // FIX: from modal upload result
+      fileSizeBytes?: number   // FIX: from modal upload result
+    }
   ) {
     if (!canUpload) throw new Error('You do not have permission to create journal entries.')
     if (!input.file && !input.driveFileUrl) throw new Error('Attachment is required.')
 
     const now    = new Date()
     const status: JournalStatus =
-      input.type === 'MEMO'   ? 'Draft'
-      : input.type === 'REPORT' ? 'Reviewed'
+      input.type === 'MEMO'    ? 'Draft'
+      : input.type === 'REPORT'  ? 'Reviewed'
       : 'Filed'
 
     const nextEntry: JournalRecord = {
@@ -393,7 +406,12 @@ export default function DailyJournalsPage() {
       summary:     input.content?.trim()
         ? input.content.trim().slice(0, 120)
         : 'Newly created entry waiting for final review.',
-      uploaded_by: input.uploaded_by ?? user?.role,
+      uploaded_by:    input.uploaded_by ?? user?.role,
+      // FIX: carry Drive pool fields so they get persisted via addDailyJournal()
+      gdrive_file_id:  input.gdriveFileId  ?? undefined,
+      pool_account_id: input.poolAccountId ?? undefined,
+      mime_type:       input.mimeType      ?? undefined,
+      file_size_bytes: input.fileSizeBytes ?? undefined,
     }
 
     await addDailyJournal(nextEntry)

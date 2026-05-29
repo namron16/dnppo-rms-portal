@@ -6,6 +6,12 @@
 //      can tag the journal entry and filter by user on next load.
 //      The Drive gateway routes the file to the uploader's own connected
 //      Google Drive account — never another user's Drive.
+//
+// FIX (Drive pool columns): onSubmit now also passes gdriveFileId,
+//      poolAccountId, and mimeType from the upload result so the page
+//      handler can persist them to the DB via addDailyJournal().
+//      Without this, gdrive_file_id / pool_account_id stayed null in the
+//      DB row, making the document impossible to forward successfully.
 
 import { useEffect, useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -46,8 +52,15 @@ interface Props {
   title?: string
   submitLabel?: string
   initialValue?: Partial<AddJournalEntryInput> & { content?: string; fileUrl?: string }
-  // onSubmit also receives uploaded_by so the page can persist it
-  onSubmit?: (entry: JournalEntryFormInput & { driveFileUrl?: string; uploaded_by?: string }) => void | Promise<void>
+  // FIX: onSubmit now receives Drive pool fields so the page can persist them
+  onSubmit?: (entry: JournalEntryFormInput & {
+    driveFileUrl?:   string
+    uploaded_by?:    string
+    gdriveFileId?:   string   // FIX: Drive file ID for forwarding
+    poolAccountId?:  string   // FIX: pool account ID for re-upload on save
+    mimeType?:       string   // FIX: mime type for re-upload
+    fileSizeBytes?:  number   // FIX: file size for accounting
+  }) => void | Promise<void>
 }
 
 const getTodayDate = () => new Date().toISOString().split('T')[0]
@@ -117,7 +130,6 @@ export function AddJournalEntryModal({
   async function submit() {
     if (!user) { toast.error('Not authenticated.'); return }
 
-    // FIX: assertCanUpload now allows P1–P10, WCPD, PPSMU (not just P1)
     try {
       assertCanUpload(user.role as AdminRole)
     } catch (err: any) {
@@ -138,11 +150,15 @@ export function AddJournalEntryModal({
 
     try {
       let driveFileUrl: string | undefined
+      // FIX: capture all Drive pool fields, not just the URL
+      let gdriveFileId:  string | undefined
+      let poolAccountId: string | undefined
+      let mimeType:      string | undefined
+      let fileSizeBytes: number | undefined
 
       if (file) {
         const journalId = `jnl-${Date.now()}`
 
-        // Upload to THIS user's own connected Google Drive account.
         const uploadResult = await uploadToDrive(file, 'daily_journals', {
           uploadedBy: user.role,
           entityId:   journalId,
@@ -154,15 +170,25 @@ export function AddJournalEntryModal({
           return
         }
 
-        driveFileUrl = uploadResult.fileUrl
+        driveFileUrl  = uploadResult.fileUrl
+        // FIX: extract Drive pool metadata from upload result
+        gdriveFileId  = uploadResult.gdriveFileId
+        poolAccountId = uploadResult.poolAccountId
+        mimeType      = file.type || undefined
+        fileSizeBytes = file.size
       }
 
-      // Pass uploaded_by so the page can persist and filter by it
+      // FIX: pass Drive pool fields to onSubmit so the page handler can
+      // include them when calling addDailyJournal()
       await onSubmit?.({
         ...result.data,
-        file:         file ?? undefined,
+        file:          file ?? undefined,
         driveFileUrl,
-        uploaded_by:  user.role,
+        uploaded_by:   user.role,
+        gdriveFileId,
+        poolAccountId,
+        mimeType,
+        fileSizeBytes,
       })
 
       toast.success(`Journal entry "${result.data.title}" saved.`)
