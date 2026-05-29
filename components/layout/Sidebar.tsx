@@ -263,7 +263,11 @@ export function Sidebar() {
       <aside className="sidebar-fixed bg-white border-r border-gray-200">
         {/* ── Logo ── */}
         <div className="px-5 py-6 border-b border-gray-200 flex items-center gap-3">
-          <div className="w-9 h-9 bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg flex items-center justify-center text-lg flex-shrink-0 text-white font-bold">D</div>
+          <img 
+            src="/assets/polaris-logo.png" 
+            alt="Polaris Logo" 
+            className="w-10 h-10 flex-shrink-0 object-cover"
+          />
           <div className="leading-tight">
             <div className="text-gray-900 text-[13px] font-bold tracking-tight">DNPPO Records</div>
             <div className="text-gray-500 text-[11px] font-medium">Davao Del Norte</div>
