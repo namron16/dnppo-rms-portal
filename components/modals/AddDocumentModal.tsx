@@ -26,6 +26,9 @@ type DocWithUrl = MasterDocument & {
   pool_account_id?: string
   download_url?:    string
   uploaded_by?:     string   // tracks who uploaded this document
+  file_name?:      string   // for Drive uploads, store original file name
+  file_size_bytes?: number   // for Drive uploads, store original file size
+  mime_type?:      string | null // for Drive uploads, store original MIME type
 }
 
 interface AddDocumentModalProps {
@@ -122,19 +125,25 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
       const newDoc: DocWithUrl = {
         id:      newDocId,
         title:   result.data.title,
-        level:   result.data.level as MasterDocument['level'],
+        level:   result.data.level,
         type:    result.data.type,
         date:    result.data.date,
         size:    fileSize,
         tag:     result.data.tag,
-
+      
         fileUrl:          driveResult.fileUrl,
         gdrive_file_id:   driveResult.gdriveFileId,
         gdrive_url:       driveResult.fileUrl,
         pool_account_id:  driveResult.poolAccountId,
         download_url:     driveResult.downloadUrl,
-
-        uploaded_by: user.role,
+      
+        uploaded_by:     user.role,
+        // FIX: these three were missing — without them the DB row has null
+        // gdrive columns for file_name / file_size_bytes / mime_type,
+        // which breaks the forward save flow and health checks.
+        file_name:       file.name,
+        file_size_bytes: file.size,
+        mime_type:       file.type || null,
       }
 
       if (onAdd) await onAdd(newDoc)

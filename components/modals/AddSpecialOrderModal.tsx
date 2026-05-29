@@ -27,6 +27,9 @@ type SOWithUrl = SpecialOrder & {
   pool_account_id?: string
   download_url?:    string
   uploaded_by?:     string   // tracks who uploaded this order
+  file_name?:      string   // for Drive uploads, store original file name
+  file_size_bytes?: number   // for Drive uploads, store original file size
+  mime_type?:      string | null // for Drive uploads, store original MIME type
 }
 
 interface Props {
@@ -109,20 +112,24 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
 
       // Tag the order with the uploader's role so the page can filter per user.
       const newSO: SOWithUrl = {
-        id:          soId,
-        reference:   result.data.reference,
-        subject:     result.data.subject,
-        date:        result.data.date,
-        attachments: 0,
-        status:      result.data.status as 'ACTIVE' | 'ARCHIVED',
-
-        fileUrl:          driveResult.fileUrl,
-        gdrive_file_id:   driveResult.gdriveFileId,
-        gdrive_url:       driveResult.fileUrl,
-        pool_account_id:  driveResult.poolAccountId,
-        download_url:     driveResult.downloadUrl,
-
-        uploaded_by: user.role,
+         id:          soId,
+          reference:   result.data.reference,
+          subject:     result.data.subject,
+          date:        result.data.date,
+          attachments: 0,
+          status:      result.data.status,
+        
+          fileUrl:          driveResult.fileUrl,
+          gdrive_file_id:   driveResult.gdriveFileId,
+          gdrive_url:       driveResult.fileUrl,
+          pool_account_id:  driveResult.poolAccountId,
+          download_url:     driveResult.downloadUrl,
+        
+          uploaded_by:     user.role,
+          // FIX: these three were missing
+          file_name:       file.name,
+          file_size_bytes: file.size,
+          mime_type:       file.type || null,
       }
 
       if (onAdd) await onAdd(newSO)
