@@ -675,7 +675,9 @@ function AttachmentsTablePanel({
         {/* Body */}
         {attachments.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center py-14 px-6">
-            <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center text-2xl mb-3">📎</div>
+            <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center mb-3">
+              <Paperclip size={24} className="text-slate-400" />
+            </div>
             <p className="text-sm font-semibold text-slate-600 mb-1">
               {`No ${isDrillDown ? 'child ' : ''}attachments yet`}
             </p>
