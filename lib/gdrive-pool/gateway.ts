@@ -415,6 +415,51 @@ export async function deleteFile(req: DeleteRequest): Promise<DeleteResult> {
   }
 }
 
+
+//ARCHIVE
+export async function moveFileToArchiveFolder(
+  poolAccountId: string,
+  gdriveFileId: string,
+  category: DocumentCategory,
+  rootFolderId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const drive = await getDriveClient(poolAccountId)
+
+    // Find or create an "Archive" subfolder inside the category folder
+    const categoryFolderName = CATEGORY_DISPLAY_NAMES[category]
+    const archiveFolderName  = `${categoryFolderName} – Archive`
+
+    // Get the category folder ID first
+    const categoryFolderId = await resolveCategoryFolder(
+      poolAccountId,
+      category,
+      rootFolderId
+    )
+
+    // Find or create the archive subfolder inside it
+    const archiveFolder = await findOrCreateFolder(
+      drive,
+      archiveFolderName,
+      categoryFolderId
+    )
+
+    // Move the file: add new parent, remove old parent
+    await drive.files.update({
+      fileId:          gdriveFileId,
+      addParents:      archiveFolder.folderId,
+      removeParents:   categoryFolderId,
+      requestBody:     {},
+      fields:          'id, parents',
+    })
+
+    return { success: true }
+  } catch (err: any) {
+    console.error('[Gateway] moveFileToArchiveFolder failed:', err.message)
+    return { success: false, error: err.message }
+  }
+}
+
 // =============================================================================
 // URL HELPERS
 // =============================================================================

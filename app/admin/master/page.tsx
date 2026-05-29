@@ -614,17 +614,54 @@ export default function MasterPage() {
   }
 
   async function handleArchiveDoc() {
-    if (!selection) return
-    const doc  = selection
-    const date = new Date().toISOString().split('T')[0]
-    await addArchivedDoc({ id: `arc-md-${doc.id}`, title: doc.title, type: 'Master Document', archivedDate: date, archivedBy: user?.role ?? 'P1' })
-    await archiveMasterDocument(doc.id)
-    await logArchiveDocument(doc.title, 'master document')
-    setDocuments(prev => prev.filter(d => d.id !== doc.id))
-    setSelection(null)
-    toast.success('Document archived.')
-    archiveDisc.close()
+  if (!selection) return
+  const doc  = selection
+  const date = new Date().toISOString().split('T')[0]
+
+  // Step 1: Move file in Google Drive to the archive folder
+  // Only attempt if we have the Drive metadata
+  const gdriveFileId  = (doc as any).gdrive_file_id
+  const poolAccountId = (doc as any).pool_account_id
+
+  if (gdriveFileId && poolAccountId) {
+    const res = await fetch('/api/gdrive/archive', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        gdriveFileId,
+        poolAccountId,
+        category: 'master_documents',
+      }),
+    })
+
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      toast.error(`Could not move file to Drive archive: ${json.error ?? 'Unknown error'}`)
+      // Don't block the rest — still archive the record
+    }
   }
+
+  // Step 2: Add to archived_docs table
+  await addArchivedDoc({
+    id:          `arc-md-${doc.id}`,
+    title:       doc.title,
+    type:        'Master Document',
+    archivedDate: date,
+    archivedBy:  user?.role ?? 'P1',
+  })
+
+  // Step 3: Mark as archived in master_documents
+  // Update archiveMasterDocument in lib/data.ts to actually set archived = true
+  await archiveMasterDocument(doc.id)
+
+  await logArchiveDocument(doc.title, 'master document')
+
+  // Step 4: Remove from UI
+  setDocuments(prev => prev.filter(d => d.id !== doc.id))
+  setSelection(null)
+  toast.success('Document archived.')
+  archiveDisc.close()
+}
 
   async function handleDeleteDoc() {
     if (!selection) return

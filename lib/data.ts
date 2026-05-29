@@ -129,7 +129,11 @@ export async function updateMasterDocument(doc: MasterDocument & { fileUrl?: str
 }
 
 export async function archiveMasterDocument(id: string): Promise<void> {
-  void id
+  const { error } = await supabase
+    .from('master_documents')
+    .update({ archived: true })  // make sure this column exists
+    .eq('id', id)
+  if (error) console.warn('Supabase unavailable (archive master_document):', error.message)
 }
 
 export async function deleteMasterDocument(id: string): Promise<void> {
