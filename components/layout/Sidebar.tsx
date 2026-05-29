@@ -140,11 +140,17 @@ export function Sidebar() {
 
     // 1. Fetch the initial count on mount
     const fetchCount = async () => {
-      const { count } = await supabase
+      // AFTER
+      const isDPDAUser = ['DPDA', 'DPDO'].includes(user.role)
+
+      const query = supabase
         .from('forwarded_documents')
         .select('*', { count: 'exact', head: true })
         .eq('recipient_role', user.role)
-        .eq('status', 'pending')
+
+      const { count } = isDPDAUser
+        ? await query.eq('dpda_status', 'pending')   // DPDA uses dpda_status
+        : await query.eq('status', 'pending')         // everyone else uses status
       setUnreadInboxCount(count ?? 0)
     }
 
@@ -353,10 +359,12 @@ export function Sidebar() {
         {isDPDA && (
           <div className="px-3 pt-5 pb-2">
             <div className="px-3 mb-2 text-[10px] font-bold tracking-widest uppercase text-white/30">Management</div>
+            // AFTER
             {DPDA_NAV.map(item => (
               <NavLink key={item.href} item={item}
                 active={pathname === item.href || pendingHref === item.href}
-                onNavigate={setPendingHref} />
+                onNavigate={setPendingHref}
+                badgeCount={item.href === '/admin/dpda-inbox' ? unreadInboxCount : undefined} />
             ))}
           </div>
         )}
