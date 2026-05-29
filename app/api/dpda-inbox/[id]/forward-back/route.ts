@@ -1,20 +1,21 @@
 // app/api/dpda-inbox/[id]/forward-back/route.ts
-// Forward document back to sender with DPDA's decision and comments
+// Forward document back to original sender (e.g. P2) after DPDA review.
 //
-// FIXES APPLIED (this revision):
-//  1. Removed `status: 'returned'` from the DB update.
-//     The forwarded_documents.status column has a CHECK constraint:
-//       status IN ('pending', 'saved', 'dismissed')
-//     Writing 'returned' violates the constraint and causes a 500.
-//     Only dpda_status needs to be set to 'returned' — that column
-//     has no such restriction (it's a plain VARCHAR with no CHECK).
-//  2. Surfaced the Supabase updateError.message in the 500 response
-//     so the client sees the real reason instead of a generic message.
+// ROOT CAUSE FIX:
+//   The previous version only updated dpda_status on the DPDA's own
+//   forwarded_documents row. It never created or restored a row for the
+//   original sender (P2). P2's inbox query filters by status = 'pending',
+//   so they never saw the returned document.
+//
+//   Fix: after marking the DPDA row as returned, INSERT a new
+//   forwarded_documents row for the original sender with status = 'pending',
+//   copying all document metadata plus the dpda decision fields so P2 can
+//   see the outcome (approved / disapproved / returned_with_comments).
 //
 // PREVIOUS FIXES (kept):
-//  3. Also updates dpda_status → 'returned' so the UI's check works.
-//  4. DPDO role allowed alongside DPDA.
-//  5. recipient_role filter uses profile.role to support both roles.
+//   - status column NOT set to 'returned' (CHECK constraint violation)
+//   - DPDO role allowed alongside DPDA
+//   - Surfaces real DB error message on failure
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
@@ -46,9 +47,10 @@ export async function POST(
   setCurrentLogger(profile.role as AdminRole, user.id)
 
   try {
+    // 1. Fetch the DPDA's forwarded_documents row (with attachments)
     const { data: fwdDoc, error: fetchError } = await supabase
       .from('forwarded_documents')
-      .select('*')
+      .select('*, forwarded_attachments(*)')
       .eq('id', id)
       .eq('recipient_role', profile.role)
       .single()
@@ -57,37 +59,102 @@ export async function POST(
       return NextResponse.json({ error: 'Document not found' }, { status: 404 })
     }
 
+    // 2. Mark the DPDA row as returned.
+    // Only update dpda_status — the status column CHECK constraint only allows
+    // 'pending' | 'saved' | 'dismissed', so we must NOT write 'returned' there.
     const { data: updated, error: updateError } = await supabase
       .from('forwarded_documents')
       .update({
-        // FIX: Removed `status: 'returned'` — the status column has a CHECK
-        // constraint limiting it to ('pending', 'saved', 'dismissed').
-        // Writing 'returned' causes a Postgres constraint violation → 500.
-        // dpda_status has no such restriction, so it's safe to set here.
-        dpda_status: 'returned',
-        returned_at: new Date().toISOString(),
-        returned_by: user.id,
+        dpda_status:  'returned',
+        returned_at:  new Date().toISOString(),
+        returned_by:  user.id,
       })
       .eq('id', id)
       .select()
       .single()
 
     if (updateError || !updated) {
-      // FIX: Surface the real DB error so the client can display it
       const detail = updateError?.message ?? 'Unknown database error'
-      console.error('[ForwardBack] Update failed:', detail)
+      console.error('[ForwardBack] DPDA row update failed:', detail)
       return NextResponse.json(
-        { error: `Failed to forward back: ${detail}` },
+        { error: `Failed to update DPDA review status: ${detail}` },
         { status: 500 }
       )
     }
 
+    // 3. Re-insert a NEW pending row for the original sender.
+    // This is what actually puts the document back in P2's inbox.
+    // We copy all file metadata and carry over DPDA's decision fields
+    // so P2 can see the outcome (approved / disapproved / with comments).
+    const { data: returnedRow, error: insertError } = await supabase
+      .from('forwarded_documents')
+      .insert({
+        sender_role:           profile.role,         // DPDA is now the sender
+        recipient_role:        fwdDoc.sender_role,   // original sender (P2) is now recipient
+        original_doc_id:       fwdDoc.original_doc_id,
+        document_type:         fwdDoc.document_type,
+        title:                 fwdDoc.title,
+        notes:                 fwdDoc.notes               ?? null,
+        gdrive_file_id:        fwdDoc.gdrive_file_id,
+        gdrive_url:            fwdDoc.gdrive_url,
+        pool_account_id:       fwdDoc.pool_account_id,
+        file_name:             fwdDoc.file_name            ?? null,
+        file_size_bytes:       fwdDoc.file_size_bytes      ?? null,
+        mime_type:             fwdDoc.mime_type             ?? null,
+        priority:              fwdDoc.priority              ?? 'medium',
+        status:                'pending',                  // shows up in P2's inbox immediately
+        dpda_status:           fwdDoc.dpda_status,         // carries DPDA's decision
+        dpda_comments:         fwdDoc.dpda_comments        ?? '[]',
+        dpda_reviewed_at:      fwdDoc.dpda_reviewed_at     ?? null,
+        dpda_reviewed_by:      fwdDoc.dpda_reviewed_by     ?? null,
+        dpda_rejection_reason: fwdDoc.dpda_rejection_reason ?? null,
+      })
+      .select()
+      .single()
+
+    if (insertError || !returnedRow) {
+      const detail = insertError?.message ?? 'Unknown database error'
+      console.error('[ForwardBack] Return row insert failed:', detail)
+      return NextResponse.json(
+        { error: `Document status updated but failed to deliver to sender inbox: ${detail}` },
+        { status: 500 }
+      )
+    }
+
+    // 4. Copy attachments to the new row (non-fatal if it fails)
+    const attachments = fwdDoc.forwarded_attachments ?? []
+    if (attachments.length > 0) {
+      const attRows = attachments.map((att: any) => ({
+        forwarded_document_id:  returnedRow.id,
+        original_attachment_id: att.original_attachment_id ?? att.id,
+        parent_attachment_id:   att.parent_attachment_id   ?? null,
+        depth:                  att.depth ?? 0,
+        title:                  att.title,
+        file_name:              att.file_name       ?? null,
+        file_size_bytes:        att.file_size_bytes  ?? null,
+        mime_type:              att.mime_type        ?? null,
+        gdrive_file_id:         att.gdrive_file_id,
+        gdrive_url:             att.gdrive_url,
+        pool_account_id:        att.pool_account_id,
+      }))
+
+      const { error: attError } = await supabase
+        .from('forwarded_attachments')
+        .insert(attRows)
+
+      if (attError) {
+        console.warn('[ForwardBack] Attachment copy failed (non-fatal):', attError.message)
+      }
+    }
+
+    // 5. Audit log + notification
     await logAction('DPDA Forwarded Document Back', {
-      documentId:  fwdDoc.original_doc_id,
-      forwardedId: id,
+      documentId:    fwdDoc.original_doc_id,
+      forwardedId:   id,
+      returnedRowId: returnedRow.id,
       documentTitle: fwdDoc.title,
-      recipient:   fwdDoc.sender_role,
-      dpdaStatus:  fwdDoc.dpda_status,
+      recipient:     fwdDoc.sender_role,
+      dpdaStatus:    fwdDoc.dpda_status,
     })
 
     const statusLabel =
@@ -100,21 +167,22 @@ export async function POST(
         recipient_role: fwdDoc.sender_role,
         type:           'document_returned_from_dpda',
         title:          `Document Returned: ${fwdDoc.title}`,
-        message:        `DPDA has reviewed and returned your document with status: ${statusLabel}`,
+        message:        `DPDA has reviewed and returned your document with status: ${statusLabel}. Check your inbox.`,
         document_id:    fwdDoc.original_doc_id,
         document_type:  fwdDoc.document_type,
-        related_id:     id,
+        related_id:     returnedRow.id,
         is_read:        false,
         created_at:     new Date().toISOString(),
       })
     } catch (err) {
-      console.error('[ForwardBack] Notification insert failed (non-fatal):', err)
+      console.warn('[ForwardBack] Notification insert failed (non-fatal):', err)
     }
 
     return NextResponse.json({
-      success: true,
-      data:    updated,
-      message: 'Document forwarded back to sender successfully',
+      success:       true,
+      data:          updated,
+      returnedRowId: returnedRow.id,
+      message:       'Document forwarded back to sender successfully',
     })
   } catch (error) {
     console.error('[ForwardBack] Unexpected error:', error)
