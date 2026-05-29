@@ -18,6 +18,12 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  RotateCcw,
+  MessageCircle,
+  TrendingUp,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { DPDAFilterBar } from '@/components/dpda-inbox/DPDAFilterBar'
@@ -169,81 +175,95 @@ export default function DPDAInboxPage() {
       <div className="px-6 lg:px-8 w-full max-w-[1600px] mx-auto">
         {/* Header Section */}
         <div className="mb-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6 mb-8">
             <div className="flex items-center gap-4">
-              <div className="p-3.5 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-md">
-                <Inbox className="w-7 h-7 text-white" />
+              <div className="p-3 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg">
+                <Inbox className="w-8 h-8 text-white" />
               </div>
               <div>
-                <h1 className="text-3xl font-bold text-slate-900">Forwarded</h1>
-                <p className="text-slate-600 text-sm mt-0.5">
-                  Document review and approval workflow
+                <h1 className="text-4xl font-bold text-slate-950">Forwarded Documents</h1>
+                <p className="text-slate-500 text-sm mt-1 font-medium">
+                  Review and manage forwarded documents
                 </p>
               </div>
             </div>
             <button
               onClick={handleRefresh}
               disabled={refreshing}
-              className="flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg transition-colors font-medium shadow-sm hover:shadow-md disabled:cursor-not-allowed"
+              className="flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-slate-300 disabled:to-slate-400 text-white rounded-xl transition-all font-semibold shadow-md hover:shadow-lg disabled:cursor-not-allowed active:scale-95"
             >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-              {refreshing ? 'Refreshing...' : 'Refresh'}
+              <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{refreshing ? 'Refreshing...' : 'Refresh'}</span>
             </button>
           </div>
 
           {/* Status Summary Cards */}
           {/* FIX: Values now come from statusCounts (API totals), not filtered local page data */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
             {[
               {
                 label: 'Total Documents',
                 value: totalCount,
+                badge: 'GROWTH +4%',
                 color: 'from-slate-500 to-slate-600',
                 textColor: 'text-slate-700',
-                bgColor: 'bg-slate-50'
+                bgColor: 'bg-slate-50',
+                icon: TrendingUp
               },
               {
                 label: 'Pending Review',
                 value: statusCounts.pending,
+                badge: 'ACTION REQUIRED',
                 color: 'from-amber-500 to-amber-600',
                 textColor: 'text-amber-700',
-                bgColor: 'bg-amber-50'
+                bgColor: 'bg-amber-50',
+                icon: Clock
               },
               {
                 label: 'Approved',
                 value: statusCounts.approved,
+                badge: 'VERIFIED',
                 color: 'from-green-500 to-green-600',
                 textColor: 'text-green-700',
-                bgColor: 'bg-green-50'
+                bgColor: 'bg-green-50',
+                icon: CheckCircle2
               },
               {
                 label: 'Disapproved',
                 value: statusCounts.disapproved,
+                badge: 'REJECTED',
                 color: 'from-red-500 to-red-600',
                 textColor: 'text-red-700',
-                bgColor: 'bg-red-50'
+                bgColor: 'bg-red-50',
+                icon: XCircle
               },
               {
                 label: 'Returned',
                 value: statusCounts.returned,
+                badge: 'RE-EVALUATION',
                 color: 'from-purple-500 to-purple-600',
                 textColor: 'text-purple-700',
-                bgColor: 'bg-purple-50'
+                bgColor: 'bg-purple-50',
+                icon: RotateCcw
               },
-            ].map((stat) => (
-              <div
-                key={stat.label}
-                className={`${stat.bgColor} border border-slate-200 rounded-lg p-5 transition-all hover:shadow-md hover:border-slate-300`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <p className={`text-sm font-semibold ${stat.textColor}`}>{stat.label}</p>
-                  <div className={`bg-gradient-to-br ${stat.color} p-2 rounded-lg`}>
-                    <div className="w-3 h-3 bg-white rounded-full"></div>
+            ].map((stat) => {
+              const IconComponent = stat.icon
+              return (
+                <div
+                  key={stat.label}
+                  className={`${stat.bgColor} border border-slate-200 rounded-2xl p-6 transition-all hover:shadow-lg hover:border-slate-300 hover:scale-105`}
+                >
+                  <div className="mb-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <IconComponent className={`w-4 h-4 ${stat.textColor}`} />
+                      <p className={`text-xs font-bold tracking-widest uppercase ${stat.textColor}`}>{stat.badge}</p>
+                    </div>
                   </div>
+                  <p className={`text-xs font-bold tracking-wide uppercase ${stat.textColor} mb-2`}>{stat.label}</p>
+                  <p className="text-4xl font-bold text-slate-950">{stat.value}</p>
                 </div>
-                <p className="text-3xl font-bold text-slate-900">{stat.value}</p>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
 
@@ -279,7 +299,7 @@ export default function DPDAInboxPage() {
             <LoadingSpinner />
           </div>
         ) : documents.length === 0 ? (
-          <div className="bg-white rounded-lg border border-slate-200 py-16">
+          <div className="bg-white rounded-2xl border border-slate-200 py-16 shadow-lg">
             <EmptyState
               icon="📄"
               title="No forwarded files"
@@ -290,16 +310,14 @@ export default function DPDAInboxPage() {
           <>
             {/* Documents Table - Desktop View */}
             <div className="hidden lg:block">
-              <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
+              <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-lg">
                 {/* Table Header */}
-                <div className="bg-slate-50 border-b border-slate-200 px-6 py-4">
-                  <div className="grid grid-cols-12 gap-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                    <div className="col-span-3">File Title</div>
-                    <div className="col-span-2">From</div>
-                    <div className="col-span-2">Date</div>
+                <div className="bg-gradient-to-r from-slate-50 to-slate-100 border-b border-slate-200 px-6 py-5">
+                  <div className="grid grid-cols-10 gap-4 text-xs font-bold text-slate-600 uppercase tracking-widest">
+                    <div className="col-span-3">File Name</div>
+                    <div className="col-span-2">Sender</div>
+                    <div className="col-span-2">Received Date</div>
                     <div className="col-span-2">Status</div>
-                    <div className="col-span-1">Priority</div>
-                    <div className="col-span-2 text-right">Actions</div>
                   </div>
                 </div>
 
@@ -308,21 +326,21 @@ export default function DPDAInboxPage() {
                   {documents.map((doc) => (
                     <div
                       key={doc.id}
-                      className="border-b border-slate-200 last:border-b-0 px-6 py-4 hover:bg-slate-50 transition-colors cursor-pointer group"
+                      className="border-b border-slate-200 last:border-b-0 px-6 py-4 hover:bg-blue-50 transition-all cursor-pointer group duration-150"
                       onClick={() => handleViewDocument(doc)}
                     >
-                      <div className="grid grid-cols-12 gap-4 items-center">
+                      <div className="grid grid-cols-10 gap-4 items-center">
                         {/* Title Column */}
                         <div className="col-span-3 min-w-0">
                           <div className="flex items-start gap-3">
-                            <div className="p-2 bg-blue-50 rounded-lg flex-shrink-0 group-hover:bg-blue-100 transition-colors">
-                              <FileText className="w-4 h-4 text-blue-600" />
+                            <div className="p-2.5 bg-blue-100 rounded-xl flex-shrink-0 group-hover:bg-blue-200 transition-colors duration-150">
+                              <FileText className="w-5 h-5 text-blue-700" />
                             </div>
                             <div className="min-w-0">
-                              <p className="font-medium text-slate-900 truncate group-hover:text-blue-600 transition-colors">
+                              <p className="font-bold text-slate-900 truncate group-hover:text-blue-600 transition-colors duration-150 text-sm">
                                 {doc.title}
                               </p>
-                              <p className="text-xs text-slate-500 mt-0.5">
+                              <p className="text-xs text-slate-500 mt-1 font-medium">
                                 {doc.document_type === 'master_document' && 'Master Document'}
                                 {doc.document_type === 'admin_order' && 'Admin Order'}
                                 {doc.document_type === 'daily_journal' && 'Daily Journal'}
@@ -334,12 +352,12 @@ export default function DPDAInboxPage() {
 
                         {/* Sender Column */}
                         <div className="col-span-2">
-                          <p className="text-sm font-medium text-slate-700">{doc.sender_role}</p>
+                          <p className="text-sm font-bold text-slate-700">{doc.sender_role}</p>
                         </div>
 
                         {/* Date Column */}
                         <div className="col-span-2">
-                          <p className="text-sm text-slate-600">
+                          <p className="text-sm text-slate-600 font-medium">
                             {new Date(doc.created_at).toLocaleDateString('en-US', {
                               month: 'short',
                               day: 'numeric',
@@ -352,79 +370,39 @@ export default function DPDAInboxPage() {
                         <div className="col-span-2">
                           <div className="inline-flex">
                             {doc.dpda_status === 'pending' && (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 text-amber-700 rounded-md text-xs font-medium border border-amber-200">
-                                <div className="w-1.5 h-1.5 bg-amber-500 rounded-full"></div>
-                                Pending
+                              <span className="inline-flex items-center gap-2 px-3 py-2 bg-amber-50 text-amber-700 rounded-lg text-xs font-bold border border-amber-200 uppercase tracking-wide">
+                                <Clock className="w-4 h-4 flex-shrink-0" />
+                                PENDING REVIEW
                               </span>
                             )}
                             {doc.dpda_status === 'approved' && (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-green-50 text-green-700 rounded-md text-xs font-medium border border-green-200">
-                                <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-                                Approved
+                              <span className="inline-flex items-center gap-2 px-3 py-2 bg-green-50 text-green-700 rounded-lg text-xs font-bold border border-green-200 uppercase tracking-wide">
+                                <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                                APPROVED
                               </span>
                             )}
                             {doc.dpda_status === 'disapproved' && (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 text-red-700 rounded-md text-xs font-medium border border-red-200">
-                                <div className="w-1.5 h-1.5 bg-red-500 rounded-full"></div>
-                                Disapproved
+                              <span className="inline-flex items-center gap-2 px-3 py-2 bg-red-50 text-red-700 rounded-lg text-xs font-bold border border-red-200 uppercase tracking-wide">
+                                <XCircle className="w-4 h-4 flex-shrink-0" />
+                                REJECTED
                               </span>
                             )}
                             {doc.dpda_status === 'returned_with_comments' && (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-50 text-blue-700 rounded-md text-xs font-medium border border-blue-200">
-                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full"></div>
+                              <span className="inline-flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold border border-blue-200 uppercase tracking-wide">
+                                <MessageCircle className="w-4 h-4 flex-shrink-0" />
                                 With Comments
                               </span>
                             )}
                             {doc.dpda_status === 'returned' && (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-purple-50 text-purple-700 rounded-md text-xs font-medium border border-purple-200">
-                                <div className="w-1.5 h-1.5 bg-purple-500 rounded-full"></div>
-                                Returned
+                              <span className="inline-flex items-center gap-2 px-3 py-2 bg-purple-50 text-purple-700 rounded-lg text-xs font-bold border border-purple-200 uppercase tracking-wide">
+                                <RotateCcw className="w-4 h-4 flex-shrink-0" />
+                                RETURNED
                               </span>
                             )}
                           </div>
                         </div>
 
-                        {/* Priority Column */}
-                        <div className="col-span-1">
-                          {doc.priority && (
-                            <span className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${
-                              doc.priority === 'urgent' ? 'bg-red-100 text-red-700' :
-                              doc.priority === 'high' ? 'bg-orange-100 text-orange-700' :
-                              doc.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                              'bg-green-100 text-green-700'
-                            }`}>
-                              {doc.priority.charAt(0).toUpperCase() + doc.priority.slice(1)}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Actions Column */}
-                        {/* FIX: Attachment download button now opens the modal where files are listed */}
-                        <div className="col-span-2 flex justify-end gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleViewDocument(doc)
-                            }}
-                            className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg transition-colors text-xs font-medium border border-blue-200"
-                          >
-                            View
-                          </button>
-                          {doc.forwarded_attachments && doc.forwarded_attachments.length > 0 && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                // FIX: Open modal to view/download attachments instead of no-op
-                                handleViewDocument(doc)
-                              }}
-                              className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg transition-colors text-xs font-medium border border-slate-200 flex items-center gap-1"
-                              title="View attachments"
-                            >
-                              <Download className="w-3 h-3" />
-                              {doc.forwarded_attachments.length}
-                            </button>
-                          )}
-                        </div>
+                        
                       </div>
                     </div>
                   ))}
@@ -434,7 +412,7 @@ export default function DPDAInboxPage() {
 
             {/* Documents Grid - Mobile/Tablet View */}
             <div className="lg:hidden">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 {documents.map((doc) => (
                   <ForwardedFileCard
                     key={doc.id}
