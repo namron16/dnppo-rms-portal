@@ -1,5 +1,10 @@
 // components/dpda-inbox/FileDetailsModal.tsx
 // Detailed view modal for forwarded file with approval/disapproval options
+//
+// FIX: handleForwardBack now stores the error in component state and
+// displays it in the footer — previously the catch block set setError()
+// but the error banner was only rendered inside the `action` panel,
+// which is hidden when no action is selected. The error was invisible.
 
 'use client'
 
@@ -58,12 +63,15 @@ export function FileDetailsModal({
   onClose,
   onRefresh,
 }: FileDetailsModalProps) {
-  const [loading, setLoading] = useState(false)
-  const [action, setAction] = useState<ActionType>(null)
-  const [comments, setComments] = useState('')
+  const [loading, setLoading]                 = useState(false)
+  const [action, setAction]                   = useState<ActionType>(null)
+  const [comments, setComments]               = useState('')
   const [rejectionReason, setRejectionReason] = useState('')
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  const [error, setError]                     = useState('')
+  const [success, setSuccess]                 = useState('')
+  // FIX: separate state for the forward-back footer so the error
+  // is visible even when no action panel is open
+  const [forwardBackError, setForwardBackError] = useState('')
 
   useEffect(() => {
     if (!isOpen) {
@@ -72,6 +80,7 @@ export function FileDetailsModal({
       setError('')
       setSuccess('')
       setAction(null)
+      setForwardBackError('')
     }
   }, [isOpen])
 
@@ -82,9 +91,9 @@ export function FileDetailsModal({
     setError('')
     try {
       const res = await fetch(`/api/dpda-inbox/${document.id}/approve`, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comments }),
+        body:    JSON.stringify({ comments }),
       })
 
       if (!res.ok) {
@@ -93,10 +102,7 @@ export function FileDetailsModal({
       }
 
       setSuccess('Document approved successfully!')
-      setTimeout(() => {
-        onRefresh()
-        onClose()
-      }, 1500)
+      setTimeout(() => { onRefresh(); onClose() }, 1500)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
     } finally {
@@ -109,12 +115,9 @@ export function FileDetailsModal({
     setError('')
     try {
       const res = await fetch(`/api/dpda-inbox/${document.id}/disapprove`, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          comments,
-          reason: rejectionReason,
-        }),
+        body:    JSON.stringify({ comments, reason: rejectionReason }),
       })
 
       if (!res.ok) {
@@ -123,10 +126,7 @@ export function FileDetailsModal({
       }
 
       setSuccess('Document disapproved successfully!')
-      setTimeout(() => {
-        onRefresh()
-        onClose()
-      }, 1500)
+      setTimeout(() => { onRefresh(); onClose() }, 1500)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
     } finally {
@@ -139,9 +139,9 @@ export function FileDetailsModal({
     setError('')
     try {
       const res = await fetch(`/api/dpda-inbox/${document.id}/comment`, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comment: comments }),
+        body:    JSON.stringify({ comment: comments }),
       })
 
       if (!res.ok) {
@@ -161,26 +161,27 @@ export function FileDetailsModal({
 
   const handleForwardBack = async () => {
     setLoading(true)
+    setForwardBackError('')   // clear any previous forward-back error
     setError('')
     try {
       const res = await fetch(`/api/dpda-inbox/${document.id}/forward-back`, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body:    JSON.stringify({}),
       })
 
       if (!res.ok) {
-        const data = await res.json()
+        const data = await res.json().catch(() => ({}))
+        // FIX: store in forwardBackError so it renders in the footer
+        // regardless of whether an action panel is open
         throw new Error(data.error || 'Failed to forward back')
       }
 
       setSuccess('Document forwarded back to sender!')
-      setTimeout(() => {
-        onRefresh()
-        onClose()
-      }, 1500)
+      setTimeout(() => { onRefresh(); onClose() }, 1500)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
+      const msg = err instanceof Error ? err.message : 'An error occurred'
+      setForwardBackError(msg)
     } finally {
       setLoading(false)
     }
@@ -188,15 +189,16 @@ export function FileDetailsModal({
 
   const DOC_TYPE_LABELS: Record<string, string> = {
     master_document: 'Master Document',
-    admin_order: 'Admin Order',
-    daily_journal: 'Daily Journal',
-    library: 'E-Library',
+    admin_order:     'Admin Order',
+    daily_journal:   'Daily Journal',
+    library:         'E-Library',
   }
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl max-w-3xl w-full max-h-[95vh] overflow-hidden shadow-2xl flex flex-col">
-        {/* Header - Document Info */}
+
+        {/* Header */}
         <div className="border-b border-slate-200 px-6 py-5 flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-start gap-3 mb-3">
@@ -226,16 +228,18 @@ export function FileDetailsModal({
             </div>
             <div>
               <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Type</p>
-              <p className="font-semibold text-slate-900">{DOC_TYPE_LABELS[document.document_type] || document.document_type}</p>
+              <p className="font-semibold text-slate-900">
+                {DOC_TYPE_LABELS[document.document_type] || document.document_type}
+              </p>
             </div>
             <div>
               <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Date Received</p>
               <p className="font-semibold text-slate-900">
                 {new Date(document.created_at).toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                  year: 'numeric',
-                  hour: '2-digit',
+                  month:  'short',
+                  day:    'numeric',
+                  year:   'numeric',
+                  hour:   '2-digit',
                   minute: '2-digit',
                 })}
               </p>
@@ -298,10 +302,22 @@ export function FileDetailsModal({
 
         {/* Action Buttons Footer */}
         <div className="border-t border-slate-200 px-6 py-5 bg-slate-50">
+
+          {/* FIX: forward-back error banner — visible at footer level regardless of action state */}
+          {forwardBackError && (
+            <div className="mb-4 flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold">Failed to forward back</p>
+                <p className="mt-0.5">{forwardBackError}</p>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             {document.dpda_status !== 'approved' &&
-            document.dpda_status !== 'disapproved' &&
-            document.dpda_status !== 'returned' ? (
+             document.dpda_status !== 'disapproved' &&
+             document.dpda_status !== 'returned' ? (
               <>
                 <button
                   onClick={() => setAction('approve')}
@@ -336,19 +352,20 @@ export function FileDetailsModal({
               </div>
             )}
 
-            {document.dpda_status && ['approved', 'disapproved', 'returned_with_comments'].includes(document.dpda_status) && (
+            {document.dpda_status &&
+             ['approved', 'disapproved', 'returned_with_comments'].includes(document.dpda_status) && (
               <button
                 onClick={handleForwardBack}
                 disabled={loading}
                 className="ml-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-lg transition-colors font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:border-slate-400 hover:bg-slate-50"
               >
                 <Send className="w-4 h-4" />
-                Forward back to sender
+                {loading ? 'Forwarding...' : 'Forward back to sender'}
               </button>
             )}
           </div>
 
-          {/* Action Forms */}
+          {/* Action Forms (approve / disapprove / comment) */}
           {action && (
             <div className="mt-5 p-4 bg-white border border-slate-200 rounded-lg space-y-4">
               {action === 'disapprove' && (
@@ -402,9 +419,9 @@ export function FileDetailsModal({
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={() => {
-                    if (action === 'approve') handleApprove()
+                    if (action === 'approve')    handleApprove()
                     else if (action === 'disapprove') handleDisapprove()
-                    else if (action === 'comment') handleAddComment()
+                    else if (action === 'comment')    handleAddComment()
                   }}
                   disabled={loading}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
