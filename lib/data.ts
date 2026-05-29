@@ -1,4 +1,21 @@
 // lib/data.ts
+//
+// FIX: All four add* functions now persist Drive pool columns:
+//   gdrive_file_id, gdrive_url (as gdrive_url), pool_account_id,
+//   file_name, file_size_bytes, mime_type.
+//
+// These columns were already being returned by the upload flow
+// (useDriveUpload → /api/gdrive/upload) and stored in the newDoc/newSO/etc.
+// objects in the modal components, but lib/data.ts was silently dropping them
+// because the insert payloads never included them.
+//
+// Without these columns, forwarding always produced rows with
+// gdrive_file_id = null / pool_account_id = null, causing the recipient to
+// hit a 422 "missing Drive metadata" error when trying to save.
+//
+// The matching DB migration (add_gdrive_pool_columns_forwarded.sql) already
+// added these columns to all four tables — this file just starts writing them.
+
 import { supabase } from './supabase'
 import type {
   User, MasterDocument, SpecialOrder,
@@ -30,26 +47,70 @@ export const USERS: User[] = [
 /* ════════════════════════════════════════════
    MASTER DOCUMENTS
 ════════════════════════════════════════════ */
-export async function getMasterDocuments(): Promise<(MasterDocument & { fileUrl?: string; uploaded_by?: string })[]> {
+
+export async function getMasterDocuments(): Promise<(MasterDocument & {
+  fileUrl?: string
+  uploaded_by?: string
+  gdrive_file_id?: string
+  gdrive_url?: string
+  pool_account_id?: string
+  file_name?: string
+  file_size_bytes?: number
+  mime_type?: string
+})[]> {
   const { data, error } = await supabase
     .from('master_documents').select('*').order('created_at', { ascending: true })
   if (error) { console.warn('Supabase unavailable (master_documents):', error.message); return [] }
   return (data ?? []).map(d => ({
-    id: d.id, title: d.title, level: d.level, type: d.type,
-    date: d.date, size: d.size, tag: d.tag, fileUrl: d.file_url ?? undefined,
-    created_at: d.created_at,
-    // FIX: return uploaded_by so the page can filter per-user visibility
-    uploaded_by: d.uploaded_by ?? undefined,
+    id:              d.id,
+    title:           d.title,
+    level:           d.level,
+    type:            d.type,
+    date:            d.date,
+    size:            d.size,
+    tag:             d.tag,
+    fileUrl:         d.file_url          ?? undefined,
+    created_at:      d.created_at,
+    uploaded_by:     d.uploaded_by       ?? undefined,
+    // FIX: return Drive pool columns so ForwardDocumentModal gets them
+    gdrive_file_id:  d.gdrive_file_id    ?? undefined,
+    gdrive_url:      d.gdrive_url        ?? undefined,
+    pool_account_id: d.pool_account_id   ?? undefined,
+    file_name:       d.file_name         ?? undefined,
+    file_size_bytes: d.file_size_bytes   ?? undefined,
+    mime_type:       d.mime_type         ?? undefined,
     taggedAdminAccess: Array.isArray(d.tagged_admin_access) ? d.tagged_admin_access : undefined,
   }))
 }
 
-export async function addMasterDocument(doc: MasterDocument & { fileUrl?: string; uploaded_by?: string }): Promise<void> {
+export async function addMasterDocument(doc: MasterDocument & {
+  fileUrl?:         string
+  uploaded_by?:     string
+  // FIX: accept Drive pool columns so they get persisted to the DB
+  gdrive_file_id?:  string
+  gdrive_url?:      string
+  pool_account_id?: string
+  file_name?:       string
+  file_size_bytes?: number
+  mime_type?:       string
+}): Promise<void> {
   const { error } = await supabase.from('master_documents').insert({
-    id: doc.id, title: doc.title, level: doc.level, type: doc.type,
-    date: doc.date, size: doc.size, tag: doc.tag, file_url: doc.fileUrl ?? null,
-    // FIX: persist the uploader's role so each user only sees their own documents
-    uploaded_by: doc.uploaded_by ?? null,
+    id:              doc.id,
+    title:           doc.title,
+    level:           doc.level,
+    type:            doc.type,
+    date:            doc.date,
+    size:            doc.size,
+    tag:             doc.tag,
+    file_url:        doc.fileUrl          ?? null,
+    uploaded_by:     doc.uploaded_by      ?? null,
+    // FIX: persist Drive pool metadata so document can be forwarded later
+    gdrive_file_id:  doc.gdrive_file_id   ?? null,
+    gdrive_url:      doc.gdrive_url       ?? null,
+    pool_account_id: doc.pool_account_id  ?? null,
+    file_name:       doc.file_name        ?? null,
+    file_size_bytes: doc.file_size_bytes  ?? null,
+    mime_type:       doc.mime_type        ?? null,
   })
   if (error) console.warn('Supabase unavailable (add master_document):', error.message)
 }
@@ -57,13 +118,16 @@ export async function addMasterDocument(doc: MasterDocument & { fileUrl?: string
 export async function updateMasterDocument(doc: MasterDocument & { fileUrl?: string }): Promise<void> {
   const { error } = await supabase.from('master_documents')
     .update({
-      title: doc.title, level: doc.level, type: doc.type, date: doc.date, tag: doc.tag,
+      title: doc.title,
+      level: doc.level,
+      type:  doc.type,
+      date:  doc.date,
+      tag:   doc.tag,
     })
     .eq('id', doc.id)
   if (error) console.warn('Supabase unavailable (update master_document):', error.message)
 }
 
-// Master document archive state is tracked in archived_docs.
 export async function archiveMasterDocument(id: string): Promise<void> {
   void id
 }
@@ -76,27 +140,67 @@ export async function deleteMasterDocument(id: string): Promise<void> {
 /* ════════════════════════════════════════════
    SPECIAL ORDERS
 ════════════════════════════════════════════ */
-export async function getSpecialOrders(): Promise<(SpecialOrder & { fileUrl?: string; uploaded_by?: string })[]> {
+
+export async function getSpecialOrders(): Promise<(SpecialOrder & {
+  fileUrl?:         string
+  uploaded_by?:     string
+  gdrive_file_id?:  string
+  gdrive_url?:      string
+  pool_account_id?: string
+  file_name?:       string
+  file_size_bytes?: number
+  mime_type?:       string
+})[]> {
   const { data, error } = await supabase
     .from('special_orders').select('*').order('created_at', { ascending: false })
   if (error) { console.warn('Supabase unavailable (special_orders):', error.message); return [] }
   return (data ?? []).map(d => ({
-    id: d.id, reference: d.reference, subject: d.subject,
-    date: d.date, attachments: d.attachments, status: d.status,
-    fileUrl: d.file_url ?? undefined,
-    created_at: d.created_at,
-    // FIX: return uploaded_by for per-user filtering
-    uploaded_by: d.uploaded_by ?? undefined,
+    id:              d.id,
+    reference:       d.reference,
+    subject:         d.subject,
+    date:            d.date,
+    attachments:     d.attachments,
+    status:          d.status,
+    fileUrl:         d.file_url          ?? undefined,
+    created_at:      d.created_at,
+    uploaded_by:     d.uploaded_by       ?? undefined,
+    // FIX: return Drive pool columns
+    gdrive_file_id:  d.gdrive_file_id    ?? undefined,
+    gdrive_url:      d.gdrive_url        ?? undefined,
+    pool_account_id: d.pool_account_id   ?? undefined,
+    file_name:       d.file_name         ?? undefined,
+    file_size_bytes: d.file_size_bytes   ?? undefined,
+    mime_type:       d.mime_type         ?? undefined,
   }))
 }
 
-export async function addSpecialOrder(so: SpecialOrder & { fileUrl?: string; uploaded_by?: string }): Promise<void> {
+export async function addSpecialOrder(so: SpecialOrder & {
+  fileUrl?:         string
+  uploaded_by?:     string
+  // FIX: accept Drive pool columns
+  gdrive_file_id?:  string
+  gdrive_url?:      string
+  pool_account_id?: string
+  file_name?:       string
+  file_size_bytes?: number
+  mime_type?:       string
+}): Promise<void> {
   const { error } = await supabase.from('special_orders').insert({
-    id: so.id, reference: so.reference, subject: so.subject,
-    date: so.date, attachments: so.attachments, status: so.status,
-    file_url: so.fileUrl ?? null,
-    // FIX: persist the uploader's role
-    uploaded_by: so.uploaded_by ?? null,
+    id:              so.id,
+    reference:       so.reference,
+    subject:         so.subject,
+    date:            so.date,
+    attachments:     so.attachments,
+    status:          so.status,
+    file_url:        so.fileUrl          ?? null,
+    uploaded_by:     so.uploaded_by      ?? null,
+    // FIX: persist Drive pool metadata
+    gdrive_file_id:  so.gdrive_file_id   ?? null,
+    gdrive_url:      so.gdrive_url       ?? null,
+    pool_account_id: so.pool_account_id  ?? null,
+    file_name:       so.file_name        ?? null,
+    file_size_bytes: so.file_size_bytes  ?? null,
+    mime_type:       so.mime_type        ?? null,
   })
   if (error) console.warn('Supabase unavailable (add special_order):', error.message)
 }
@@ -106,9 +210,9 @@ export async function updateSpecialOrder(so: SpecialOrder & { fileUrl?: string }
     .from('special_orders')
     .update({
       reference: so.reference,
-      subject: so.subject,
-      date: so.date,
-      status: so.status,
+      subject:   so.subject,
+      date:      so.date,
+      status:    so.status,
     })
     .eq('id', so.id)
   if (error) console.warn('Supabase unavailable (update special_order):', error.message)
@@ -136,15 +240,15 @@ export interface SpecialOrderAttachment {
 
 function normaliseSpecialOrderAttachment(row: any): SpecialOrderAttachment {
   return {
-    id: row.id,
+    id:               row.id,
     special_order_id: row.special_order_id,
-    file_name: row.file_name,
-    file_url: row.file_url,
-    file_size: row.file_size,
-    file_type: row.file_type,
-    uploaded_at: row.uploaded_at,
-    uploaded_by: row.uploaded_by,
-    archived: row.archived === true,
+    file_name:        row.file_name,
+    file_url:         row.file_url,
+    file_size:        row.file_size,
+    file_type:        row.file_type,
+    uploaded_at:      row.uploaded_at,
+    uploaded_by:      row.uploaded_by,
+    archived:         row.archived === true,
   }
 }
 
@@ -175,9 +279,9 @@ export async function addSpecialOrderAttachment(
   if (error) {
     console.error('Failed to add special_order_attachment:', {
       message: error.message,
-      code: error.code,
+      code:    error.code,
       details: error.details,
-      hint: error.hint,
+      hint:    error.hint,
     })
     return null
   }
@@ -224,8 +328,8 @@ export async function syncSpecialOrderAttachmentMeta(specialOrderId: string): Pr
     return { attachments: 0 }
   }
 
-  const active = (data ?? []).map(normaliseSpecialOrderAttachment)
-  const latestUrl = active.length > 0 ? active[0].file_url : null
+  const active     = (data ?? []).map(normaliseSpecialOrderAttachment)
+  const latestUrl  = active.length > 0 ? active[0].file_url : null
 
   const { error: updateError } = await supabase
     .from('special_orders')
@@ -238,7 +342,7 @@ export async function syncSpecialOrderAttachmentMeta(specialOrderId: string): Pr
 
   return {
     attachments: active.length,
-    fileUrl: latestUrl ?? undefined,
+    fileUrl:     latestUrl ?? undefined,
   }
 }
 
@@ -247,7 +351,6 @@ export async function deleteSpecialOrder(id: string): Promise<void> {
   if (error) console.warn('Supabase unavailable (delete special_order):', error.message)
 }
 
-// Sets status to ARCHIVED — record is kept, not deleted
 export async function archiveSpecialOrder(id: string): Promise<void> {
   const { error } = await supabase
     .from('special_orders').update({ status: 'ARCHIVED' }).eq('id', id)
@@ -257,7 +360,14 @@ export async function archiveSpecialOrder(id: string): Promise<void> {
 /* ════════════════════════════════════════════
    DAILY JOURNALS
 ════════════════════════════════════════════ */
-export async function getDailyJournals(): Promise<(DailyJournalRecord & { uploaded_by?: string })[]> {
+
+export async function getDailyJournals(): Promise<(DailyJournalRecord & {
+  uploaded_by?:     string
+  gdrive_file_id?:  string
+  pool_account_id?: string
+  mime_type?:       string
+  file_size_bytes?: number
+})[]> {
   const { data, error } = await supabase
     .from('daily_journals')
     .select('*')
@@ -270,40 +380,59 @@ export async function getDailyJournals(): Promise<(DailyJournalRecord & { upload
   }
 
   return (data ?? []).map(d => ({
-    id: d.id,
-    title: d.title,
-    type: d.type,
-    author: d.author,
-    date: d.date,
-    content: d.content ?? undefined,
-    summary: d.summary ?? undefined,
-    fileUrl: d.file_url ?? undefined,
-    status: d.status,
-    attachments: d.attachments ?? (d.file_url ? 1 : 0),
-    archived: d.archived ?? false,
-    created_at: d.created_at,
-    // FIX: return uploaded_by for per-user filtering
-    uploaded_by: d.uploaded_by ?? undefined,
+    id:              d.id,
+    title:           d.title,
+    type:            d.type,
+    author:          d.author,
+    date:            d.date,
+    content:         d.content          ?? undefined,
+    summary:         d.summary          ?? undefined,
+    fileUrl:         d.file_url         ?? undefined,
+    status:          d.status,
+    attachments:     d.attachments      ?? (d.file_url ? 1 : 0),
+    archived:        d.archived         ?? false,
+    created_at:      d.created_at,
+    uploaded_by:     d.uploaded_by      ?? undefined,
+    // FIX: return Drive pool columns
+    gdrive_file_id:  d.gdrive_file_id   ?? undefined,
+    pool_account_id: d.pool_account_id  ?? undefined,
+    mime_type:       d.mime_type        ?? undefined,
+    file_size_bytes: d.file_size_bytes  ?? undefined,
   }))
 }
 
-export async function addDailyJournal(entry: DailyJournalRecord & { uploaded_by?: string }): Promise<void> {
+export async function addDailyJournal(entry: DailyJournalRecord & {
+  uploaded_by?:     string
+  // FIX: accept Drive pool columns
+  gdrive_file_id?:  string
+  gdrive_url?:      string
+  pool_account_id?: string
+  file_name?:       string
+  file_size_bytes?: number
+  mime_type?:       string
+}): Promise<void> {
   const { error } = await supabase
     .from('daily_journals')
     .insert({
-      id: entry.id,
-      title: entry.title,
-      type: entry.type,
-      author: entry.author,
-      date: entry.date,
-      content: entry.content ?? null,
-      summary: entry.summary ?? null,
-      file_url: entry.fileUrl ?? null,
-      status: entry.status,
-      attachments: entry.attachments,
-      archived: entry.archived ?? false,
-      // FIX: persist the uploader's role
-      uploaded_by: entry.uploaded_by ?? null,
+      id:              entry.id,
+      title:           entry.title,
+      type:            entry.type,
+      author:          entry.author,
+      date:            entry.date,
+      content:         entry.content         ?? null,
+      summary:         entry.summary         ?? null,
+      file_url:        entry.fileUrl         ?? null,
+      status:          entry.status,
+      attachments:     entry.attachments,
+      archived:        entry.archived        ?? false,
+      uploaded_by:     entry.uploaded_by     ?? null,
+      // FIX: persist Drive pool metadata
+      gdrive_file_id:  entry.gdrive_file_id  ?? null,
+      gdrive_url:      entry.gdrive_url      ?? null,
+      pool_account_id: entry.pool_account_id ?? null,
+      file_name:       entry.file_name       ?? null,
+      file_size_bytes: entry.file_size_bytes ?? null,
+      mime_type:       entry.mime_type       ?? null,
     })
 
   if (error) throw new Error(`Unable to save daily journal: ${error.message}`)
@@ -313,17 +442,17 @@ export async function updateDailyJournal(entry: DailyJournalRecord): Promise<voi
   const { error } = await supabase
     .from('daily_journals')
     .update({
-      title: entry.title,
-      type: entry.type,
-      author: entry.author,
-      date: entry.date,
-      content: entry.content ?? null,
-      summary: entry.summary ?? null,
-      file_url: entry.fileUrl ?? null,
-      status: entry.status,
+      title:       entry.title,
+      type:        entry.type,
+      author:      entry.author,
+      date:        entry.date,
+      content:     entry.content   ?? null,
+      summary:     entry.summary   ?? null,
+      file_url:    entry.fileUrl   ?? null,
+      status:      entry.status,
       attachments: entry.attachments,
-      archived: entry.archived ?? false,
-      updated_at: new Date().toISOString(),
+      archived:    entry.archived  ?? false,
+      updated_at:  new Date().toISOString(),
     })
     .eq('id', entry.id)
 
@@ -356,8 +485,11 @@ export async function getConfidentialDocs(): Promise<(ConfidentialDoc & { fileUr
     .from('confidential_docs').select('*').order('created_at', { ascending: false })
   if (error) { console.warn('Supabase unavailable (confidential_docs):', error.message); return [] }
   return (data ?? []).map(d => ({
-    id: d.id, title: d.title, classification: d.classification,
-    date: d.date, access: d.access,
+    id:           d.id,
+    title:        d.title,
+    classification: d.classification,
+    date:         d.date,
+    access:       d.access,
     fileUrl:      d.file_url      ?? undefined,
     passwordHash: d.password_hash ?? undefined,
     archived:     d.archived      ?? false,
@@ -369,10 +501,13 @@ export async function addConfidentialDoc(
   doc: ConfidentialDoc & { fileUrl?: string; passwordHash?: string }
 ): Promise<boolean> {
   const { error } = await supabase.from('confidential_docs').insert({
-    id: doc.id, title: doc.title, classification: doc.classification,
-    date: doc.date, access: doc.access,
-    file_url:      doc.fileUrl      ?? null,
-    password_hash: doc.passwordHash ?? null,
+    id:             doc.id,
+    title:          doc.title,
+    classification: doc.classification,
+    date:           doc.date,
+    access:         doc.access,
+    file_url:       doc.fileUrl      ?? null,
+    password_hash:  doc.passwordHash ?? null,
   })
   if (error) {
     console.warn('Supabase unavailable (add confidential_doc):', error.message)
@@ -394,13 +529,13 @@ export async function updateConfidentialDoc(
   }
 ): Promise<boolean> {
   const payload: Record<string, unknown> = {
-    title: updates.title,
+    title:          updates.title,
     classification: updates.classification,
-    date: updates.date,
-    access: updates.access,
+    date:           updates.date,
+    access:         updates.access,
   }
 
-  if (updates.fileUrl !== undefined) payload.file_url = updates.fileUrl
+  if (updates.fileUrl      !== undefined) payload.file_url      = updates.fileUrl
   if (updates.passwordHash !== undefined) payload.password_hash = updates.passwordHash
 
   const { error } = await supabase
@@ -421,7 +556,6 @@ export async function deleteConfidentialDoc(id: string): Promise<void> {
   if (error) console.warn('Supabase unavailable (delete confidential_doc):', error.message)
 }
 
-// Sets archived to true — record is kept, not deleted
 export async function archiveConfidentialDoc(id: string): Promise<boolean> {
   const { error } = await supabase
     .from('confidential_docs').update({ archived: true }).eq('id', id)
@@ -436,37 +570,71 @@ export async function archiveConfidentialDoc(id: string): Promise<boolean> {
 /* ════════════════════════════════════════════
    LIBRARY ITEMS
 ════════════════════════════════════════════ */
-export async function getLibraryItems(): Promise<(LibraryItem & { fileUrl?: string; description?: string; uploaded_by?: string })[]> {
+
+export async function getLibraryItems(): Promise<(LibraryItem & {
+  fileUrl?:         string
+  description?:     string
+  uploaded_by?:     string
+  gdrive_file_id?:  string
+  gdrive_url?:      string
+  pool_account_id?: string
+  file_name?:       string
+  file_size_bytes?: number
+  mime_type?:       string
+})[]> {
   const { data, error } = await supabase
     .from('library_items').select('*').order('created_at', { ascending: false })
   if (error) { console.warn('Supabase unavailable (library_items):', error.message); return [] }
   return (data ?? []).map(d => ({
-    id:          d.id,
-    title:       d.title,
-    category:    d.category,
-    size:        d.size,
-    dateAdded:   d.date_added,
-    fileUrl:     d.file_url     ?? undefined,
-    description: d.description  ?? undefined,
-    created_at:  d.created_at,
-    // FIX: return uploaded_by for per-user filtering
-    uploaded_by: d.uploaded_by  ?? undefined,
+    id:              d.id,
+    title:           d.title,
+    category:        d.category,
+    size:            d.size,
+    dateAdded:       d.date_added,
+    fileUrl:         d.file_url          ?? undefined,
+    description:     d.description       ?? undefined,
+    created_at:      d.created_at,
+    uploaded_by:     d.uploaded_by       ?? undefined,
+    // FIX: return Drive pool columns
+    gdrive_file_id:  d.gdrive_file_id    ?? undefined,
+    gdrive_url:      d.gdrive_url        ?? undefined,
+    pool_account_id: d.pool_account_id   ?? undefined,
+    file_name:       d.file_name         ?? undefined,
+    file_size_bytes: d.file_size_bytes   ?? undefined,
+    mime_type:       d.mime_type         ?? undefined,
   }))
 }
 
 export async function addLibraryItem(
-  item: LibraryItem & { fileUrl?: string; description?: string; uploaded_by?: string }
+  item: LibraryItem & {
+    fileUrl?:         string
+    description?:     string
+    uploaded_by?:     string
+    // FIX: accept Drive pool columns
+    gdrive_file_id?:  string
+    gdrive_url?:      string
+    pool_account_id?: string
+    file_name?:       string
+    file_size_bytes?: number
+    mime_type?:       string
+  }
 ): Promise<void> {
   const { error } = await supabase.from('library_items').insert({
-    id:          item.id,
-    title:       item.title,
-    category:    item.category,
-    size:        item.size,
-    date_added:  item.dateAdded,
-    file_url:    item.fileUrl    ?? null,
-    description: item.description ?? null,
-    // FIX: persist the uploader's role
-    uploaded_by: item.uploaded_by ?? null,
+    id:              item.id,
+    title:           item.title,
+    category:        item.category,
+    size:            item.size,
+    date_added:      item.dateAdded,
+    file_url:        item.fileUrl         ?? null,
+    description:     item.description     ?? null,
+    uploaded_by:     item.uploaded_by     ?? null,
+    // FIX: persist Drive pool metadata
+    gdrive_file_id:  item.gdrive_file_id  ?? null,
+    gdrive_url:      item.gdrive_url      ?? null,
+    pool_account_id: item.pool_account_id ?? null,
+    file_name:       item.file_name       ?? null,
+    file_size_bytes: item.file_size_bytes ?? null,
+    mime_type:       item.mime_type       ?? null,
   })
   if (error) console.warn('Supabase unavailable (add library_item):', error.message)
 }
@@ -477,9 +645,9 @@ export async function updateLibraryItem(
   const { error } = await supabase
     .from('library_items')
     .update({
-      title: item.title,
-      category: item.category,
-      date_added: item.dateAdded,
+      title:       item.title,
+      category:    item.category,
+      date_added:  item.dateAdded,
       description: item.description ?? null,
     })
     .eq('id', item.id)
@@ -491,7 +659,6 @@ export async function deleteLibraryItem(id: string): Promise<void> {
   if (error) console.warn('Supabase unavailable (delete library_item):', error.message)
 }
 
-// Soft-archive library item by setting archived flag when available.
 export async function archiveLibraryItem(id: string): Promise<void> {
   const { error } = await supabase
     .from('library_items')
@@ -508,16 +675,29 @@ export async function getActivityLogs(): Promise<ActivityLog[]> {
     .from('activity_logs').select('*').order('created_at', { ascending: false })
   if (error) { console.warn('Supabase unavailable (activity_logs):', error.message); return [] }
   return (data ?? []).map(d => ({
-    id: d.id, user: d.user_name, userInitials: d.user_initials, userColor: d.user_color,
-    action: d.action, document: d.document, date: d.date, time: d.time, device: d.device,
+    id:           d.id,
+    user:         d.user_name,
+    userInitials: d.user_initials,
+    userColor:    d.user_color,
+    action:       d.action,
+    document:     d.document,
+    date:         d.date,
+    time:         d.time,
+    device:       d.device,
   }))
 }
 
 export async function addActivityLog(log: ActivityLog): Promise<void> {
   const { error } = await supabase.from('activity_logs').insert({
-    id: log.id, user_name: log.user, user_initials: log.userInitials,
-    user_color: log.userColor, action: log.action, document: log.document,
-    date: log.date, time: log.time, device: log.device,
+    id:            log.id,
+    user_name:     log.user,
+    user_initials: log.userInitials,
+    user_color:    log.userColor,
+    action:        log.action,
+    document:      log.document,
+    date:          log.date,
+    time:          log.time,
+    device:        log.device,
   })
   if (error) console.warn('Supabase unavailable (add activity_log):', error.message)
 }
@@ -536,8 +716,11 @@ export async function addArchivedDoc(item: {
   id: string; title: string; type: string; archivedDate: string; archivedBy: string
 }): Promise<boolean> {
   const { error } = await supabase.from('archived_docs').insert({
-    id: item.id, title: item.title, type: item.type,
-    archived_date: item.archivedDate, archived_by: item.archivedBy,
+    id:            item.id,
+    title:         item.title,
+    type:          item.type,
+    archived_date: item.archivedDate,
+    archived_by:   item.archivedBy,
   })
   if (error) {
     console.warn('Supabase unavailable (add archived_doc):', error.message)
@@ -588,7 +771,7 @@ export async function restoreArchivedDoc(id: string): Promise<void> {
   }
 
   if (id.startsWith('arc-md-') || archiveType === 'master document') {
-    // No row update needed for master_documents. Removing archived_docs entry restores visibility.
+    // No row update needed for master_documents.
   }
 
   if (id.startsWith('arc-lib-') || archiveType === 'library item') {
@@ -610,8 +793,14 @@ export async function restoreArchivedDoc(id: string): Promise<void> {
    ORG CHART — placeholder
 ════════════════════════════════════════════ */
 export const ORG_CHART: OrgNode = {
-  id: 'org-root', initials: '--', rank: '', name: 'No Data',
-  title: 'Add personnel to populate the org chart', unit: '', color: '#94a3b8', children: [],
+  id:       'org-root',
+  initials: '--',
+  rank:     '',
+  name:     'No Data',
+  title:    'Add personnel to populate the org chart',
+  unit:     '',
+  color:    '#94a3b8',
+  children: [],
 }
 
 /* ════════════════════════════════════════════
