@@ -8,6 +8,8 @@
 //     "Drive upload failed") instead of a generic alert.
 //  2. The Save button is disabled (with a tooltip) while a save is in progress
 //     so users cannot double-submit.
+//  3. DPDA comments are now displayed when a returned document is expanded,
+//     so P2 can read the feedback that was left before the file was sent back.
 
 import React, { useEffect, useState, useCallback } from 'react'
 import { Pagination }  from '@/components/ui/Pagination'
@@ -17,7 +19,7 @@ import {
   FileText, FolderOpen, BookOpen, ClipboardList,
   User, Calendar, ChevronDown, ChevronUp,
   ExternalLink, Save, X, CheckCircle, Plus, RefreshCw,
-  AlertCircle,
+  AlertCircle, MessageCircle,
 } from 'lucide-react'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,7 +39,25 @@ type ForwardedDocument = {
   status:                'pending' | 'saved' | 'dismissed'
   received_at:           string
   saved_at:              string | null
+  // FIX 3: dpda_comments may arrive as a parsed array or a JSON string
+  dpda_comments?:        any
+  dpda_status?:          string
   forwarded_attachments: any[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Safely parse dpda_comments regardless of whether Supabase returned it as a
+// parsed array or a raw JSON string. Returns an empty array on any failure.
+function parseComments(raw: any): Array<{ text: string; author: string; timestamp: string; action: string }> {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw) } catch { return [] }
+  }
+  return []
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,6 +168,51 @@ function SaveErrorBanner({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FIX 3: DPDA Comments accordion section
+// Shown inside the expanded row when the document was returned with comments.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DpdaComments({ raw }: { raw: any }) {
+  const comments = parseComments(raw)
+  if (comments.length === 0) return null
+
+  return (
+    <div className="border-t bg-blue-50 px-4 py-3">
+      <div className="flex items-center gap-1.5 mb-2">
+        <MessageCircle className="w-3.5 h-3.5 text-blue-600" />
+        <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+          DPDA Comments
+        </p>
+      </div>
+      <div className="space-y-2">
+        {comments.map((c, idx) => (
+          <div key={idx} className="bg-white border border-blue-100 rounded-lg px-3 py-2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-bold text-blue-700">{c.author}</span>
+              <span className="text-xs text-slate-400">
+                {new Date(c.timestamp).toLocaleDateString('en-US', {
+                  month: 'short', day: 'numeric', year: 'numeric',
+                })}
+              </span>
+            </div>
+            <p className="text-xs text-slate-700">{c.text}</p>
+            {c.action && c.action !== 'comment' && (
+              <span className={`inline-block mt-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
+                c.action === 'approved'    ? 'bg-green-100 text-green-700' :
+                c.action === 'disapproved' ? 'bg-red-100 text-red-700'    :
+                'bg-slate-100 text-slate-500'
+              }`}>
+                {c.action}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Row component
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -182,6 +247,13 @@ function DocRow({
   const isSaving     = saving === doc.id
   const isDismissing = dismissing === doc.id
 
+  // FIX 3: check if this document has comments to show in expanded panel
+  const comments     = parseComments(doc.dpda_comments)
+  const hasComments  = comments.length > 0
+
+  // Whether there's anything to show in the accordion (attachments or comments)
+  const hasExpandable = (doc.forwarded_attachments?.length ?? 0) > 0 || hasComments
+
   const date = new Date(doc.received_at).toLocaleDateString('en-PH', {
     month: 'short', day: '2-digit', year: 'numeric',
   })
@@ -202,9 +274,18 @@ function DocRow({
           <p className="text-sm font-semibold text-slate-900 truncate leading-snug">
             {doc.title}
           </p>
-          <p className="text-xs text-slate-400 mt-0.5 uppercase tracking-wide">
-            {ext}{size ? ` • ${size}` : ''}
-          </p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-xs text-slate-400 uppercase tracking-wide">
+              {ext}{size ? ` • ${size}` : ''}
+            </p>
+            {/* FIX 3: badge to flag returned files that carry comments */}
+            {hasComments && doc.dpda_status === 'returned_with_comments' && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-200">
+                <MessageCircle className="w-2.5 h-2.5" />
+                Comments
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Sender */}
@@ -231,12 +312,12 @@ function DocRow({
         {/* Actions */}
         <div className="flex items-center gap-2 flex-shrink-0">
 
-          {/* Attachments toggle */}
-          {doc.forwarded_attachments?.length > 0 && (
+          {/* Accordion toggle — shown when there are attachments or comments */}
+          {hasExpandable && (
             <button
               onClick={() => onToggleExpand(doc.id)}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition"
-              title="Show attachments"
+              title="Show details"
             >
               {isExpanded
                 ? <ChevronUp   className="w-4 h-4" />
@@ -306,14 +387,22 @@ function DocRow({
         />
       )}
 
-      {/* ── Attachments accordion ────────────────────────────── */}
-      {isExpanded && tree.length > 0 && (
-        <div className="border-t bg-slate-50 px-4 py-2.5">
-          <p className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">
-            Attachments
-          </p>
-          <AttachmentTree nodes={tree} depth={0} />
-        </div>
+      {/* ── Expanded accordion ───────────────────────────────── */}
+      {isExpanded && (
+        <>
+          {/* FIX 3: DPDA comments shown first so they are immediately visible */}
+          {hasComments && <DpdaComments raw={doc.dpda_comments} />}
+
+          {/* Attachments (unchanged) */}
+          {tree.length > 0 && (
+            <div className="border-t bg-slate-50 px-4 py-2.5">
+              <p className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">
+                Attachments
+              </p>
+              <AttachmentTree nodes={tree} depth={0} />
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -365,7 +454,7 @@ export default function ForwardedInboxPage() {
   const [dismissing, setDismissing] = useState<string | null>(null)
   const [expanded, setExpanded]     = useState<string | null>(null)
 
-  // FIX: Per-row save error state (id + human-readable message)
+  // Per-row save error state (id + human-readable message)
   const [saveError, setSaveError]   = useState<{ id: string; message: string } | null>(null)
 
   const fetchInbox = useCallback(async () => {
@@ -381,24 +470,17 @@ export default function ForwardedInboxPage() {
 
   useEffect(() => { fetchInbox() }, [fetchInbox])
 
-  // ── FIX: handleSave reads the error/code from the response and surfaces it ──
-  //
-  // Before: any failure just showed a generic alert(json.error).
-  // After:  error is shown inline under the failing row with context-aware
-  //         guidance (e.g. "connect your Drive account at /admin/gdrive").
   const handleSave = async (doc: ForwardedDocument) => {
     setSaving(doc.id)
-    setSaveError(null)  // clear any previous error for this row
+    setSaveError(null)
 
     try {
       const res  = await fetch(`/api/forward/${doc.id}/save`, { method: 'POST' })
       const json = await res.json()
 
       if (json.success) {
-        // Refresh the list so the row moves to the "saved" tab
         fetchInbox()
 
-        // If some attachments failed (non-fatal) surface that too
         if (json.attachmentErrors?.length) {
           setSaveError({
             id:      doc.id,
@@ -406,7 +488,6 @@ export default function ForwardedInboxPage() {
           })
         }
       } else {
-        // Map error codes to user-friendly messages
         const code    = json.code as string | undefined
         const rawMsg  = json.error as string | undefined
 
