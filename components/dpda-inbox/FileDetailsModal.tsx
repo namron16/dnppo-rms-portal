@@ -1,10 +1,20 @@
 // components/dpda-inbox/FileDetailsModal.tsx
 // Detailed view modal for forwarded file with approval/disapproval options
 //
-// FIX: handleForwardBack now stores the error in component state and
-// displays it in the footer — previously the catch block set setError()
-// but the error banner was only rendered inside the `action` panel,
-// which is hidden when no action is selected. The error was invisible.
+// FIXES APPLIED:
+//  1. handleForwardBack now stores the error in component state and
+//     displays it in the footer — previously the catch block set setError()
+//     but the error banner was only rendered inside the `action` panel,
+//     which is hidden when no action is selected. The error was invisible.
+//
+//  2. handleAddComment: after a successful comment POST, we no longer show
+//     a "Comment added" success toast. Instead we immediately flip the local
+//     document status to 'returned_with_comments' and clear the action panel
+//     so the "Forward back to sender" button appears right away — the DPDA
+//     no longer has to close and reopen the modal.
+//
+//  3. Comments from DPDA are now rendered inside the modal so P2 can read
+//     them when they open the returned document from their own inbox.
 
 'use client'
 
@@ -18,6 +28,7 @@ import {
   Download,
   Send,
   AlertCircle,
+  MessageCircle,
 } from 'lucide-react'
 
 export interface ForwardedDocument {
@@ -34,7 +45,7 @@ export interface ForwardedDocument {
   status: 'pending' | 'approved' | 'disapproved' | 'returned_with_comments' | 'returned'
   priority?: string
   created_at: string
-  dpda_comments?: string
+  dpda_comments?: any        // JSONB array from DB — may arrive as string or parsed array
   dpda_status?: string
   dpda_reviewed_at?: string
   forwarded_attachments?: Array<{
@@ -57,6 +68,18 @@ export interface FileDetailsModalProps {
 
 type ActionType = 'approve' | 'disapprove' | 'comment' | null
 
+// ── Helper: safely parse dpda_comments regardless of storage format ───────────
+// The column is JSONB so Supabase may return it already parsed (array) or as a
+// raw JSON string depending on the client version. Handle both.
+function parseComments(raw: any): Array<{ text: string; author: string; timestamp: string; action: string }> {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw) } catch { return [] }
+  }
+  return []
+}
+
 export function FileDetailsModal({
   document,
   isOpen,
@@ -69,8 +92,13 @@ export function FileDetailsModal({
   const [rejectionReason, setRejectionReason] = useState('')
   const [error, setError]                     = useState('')
   const [success, setSuccess]                 = useState('')
-  // FIX: separate state for the forward-back footer so the error
-  // is visible even when no action panel is open
+
+  // FIX 2: local copy of dpda_status so we can update it optimistically
+  // after adding a comment without waiting for the parent to re-fetch.
+  const [localDpdaStatus, setLocalDpdaStatus] = useState<string | undefined>(undefined)
+
+  // FIX 1: separate state for forward-back errors so they are visible
+  // at footer level even when no action panel is open.
   const [forwardBackError, setForwardBackError] = useState('')
 
   useEffect(() => {
@@ -81,10 +109,22 @@ export function FileDetailsModal({
       setSuccess('')
       setAction(null)
       setForwardBackError('')
+      setLocalDpdaStatus(undefined)
     }
   }, [isOpen])
 
+  // Sync localDpdaStatus whenever the document prop changes
+  useEffect(() => {
+    setLocalDpdaStatus(document?.dpda_status)
+  }, [document?.dpda_status])
+
   if (!isOpen || !document) return null
+
+  // Use localDpdaStatus for rendering so optimistic updates apply immediately
+  const effectiveDpdaStatus = localDpdaStatus ?? document.dpda_status
+
+  // Parsed comments array (FIX 3)
+  const parsedComments = parseComments(document.dpda_comments)
 
   const handleApprove = async () => {
     setLoading(true)
@@ -134,6 +174,11 @@ export function FileDetailsModal({
     }
   }
 
+  // FIX 2: After a successful comment:
+  //   • Do NOT show a success toast.
+  //   • Immediately flip local status to 'returned_with_comments'.
+  //   • Clear the action panel so the footer re-renders with the
+  //     "Forward back to sender" button visible right away.
   const handleAddComment = async () => {
     setLoading(true)
     setError('')
@@ -149,9 +194,15 @@ export function FileDetailsModal({
         throw new Error(data.error || 'Failed to add comment')
       }
 
-      setSuccess('Comment added successfully!')
+      // Optimistically update local status so the Forward Back button appears
+      setLocalDpdaStatus('returned_with_comments')
+
+      // Clear the comment form and close the action panel
       setComments('')
-      setTimeout(() => onRefresh(), 1000)
+      setAction(null)
+
+      // Trigger background refresh (non-blocking — modal stays open)
+      onRefresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
     } finally {
@@ -161,7 +212,7 @@ export function FileDetailsModal({
 
   const handleForwardBack = async () => {
     setLoading(true)
-    setForwardBackError('')   // clear any previous forward-back error
+    setForwardBackError('')
     setError('')
     try {
       const res = await fetch(`/api/dpda-inbox/${document.id}/forward-back`, {
@@ -172,8 +223,6 @@ export function FileDetailsModal({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        // FIX: store in forwardBackError so it renders in the footer
-        // regardless of whether an action panel is open
         throw new Error(data.error || 'Failed to forward back')
       }
 
@@ -247,27 +296,27 @@ export function FileDetailsModal({
             <div>
               <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Current Status</p>
               <div>
-                {document.dpda_status === 'pending' && (
+                {effectiveDpdaStatus === 'pending' && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 text-amber-700 rounded-md text-xs font-bold border border-amber-200">
                     Pending Review
                   </span>
                 )}
-                {document.dpda_status === 'approved' && (
+                {effectiveDpdaStatus === 'approved' && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-50 text-green-700 rounded-md text-xs font-bold border border-green-200">
                     Approved
                   </span>
                 )}
-                {document.dpda_status === 'disapproved' && (
+                {effectiveDpdaStatus === 'disapproved' && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-50 text-red-700 rounded-md text-xs font-bold border border-red-200">
                     Rejected
                   </span>
                 )}
-                {document.dpda_status === 'returned_with_comments' && (
+                {effectiveDpdaStatus === 'returned_with_comments' && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 rounded-md text-xs font-bold border border-blue-200">
                     With Comments
                   </span>
                 )}
-                {document.dpda_status === 'returned' && (
+                {effectiveDpdaStatus === 'returned' && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-50 text-purple-700 rounded-md text-xs font-bold border border-purple-200">
                     Returned
                   </span>
@@ -277,9 +326,11 @@ export function FileDetailsModal({
           </div>
         </div>
 
-        {/* Document Viewer Area */}
+        {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto bg-white">
-          <div className="flex items-center justify-center min-h-full p-6">
+
+          {/* Document Viewer Area */}
+          <div className="flex items-center justify-center p-6 border-b border-slate-100">
             <div className="bg-slate-100 rounded-lg w-full aspect-video flex items-center justify-center border border-slate-300">
               <div className="text-center">
                 <div className="p-4 bg-slate-200 rounded-lg inline-block mb-4">
@@ -298,12 +349,50 @@ export function FileDetailsModal({
               </div>
             </div>
           </div>
+
+          {/* FIX 3: DPDA Comments section — visible to both DPDA and P2 ─────── */}
+          {parsedComments.length > 0 && (
+            <div className="px-6 py-4 border-b border-slate-100">
+              <div className="flex items-center gap-2 mb-3">
+                <MessageCircle className="w-4 h-4 text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">
+                  DPDA Comments
+                </h3>
+              </div>
+              <div className="space-y-3">
+                {parsedComments.map((c, idx) => (
+                  <div key={idx} className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold text-blue-700">{c.author}</span>
+                      <span className="text-xs text-slate-400">
+                        {new Date(c.timestamp).toLocaleDateString('en-US', {
+                          month: 'short', day: 'numeric', year: 'numeric',
+                          hour: '2-digit', minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                    <p className="text-sm text-slate-700">{c.text}</p>
+                    {c.action && c.action !== 'comment' && (
+                      <span className={`inline-block mt-1.5 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
+                        c.action === 'approved'    ? 'bg-green-100 text-green-700' :
+                        c.action === 'disapproved' ? 'bg-red-100 text-red-700'    :
+                        'bg-slate-100 text-slate-500'
+                      }`}>
+                        {c.action}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
         </div>
 
         {/* Action Buttons Footer */}
         <div className="border-t border-slate-200 px-6 py-5 bg-slate-50">
 
-          {/* FIX: forward-back error banner — visible at footer level regardless of action state */}
+          {/* FIX 1: forward-back error banner — visible regardless of action panel state */}
           {forwardBackError && (
             <div className="mb-4 flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -314,10 +403,18 @@ export function FileDetailsModal({
             </div>
           )}
 
+          {/* Global success banner (approve / disapprove / forward-back) */}
+          {success && (
+            <div className="mb-4 flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
+              <CheckCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{success}</span>
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
-            {document.dpda_status !== 'approved' &&
-             document.dpda_status !== 'disapproved' &&
-             document.dpda_status !== 'returned' ? (
+            {effectiveDpdaStatus !== 'approved' &&
+             effectiveDpdaStatus !== 'disapproved' &&
+             effectiveDpdaStatus !== 'returned' ? (
               <>
                 <button
                   onClick={() => setAction('approve')}
@@ -347,13 +444,15 @@ export function FileDetailsModal({
             ) : (
               <div className="flex-1 text-center">
                 <p className="text-sm font-semibold text-slate-700">
-                  This document has been {document.dpda_status?.replace(/_/g, ' ')}.
+                  This document has been {effectiveDpdaStatus?.replace(/_/g, ' ')}.
                 </p>
               </div>
             )}
 
-            {document.dpda_status &&
-             ['approved', 'disapproved', 'returned_with_comments'].includes(document.dpda_status) && (
+            {/* FIX 2: "Forward back" button uses effectiveDpdaStatus so it shows
+                immediately after a successful comment without needing a modal reopen. */}
+            {effectiveDpdaStatus &&
+             ['approved', 'disapproved', 'returned_with_comments'].includes(effectiveDpdaStatus) && (
               <button
                 onClick={handleForwardBack}
                 disabled={loading}
@@ -409,17 +508,10 @@ export function FileDetailsModal({
                 </div>
               )}
 
-              {success && (
-                <div className="flex items-start gap-3 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
-                  <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <span>{success}</span>
-                </div>
-              )}
-
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={() => {
-                    if (action === 'approve')    handleApprove()
+                    if (action === 'approve')         handleApprove()
                     else if (action === 'disapprove') handleDisapprove()
                     else if (action === 'comment')    handleAddComment()
                   }}
