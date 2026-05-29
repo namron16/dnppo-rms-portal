@@ -36,7 +36,7 @@ import {
 } from '@/lib/data'
 import { supabase }             from '@/lib/supabase'
 import { statusBadgeClass }     from '@/lib/utils'
-import { logAction, logDeleteDocument, logRenameAttachment } from '@/lib/adminLogger'
+import { logAction, logDeleteDocument, logRenameAttachment, logArchiveDocument } from '@/lib/adminLogger'
 import { useAuth } from '@/lib/auth'
 import type { AdminRole } from '@/lib/auth'
 import { canUploadDocuments } from '@/lib/permissions'
@@ -890,6 +890,7 @@ export default function AdminOrdersPage() {
   const [attachmentsMap, setAttachmentsMap] = useState<Map<string, SOAttachment[]>>(new Map())
   const [selectedOrder,  setSelectedOrder]  = useState<SOWithUrl | null>(null)
   const [uploadingId,    setUploadingId]    = useState<string | null>(null)
+  const [isArchiving,    setIsArchiving]    = useState(false)
 
   useRealtimeSpecialOrders({ setOrders, setAttachmentsMap, user })
 
@@ -1051,17 +1052,52 @@ export default function AdminOrdersPage() {
   async function handleArchiveOrder() {
     const so = archiveDisc.payload
     if (!so) return
-    const today = new Date().toISOString().split('T')[0]
-    await archiveSpecialOrder(so.id)
-    await addArchivedDoc({
-      id: `arc-so-${so.id}`, title: `${so.reference} – ${so.subject}`,
-      type: 'Special Order', archivedDate: today, archivedBy: 'Admin',
-    })
-    setOrders(prev => prev.filter(o => o.id !== so.id))
-    setSelectedOrder(null)
-    setNavStack([])
-    toast.success(`"${so.reference}" has been moved to the Archive.`)
-    archiveDisc.close()
+    setIsArchiving(true)
+    try {
+      // Step 1: Move file in Google Drive to the archive folder
+      const gdriveFileId  = (so as any).gdrive_file_id
+      const poolAccountId = (so as any).pool_account_id
+
+      if (gdriveFileId && poolAccountId) {
+        const res = await fetch('/api/gdrive/archive', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            gdriveFileId,
+            poolAccountId,
+            category: 'special_orders',
+          }),
+        })
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}))
+          toast.error(`Could not move file to Drive archive: ${json.error ?? 'Unknown error'}`)
+        }
+      }
+
+      // Step 2: Add to archived_docs table
+      const today = new Date().toISOString().split('T')[0]
+      await addArchivedDoc({
+        id: `arc-so-${so.id}`, 
+        title: `${so.reference} – ${so.subject}`,
+        type: 'Special Order', 
+        archivedDate: today, 
+        archivedBy: user?.role ?? 'P1',
+      })
+
+      // Step 3: Mark as archived
+      await archiveSpecialOrder(so.id)
+      await logArchiveDocument(`${so.reference} – ${so.subject}`, 'special order')
+
+      // Step 4: Remove from UI
+      setOrders(prev => prev.filter(o => o.id !== so.id))
+      setSelectedOrder(null)
+      setNavStack([])
+      toast.success(`"${so.reference}" has been moved to the Archive.`)
+      archiveDisc.close()
+    } finally {
+      setIsArchiving(false)
+    }
   }
 
   async function handleDeleteOrder() {
@@ -1340,8 +1376,9 @@ export default function AdminOrdersPage() {
       <ConfirmDialog
         open={archiveDisc.isOpen}
         title="Archive Special Order"
-        message={`Archive "${archiveDisc.payload?.reference}"? It will be moved to the Archive page.`}
+        message={`Archive "${archiveDisc.payload?.reference}"? This will move the uploaded file to an archive folder in the connected Google Drive account, and remove it from the active document list. You can restore archived documents from the Archive section if needed..`}
         confirmLabel="Archive" variant="danger"
+        isLoading={isArchiving}
         onConfirm={handleArchiveOrder}
         onCancel={archiveDisc.close}
       />

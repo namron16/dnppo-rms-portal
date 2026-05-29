@@ -311,6 +311,7 @@ export default function DailyJournalsPage() {
   const [loading, setLoading]   = useState(true)
   const [entries, setEntries]   = useState<JournalRecord[]>([])
   const [activeType, setActiveType] = useState<'ALL' | JournalEntry['type']>('ALL')
+  const [isArchiving, setIsArchiving] = useState(false)
 
   useRealtimeDailyJournals(setEntries)
 
@@ -460,14 +461,51 @@ export default function DailyJournalsPage() {
     if (!canArchive) { toast.error('You do not have permission to archive journal entries.'); return }
     const item = archiveDisc.payload
     if (!item) return
-    const today = new Date().toISOString().split('T')[0]
-    await archiveDailyJournal(item.id)
-    await addArchivedDoc({ id: `arc-dj-${item.id}`, title: item.title, type: 'Daily Journal', archivedDate: today, archivedBy: 'Admin' })
-    await logArchiveJournal(item.title)
-    setEntries(prev => prev.filter(e => e.id !== item.id))
-    if (viewDisc.payload?.id === item.id) viewDisc.close()
-    archiveDisc.close()
-    toast.success(`"${item.title}" has been archived.`)
+    setIsArchiving(true)
+    try {
+      // Step 1: Move file in Google Drive to the archive folder
+      const gdriveFileId  = item.gdrive_file_id
+      const poolAccountId = item.pool_account_id
+
+      if (gdriveFileId && poolAccountId) {
+        const res = await fetch('/api/gdrive/archive', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            gdriveFileId,
+            poolAccountId,
+            category: 'daily_journals',
+          }),
+        })
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}))
+          toast.error(`Could not move file to Drive archive: ${json.error ?? 'Unknown error'}`)
+        }
+      }
+
+      // Step 2: Add to archived_docs table
+      const today = new Date().toISOString().split('T')[0]
+      await addArchivedDoc({ 
+        id: `arc-dj-${item.id}`, 
+        title: item.title, 
+        type: 'Daily Journal', 
+        archivedDate: today, 
+        archivedBy: user?.role ?? 'P1',
+      })
+
+      // Step 3: Mark as archived
+      await archiveDailyJournal(item.id)
+      await logArchiveJournal(item.title)
+
+      // Step 4: Remove from UI
+      setEntries(prev => prev.filter(e => e.id !== item.id))
+      if (viewDisc.payload?.id === item.id) viewDisc.close()
+      archiveDisc.close()
+      toast.success(`"${item.title}" has been archived.`)
+    } finally {
+      setIsArchiving(false)
+    }
   }
 
   // ── Delete ─────────────────────────────────────────────────────────────────
@@ -703,6 +741,7 @@ export default function DailyJournalsPage() {
           title="Archive Journal Entry"
           message={`Move "${archiveDisc.payload?.title}" to the Archive?`}
           confirmLabel="Archive" variant="danger"
+          isLoading={isArchiving}
           onConfirm={handleArchive}
           onCancel={archiveDisc.close}
         />

@@ -367,6 +367,7 @@ export default function LibraryPage() {
   const [items,   setItems]   = useState<LibraryItemWithUrl[]>([])
   const [loading, setLoading] = useState(true)
   const [catFilter, setCat]   = useState<LibraryCategory | 'ALL'>('ALL')
+  const [isArchiving, setIsArchiving] = useState(false)
 
   useRealtimeLibraryItems(setItems as any)
 
@@ -426,13 +427,50 @@ export default function LibraryPage() {
     if (!canArchive) { toast.error('You do not have permission to archive e-Library items.'); return }
     const item = archiveDisc.payload
     if (!item) return
-    const today = new Date().toISOString().split('T')[0]
-    await addArchivedDoc({ id: `arc-lib-${item.id}`, title: item.title, type: 'Library Item', archivedDate: today, archivedBy: 'Admin' })
-    await archiveLibraryItem(item.id)
-    await logArchiveLibraryItem(item.title)
-    setItems(prev => prev.filter(i => i.id !== item.id))
-    toast.success(`"${item.title}" has been archived.`)
-    archiveDisc.close()
+    setIsArchiving(true)
+    try {
+      // Step 1: Move file in Google Drive to the archive folder
+      const gdriveFileId  = item.gdrive_file_id
+      const poolAccountId = item.pool_account_id
+
+      if (gdriveFileId && poolAccountId) {
+        const res = await fetch('/api/gdrive/archive', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            gdriveFileId,
+            poolAccountId,
+            category: 'library',
+          }),
+        })
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}))
+          toast.error(`Could not move file to Drive archive: ${json.error ?? 'Unknown error'}`)
+        }
+      }
+
+      // Step 2: Add to archived_docs table
+      const today = new Date().toISOString().split('T')[0]
+      await addArchivedDoc({ 
+        id: `arc-lib-${item.id}`, 
+        title: item.title, 
+        type: 'Library Item', 
+        archivedDate: today, 
+        archivedBy: user?.role ?? 'P1',
+      })
+
+      // Step 3: Mark as archived
+      await archiveLibraryItem(item.id)
+      await logArchiveLibraryItem(item.title)
+
+      // Step 4: Remove from UI
+      setItems(prev => prev.filter(i => i.id !== item.id))
+      toast.success(`"${item.title}" has been archived.`)
+      archiveDisc.close()
+    } finally {
+      setIsArchiving(false)
+    }
   }
 
   async function handleSave(updated: LibraryItemWithUrl) {
@@ -679,6 +717,7 @@ export default function LibraryPage() {
           title="Archive Library Item"
           message={`Archive "${archiveDisc.payload?.title}"? It will be moved to the Archive page.`}
           confirmLabel="Archive" variant="danger"
+          isLoading={isArchiving}
           onConfirm={handleArchive}
           onCancel={archiveDisc.close}
         />

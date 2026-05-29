@@ -33,6 +33,7 @@ export default function ArchivePage() {
   useRealtimeArchivedDocs(setItems)
   const [loading, setLoading] = useState(true)
   const [typeFilter, setType] = useState('All Types')
+  const [isRestoring, setIsRestoring] = useState(false)
 
   const restoreDisc  = useDisclosure<ArchivedItem>()
   const deleteDisc   = useDisclosure<ArchivedItem>()
@@ -70,10 +71,15 @@ export default function ArchivePage() {
   async function handleRestore() {
     const item = restoreDisc.payload
     if (!item) return
-    await restoreArchivedDoc(item.id)
-    setItems(prev => prev.filter(i => i.id !== item.id))
-    toast.success(`"${item.title}" has been restored.`)
-    restoreDisc.close()
+    setIsRestoring(true)
+    try {
+      await restoreArchivedDoc(item.id)
+      setItems(prev => prev.filter(i => i.id !== item.id))
+      toast.success(`"${item.title}" has been restored.`)
+      restoreDisc.close()
+    } finally {
+      setIsRestoring(false)
+    }
   }
 
   async function handleDelete() {
@@ -161,6 +167,7 @@ export default function ArchivePage() {
         title="Restore Document"
         message={`Restore "${restoreDisc.payload?.title}" to its original location?`}
         confirmLabel="Restore" variant="primary"
+        isLoading={isRestoring}
         onConfirm={handleRestore}
         onCancel={restoreDisc.close}
       />

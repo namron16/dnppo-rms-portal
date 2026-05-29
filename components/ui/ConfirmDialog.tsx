@@ -26,6 +26,7 @@ interface ConfirmDialogProps {
   confirmLabel?: string
   cancelLabel?: string
   variant?: 'danger' | 'primary'
+  isLoading?: boolean
   onConfirm: () => void
   onCancel: () => void
 }
@@ -37,6 +38,7 @@ export function ConfirmDialog({
   confirmLabel = 'Confirm',
   cancelLabel  = 'Cancel',
   variant      = 'danger',
+  isLoading    = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -85,8 +87,14 @@ export function ConfirmDialog({
           <h3 className="mb-2 text-base font-bold text-slate-800">{title}</h3>
           <p className="mb-6 text-sm leading-relaxed text-slate-500">{message}</p>
           <div className="flex justify-end gap-2.5">
-            <Button variant="outline" onClick={onCancel}>{cancelLabel}</Button>
-            <Button variant={variant} onClick={onConfirm}>{confirmLabel}</Button>
+            <Button variant="outline" onClick={onCancel} disabled={isLoading}>{cancelLabel}</Button>
+            <Button variant={variant} onClick={onConfirm} disabled={isLoading}>
+              {isLoading ? (
+                <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              ) : (
+                confirmLabel
+              )}
+            </Button>
           </div>
         </div>
       </div>
