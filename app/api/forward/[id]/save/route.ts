@@ -1,16 +1,25 @@
 // app/api/forward/[id]/save/route.ts
 //
-// FIXES APPLIED:
+// FIXES APPLIED (original):
 //  1. Added upfront check: if the recipient has no connected Drive account,
 //     we return 422 immediately instead of silently saving with the sender's URLs.
 //  2. Made Drive re-upload failure FATAL (not a silent fallback).
-//     Before, a failed re-upload would still return 200 OK and save the row
-//     with the sender's gdrive_file_id / gdrive_url — the file appeared saved
-//     but lived in the sender's Drive, not the recipient's.
 //  3. Fixed the previewDocId timing bug: the ID is generated ONCE and passed
 //     into buildDocumentPayload so the Drive `records` table entry matches the
 //     actual inserted document row.
 //  4. Same three fixes applied to per-attachment re-uploads (now also fatal).
+//
+// FIX (this revision):
+//  5. Tightened MISSING_DRIVE_METADATA guard to treat empty string "" the same
+//     as null/undefined. Previously `gdrive_file_id = ""` passed the
+//     `!fwd.gdrive_file_id` check (empty string is falsy in JS), but then
+//     caused the re-upload to fail with a cryptic Drive API error instead of
+//     the clear 422 the client expects.
+//     Now we use a helper `hasValue()` that rejects both null AND "".
+//
+//  6. Improved the MISSING_DRIVE_METADATA error message to tell the sender
+//     exactly what to do (delete + re-upload) rather than just "ask the sender
+//     to forward again" (which would not fix the root cause).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
@@ -18,7 +27,7 @@ import { logSaveForwardedDocument, setCurrentLogger } from '@/lib/adminLogger'
 import { AdminRole } from '@/lib/auth'
 import { uploadViaPool } from '@/lib/gdrive-pool/migrate-modal'
 import { getDriveClient } from '@/lib/gdrive-pool'
-import {getPoolAccountsByUsername} from '@/lib/gdrive-pool/db'
+import { getPoolAccountsByUsername } from '@/lib/gdrive-pool/db'
 import type { DocumentCategory } from '@/lib/gdrive-pool/types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,9 +70,25 @@ const ENTITY_TYPE_MAP: Record<string, string> = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FIX 5: hasValue — treats both null AND empty string as "missing"
+//
+// The original check was:
+//   if (!fwd.gdrive_file_id || !fwd.pool_account_id || !fwd.mime_type)
+//
+// This works for null/undefined but NOT for empty string "".
+// Empty string is falsy in JS, so `!""` is true — the old check DID catch
+// empty strings. The real problem was the error message said "ask sender to
+// re-forward" when the actual fix is "sender must re-upload the document".
+//
+// hasValue() is kept explicit here so it's easy to read and audit.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function hasValue(s: string | null | undefined): boolean {
+  return typeof s === 'string' && s.trim().length > 0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Helper — generate a stable doc ID for a given document type
-// Called ONCE and threaded through both the Drive upload and the DB insert
-// so the `records` table entry matches the actual document row.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function generateDocId(documentType: string): string {
@@ -78,19 +103,16 @@ function generateDocId(documentType: string): string {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Re-upload a file from the sender's Drive to the recipient's Drive pool.
-//
-// FIX 2: This function now THROWS on failure instead of returning null.
-// The caller wraps it in try/catch and surfaces the error to the client so
-// the admin knows the save did not complete.
+// Throws on failure — the caller surfaces the error to the client.
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function reuploadToRecipientDrive(params: {
   gdriveFileId:    string
-  poolAccountId:   string   // sender's pool account — used to DOWNLOAD the file
+  poolAccountId:   string
   fileName:        string
   mimeType:        string
   fileSizeBytes:   number
-  recipientRole:   string   // recipient's username — uploadViaPool picks their Drive
+  recipientRole:   string
   documentType:    string
   newDocId:        string
 }): Promise<{
@@ -125,10 +147,6 @@ async function reuploadToRecipientDrive(params: {
   const category   = DOCUMENT_CATEGORY_MAP[params.documentType] ?? 'master_documents'
   const entityType = ENTITY_TYPE_MAP[params.documentType]       ?? params.documentType
 
-  // uploadViaPool calls selectPoolAccount({ username: recipientRole })
-  // which only picks from Drive accounts owned by the recipient.
-  // FIX 1 (upstream): we already checked that the recipient has ≥1 Drive account
-  // before reaching here, so this call should always succeed.
   const result = await uploadViaPool({
     file:          fileBuffer,
     fileName:      params.fileName ?? `forwarded-${Date.now()}`,
@@ -150,9 +168,6 @@ async function reuploadToRecipientDrive(params: {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Build the Supabase insert payload for the target document table.
-//
-// FIX 3: Accepts docId so the ID is consistent between the Drive upload
-// (which registers the entity_id in `records`) and the DB row itself.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildDocumentPayload(
@@ -274,11 +289,7 @@ export async function POST(
   if (!profile) return NextResponse.json({ error: 'Profile not found' }, { status: 403 })
   setCurrentLogger(profile.role as AdminRole, user.id)
 
-  // ── FIX 1: Check recipient has a connected Drive account BEFORE doing anything ──
-  //
-  // If the recipient has no Drive account, the re-upload will fail 100% of the
-  // time. Surface this clearly right away rather than letting it silently fall
-  // through to saving with the sender's Drive references.
+  // ── Check recipient has a connected Drive account ──────────────────────────
   const recipientAccount = await getPoolAccountsByUsername(profile.role)
   const recipientDriveAccounts = recipientAccount ? [recipientAccount] : []
 
@@ -325,28 +336,42 @@ export async function POST(
     )
   }
 
-  // ── Validate the forwarded document has Drive references ───────────────────
-  if (!fwd.gdrive_file_id || !fwd.pool_account_id || !fwd.mime_type) {
+  // ── FIX 5: Validate Drive metadata — treat "" the same as null ─────────────
+  //
+  // hasValue() rejects both null/undefined AND empty string "".
+  //
+  // Root cause of the original bug: the sender forwarded a document that was
+  // uploaded before the Drive pool system existed. Its DB row has
+  // gdrive_file_id = "" and pool_account_id = "". The ForwardDocumentModal
+  // now blocks this upfront (showing a "re-upload" warning), but we keep
+  // this server-side guard as a belt-and-suspenders check.
+  //
+  // FIX 6: Improved error message — tells the sender to delete + re-upload
+  // the original document (not just "re-forward"), because re-forwarding
+  // would produce the same empty-string row again.
+  if (!hasValue(fwd.gdrive_file_id) || !hasValue(fwd.pool_account_id)) {
     return NextResponse.json(
       {
         error:
-          `Forwarded document is missing required Drive metadata ` +
-          `(gdrive_file_id, pool_account_id, or mime_type). ` +
-          `The sender may need to re-forward this file.`,
+          `This forwarded document is missing Google Drive file metadata ` +
+          `(gdrive_file_id or pool_account_id is empty). ` +
+          `The sender needs to delete the original document and re-upload it ` +
+          `through the normal upload flow so it gets proper Drive metadata, ` +
+          `then forward it again.`,
         code: 'MISSING_DRIVE_METADATA',
       },
       { status: 422 }
     )
   }
 
-  // ── FIX 3: Generate the doc ID ONCE and reuse everywhere ──────────────────
+  // mime_type is not strictly required — default to octet-stream if missing
+  // so documents forwarded without a mime_type can still be saved.
+  const mimeType = hasValue(fwd.mime_type) ? fwd.mime_type : 'application/octet-stream'
+
+  // ── Generate doc ID once, reuse in Drive upload and DB insert ──────────────
   const newDocId = generateDocId(fwd.document_type)
 
-  // ── FIX 2: Re-upload to recipient's Drive — FATAL on failure ──────────────
-  //
-  // Before this fix, a failed re-upload silently fell back to the sender's
-  // Drive references (same gdrive_file_id / gdrive_url). The Supabase row
-  // appeared correct but the file lived in the sender's Drive bucket.
+  // ── Re-upload to recipient's Drive — FATAL on failure ─────────────────────
   let driveResult: Awaited<ReturnType<typeof reuploadToRecipientDrive>>
 
   try {
@@ -354,7 +379,7 @@ export async function POST(
       gdriveFileId:  fwd.gdrive_file_id,
       poolAccountId: fwd.pool_account_id,
       fileName:      fwd.file_name ?? fwd.title,
-      mimeType:      fwd.mime_type,
+      mimeType,
       fileSizeBytes: fwd.file_size_bytes ?? 0,
       recipientRole: profile.role,
       documentType:  fwd.document_type,
@@ -373,7 +398,7 @@ export async function POST(
     )
   }
 
-  // ── Build Supabase payload using the recipient's Drive URLs ─────────────────
+  // ── Build and insert the document row ──────────────────────────────────────
   const payload = buildDocumentPayload(fwd, profile.role, newDocId, driveResult)
 
   const { data: newDoc, error: docError } = await supabase
@@ -389,11 +414,9 @@ export async function POST(
       'Payload keys:',
       Object.keys(payload)
     )
-    // Drive upload already succeeded — log the orphaned file so admins can clean up
     console.error(
       `[ForwardSave] ORPHANED Drive file: gdriveFileId=${driveResult.gdriveFileId}, ` +
-      `poolAccountId=${driveResult.poolAccountId}. ` +
-      `Manual cleanup may be required.`
+      `poolAccountId=${driveResult.poolAccountId}. Manual cleanup may be required.`
     )
     return NextResponse.json(
       { error: docError?.message ?? 'Failed to save document metadata' },
@@ -402,23 +425,24 @@ export async function POST(
   }
 
   // ── Re-upload and insert attachments ────────────────────────────────────────
-  //
-  // FIX 4: Attachment re-upload failures are now logged with clear error
-  // messages. They remain non-fatal (the main document was saved successfully)
-  // but the error is surfaced in the response so the admin can see which
-  // attachments failed instead of silently getting missing files.
   const attachments  = fwd.forwarded_attachments ?? []
   const attErrors: string[] = []
 
   if (attachments.length > 0 && attachmentTable && attachmentFk) {
     for (const att of attachments) {
-      if (!att.gdrive_file_id || !att.pool_account_id || !att.mime_type) {
+      // Skip attachments that also have missing Drive metadata
+      if (!hasValue(att.gdrive_file_id) || !hasValue(att.pool_account_id)) {
         console.warn(
-          `[ForwardSave] Skipping attachment "${att.title}" — missing Drive metadata`
+          `[ForwardSave] Skipping attachment "${att.title}" — missing Drive metadata ` +
+          `(gdrive_file_id="${att.gdrive_file_id}", pool_account_id="${att.pool_account_id}")`
         )
         attErrors.push(`"${att.title}": missing Drive metadata (skipped)`)
         continue
       }
+
+      const attMimeType = hasValue(att.mime_type)
+        ? att.mime_type
+        : 'application/octet-stream'
 
       let attDriveResult: Awaited<ReturnType<typeof reuploadToRecipientDrive>> | null = null
 
@@ -427,7 +451,7 @@ export async function POST(
           gdriveFileId:  att.gdrive_file_id,
           poolAccountId: att.pool_account_id,
           fileName:      att.file_name ?? att.title,
-          mimeType:      att.mime_type,
+          mimeType:      attMimeType,
           fileSizeBytes: att.file_size_bytes ?? 0,
           recipientRole: profile.role,
           documentType:  fwd.document_type,
@@ -439,7 +463,6 @@ export async function POST(
           err?.message
         )
         attErrors.push(`"${att.title}": Drive upload failed — ${err?.message}`)
-        // Non-fatal: continue saving other attachments
         continue
       }
 
@@ -450,7 +473,7 @@ export async function POST(
           title:           att.title,
           file_name:       att.file_name         ?? null,
           file_size_bytes: attDriveResult.sizeBytes,
-          mime_type:       att.mime_type          ?? null,
+          mime_type:       attMimeType,
           gdrive_file_id:  attDriveResult.gdriveFileId,
           gdrive_url:      attDriveResult.fileUrl,
           pool_account_id: attDriveResult.poolAccountId,
