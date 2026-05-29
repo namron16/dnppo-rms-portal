@@ -6,6 +6,12 @@
 //      only shows each user their own items (privileged roles see all).
 //      The Drive gateway routes the file to the uploader's own connected
 //      Google Drive account — never another user's Drive.
+//
+// FIX (Drive pool columns): newItem now includes gdrive_file_id,
+//      gdrive_url, pool_account_id, file_name, file_size_bytes, mime_type
+//      from the upload result. Previously these were available in uploadResult
+//      but never written into the newItem object passed to addLibraryItem(),
+//      so the DB row always had null Drive pool columns, making forwarding fail.
 
 import { useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -21,15 +27,22 @@ import { logAddLibraryItem } from '@/lib/adminLogger'
 import type { LibraryCategory } from '@/types'
 
 type LibraryItemWithUrl = {
-  id:           string
-  title:        string
-  category:     LibraryCategory
-  size:         string
-  dateAdded:    string
-  fileUrl?:     string
-  description?: string
-  created_at?:  string
-  uploaded_by?: string   // tracks who uploaded this item
+  id:              string
+  title:           string
+  category:        LibraryCategory
+  size:            string
+  dateAdded:       string
+  fileUrl?:        string
+  description?:    string
+  created_at?:     string
+  uploaded_by?:    string
+  // FIX: Drive pool fields
+  gdrive_file_id?:  string
+  gdrive_url?:      string
+  pool_account_id?: string
+  file_name?:       string
+  file_size_bytes?: number
+  mime_type?:       string
 }
 
 interface Props {
@@ -77,7 +90,6 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
   async function submit() {
     if (!user) { toast.error('Not authenticated.'); return }
 
-    // FIX: assertCanUpload now allows P1–P10, WCPD, PPSMU (not just P1)
     try {
       assertCanUpload(user.role as AdminRole)
     } catch (err: any) {
@@ -109,7 +121,6 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
       const today  = new Date().toISOString().split('T')[0]
       const now    = new Date().toISOString()
 
-      // Upload to THIS user's own connected Google Drive account.
       const uploadResult = await uploadToDrive(file!, 'library_items', {
         uploadedBy: user.role,
         entityId:   itemId,
@@ -125,7 +136,9 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
         ? `${(file!.size / 1024).toFixed(1)} KB`
         : `${(file!.size / 1024 / 1024).toFixed(1)} MB`
 
-      // Tag the item with the uploader's role so the page can filter per user.
+      // FIX: include all Drive pool fields in newItem so addLibraryItem()
+      // persists them to the DB. Previously only fileUrl was set here;
+      // gdrive_file_id, pool_account_id etc. were silently dropped.
       const newItem: LibraryItemWithUrl = {
         id:          itemId,
         title:       result.data.title.trim(),
@@ -136,6 +149,13 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
         description: form.description.trim() || undefined,
         created_at:  now,
         uploaded_by: user.role,
+        // FIX: Drive pool fields
+        gdrive_file_id:  uploadResult.gdriveFileId,
+        gdrive_url:      uploadResult.fileUrl,
+        pool_account_id: uploadResult.poolAccountId,
+        file_name:       file!.name,
+        file_size_bytes: file!.size,
+        mime_type:       file!.type || undefined,
       }
 
       await addLibraryItem(newItem)
