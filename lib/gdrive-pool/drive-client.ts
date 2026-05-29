@@ -161,6 +161,26 @@ export async function findOrCreateFolder(
 }
 
 export async function createRootFolder(drive: drive_v3.Drive): Promise<string> {
+  // Check if the root folder already exists before creating a new one.
+  // This prevents duplicate "DDNPPO RMS" folders when an account reconnects.
+  const searchRes = await drive.files.list({
+    q: [
+      `name = 'DDNPPO RMS'`,
+      `mimeType = 'application/vnd.google-apps.folder'`,
+      `trashed = false`,
+    ].join(' and '),
+    fields: 'files(id, name)',
+    spaces: 'drive',
+    pageSize: 1,
+  })
+
+  const existing = searchRes.data.files?.[0]
+  if (existing?.id) {
+    console.log(`[Drive] Reusing existing DDNPPO RMS root folder: ${existing.id}`)
+    return existing.id
+  }
+
+  // Not found — create it fresh
   const res = await drive.files.create({
     requestBody: {
       name:     'DDNPPO RMS',
@@ -170,6 +190,7 @@ export async function createRootFolder(drive: drive_v3.Drive): Promise<string> {
   })
 
   if (!res.data.id) throw new Error('Failed to create DDNPPO RMS root folder.')
+  console.log(`[Drive] Created new DDNPPO RMS root folder: ${res.data.id}`)
   return res.data.id
 }
 
