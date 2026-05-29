@@ -55,7 +55,7 @@ html {
   width: var(--sidebar-w);
   z-index: 100;
   overflow-y: auto;
-  background: var(--navy-dark);
+  background: #ffffff;
   display: flex;
   flex-direction: column;
 }
