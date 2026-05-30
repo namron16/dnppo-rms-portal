@@ -89,6 +89,8 @@ export {
 export {
   uploadFile,
   deleteFile,
+  moveFileToArchiveFolder,
+  moveFileFromArchiveFolder,   // ← NEW: used by /api/gdrive/restore
   buildDirectDownloadUrl,
   buildPreviewUrl,
 } from './gateway'

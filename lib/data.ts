@@ -4,17 +4,10 @@
 //   gdrive_file_id, gdrive_url (as gdrive_url), pool_account_id,
 //   file_name, file_size_bytes, mime_type.
 //
-// These columns were already being returned by the upload flow
-// (useDriveUpload → /api/gdrive/upload) and stored in the newDoc/newSO/etc.
-// objects in the modal components, but lib/data.ts was silently dropping them
-// because the insert payloads never included them.
-//
-// Without these columns, forwarding always produced rows with
-// gdrive_file_id = null / pool_account_id = null, causing the recipient to
-// hit a 422 "missing Drive metadata" error when trying to save.
-//
-// The matching DB migration (add_gdrive_pool_columns_forwarded.sql) already
-// added these columns to all four tables — this file just starts writing them.
+// FIX (restore): restoreArchivedDoc() now calls /api/gdrive/restore to move
+//   the file from the archive subfolder back to the main category folder in
+//   Google Drive, before updating the DB status. Previously it only updated
+//   the DB and left the file in the archive folder permanently.
 
 import { supabase } from './supabase'
 import type {
@@ -73,7 +66,6 @@ export async function getMasterDocuments(): Promise<(MasterDocument & {
     created_at:      d.created_at,
     archived:        d.archived         ?? false,
     uploaded_by:     d.uploaded_by       ?? undefined,
-    // FIX: return Drive pool columns so ForwardDocumentModal gets them
     gdrive_file_id:  d.gdrive_file_id    ?? undefined,
     gdrive_url:      d.gdrive_url        ?? undefined,
     pool_account_id: d.pool_account_id   ?? undefined,
@@ -87,7 +79,6 @@ export async function getMasterDocuments(): Promise<(MasterDocument & {
 export async function addMasterDocument(doc: MasterDocument & {
   fileUrl?:         string
   uploaded_by?:     string
-  // FIX: accept Drive pool columns so they get persisted to the DB
   gdrive_file_id?:  string
   gdrive_url?:      string
   pool_account_id?: string
@@ -105,7 +96,6 @@ export async function addMasterDocument(doc: MasterDocument & {
     tag:             doc.tag,
     file_url:        doc.fileUrl          ?? null,
     uploaded_by:     doc.uploaded_by      ?? null,
-    // FIX: persist Drive pool metadata so document can be forwarded later
     gdrive_file_id:  doc.gdrive_file_id   ?? null,
     gdrive_url:      doc.gdrive_url       ?? null,
     pool_account_id: doc.pool_account_id  ?? null,
@@ -132,7 +122,7 @@ export async function updateMasterDocument(doc: MasterDocument & { fileUrl?: str
 export async function archiveMasterDocument(id: string): Promise<void> {
   const { error } = await supabase
     .from('master_documents')
-    .update({ archived: true })  // make sure this column exists
+    .update({ archived: true })
     .eq('id', id)
   if (error) console.warn('Supabase unavailable (archive master_document):', error.message)
 }
@@ -170,7 +160,6 @@ export async function getSpecialOrders(): Promise<(SpecialOrder & {
     created_at:      d.created_at,
     archived:        d.archived         ?? false,
     uploaded_by:     d.uploaded_by       ?? undefined,
-    // FIX: return Drive pool columns
     gdrive_file_id:  d.gdrive_file_id    ?? undefined,
     gdrive_url:      d.gdrive_url        ?? undefined,
     pool_account_id: d.pool_account_id   ?? undefined,
@@ -183,7 +172,6 @@ export async function getSpecialOrders(): Promise<(SpecialOrder & {
 export async function addSpecialOrder(so: SpecialOrder & {
   fileUrl?:         string
   uploaded_by?:     string
-  // FIX: accept Drive pool columns
   gdrive_file_id?:  string
   gdrive_url?:      string
   pool_account_id?: string
@@ -200,7 +188,6 @@ export async function addSpecialOrder(so: SpecialOrder & {
     status:          so.status,
     file_url:        so.fileUrl          ?? null,
     uploaded_by:     so.uploaded_by      ?? null,
-    // FIX: persist Drive pool metadata
     gdrive_file_id:  so.gdrive_file_id   ?? null,
     gdrive_url:      so.gdrive_url       ?? null,
     pool_account_id: so.pool_account_id  ?? null,
@@ -399,7 +386,6 @@ export async function getDailyJournals(): Promise<(DailyJournalRecord & {
     archived:        d.archived         ?? false,
     created_at:      d.created_at,
     uploaded_by:     d.uploaded_by      ?? undefined,
-    // FIX: return Drive pool columns
     gdrive_file_id:  d.gdrive_file_id   ?? undefined,
     pool_account_id: d.pool_account_id  ?? undefined,
     mime_type:       d.mime_type        ?? undefined,
@@ -409,7 +395,6 @@ export async function getDailyJournals(): Promise<(DailyJournalRecord & {
 
 export async function addDailyJournal(entry: DailyJournalRecord & {
   uploaded_by?:     string
-  // FIX: accept Drive pool columns
   gdrive_file_id?:  string
   gdrive_url?:      string
   pool_account_id?: string
@@ -432,7 +417,6 @@ export async function addDailyJournal(entry: DailyJournalRecord & {
       attachments:     entry.attachments,
       archived:        entry.archived        ?? false,
       uploaded_by:     entry.uploaded_by     ?? null,
-      // FIX: persist Drive pool metadata
       gdrive_file_id:  entry.gdrive_file_id  ?? null,
       gdrive_url:      entry.gdrive_url      ?? null,
       pool_account_id: entry.pool_account_id ?? null,
@@ -602,7 +586,6 @@ export async function getLibraryItems(): Promise<(LibraryItem & {
     created_at:      d.created_at,
     archived:        d.archived         ?? false,
     uploaded_by:     d.uploaded_by       ?? undefined,
-    // FIX: return Drive pool columns
     gdrive_file_id:  d.gdrive_file_id    ?? undefined,
     gdrive_url:      d.gdrive_url        ?? undefined,
     pool_account_id: d.pool_account_id   ?? undefined,
@@ -617,7 +600,6 @@ export async function addLibraryItem(
     fileUrl?:         string
     description?:     string
     uploaded_by?:     string
-    // FIX: accept Drive pool columns
     gdrive_file_id?:  string
     gdrive_url?:      string
     pool_account_id?: string
@@ -635,7 +617,6 @@ export async function addLibraryItem(
     file_url:        item.fileUrl         ?? null,
     description:     item.description     ?? null,
     uploaded_by:     item.uploaded_by     ?? null,
-    // FIX: persist Drive pool metadata
     gdrive_file_id:  item.gdrive_file_id  ?? null,
     gdrive_url:      item.gdrive_url      ?? null,
     pool_account_id: item.pool_account_id ?? null,
@@ -742,7 +723,60 @@ export async function deleteArchivedDoc(id: string): Promise<void> {
   if (error) console.warn('Supabase unavailable (delete archived_doc):', error.message)
 }
 
+// ── archived_docs.id prefix → source table mapping ───────────────────────────
+// Used by restoreArchivedDoc to look up the original document row for its
+// Drive metadata (gdrive_file_id, pool_account_id) before calling the
+// /api/gdrive/restore endpoint.
+const PREFIX_TO_TABLE: Record<string, string> = {
+  'arc-so-':  'special_orders',
+  'arc-cd-':  'confidential_docs',
+  'arc-md-':  'master_documents',
+  'arc-lib-': 'library_items',
+  'arc-dj-':  'daily_journals',
+}
+
+// archived_docs.type → Drive category string (must match CATEGORY_DISPLAY_NAMES keys)
+const ARCHIVE_TYPE_TO_DRIVE_CATEGORY: Record<string, string> = {
+  'Special Order':        'special_orders',
+  'Classified Document':  'classified_documents',
+  'Master Document':      'master_documents',
+  'Library Item':         'library_items',
+  'Daily Journal':        'daily_journals',
+}
+
+/**
+ * Calls /api/gdrive/restore to move a file from the archive subfolder back to
+ * the main category folder in Google Drive.
+ *
+ * Non-throwing: logs a warning on failure but does NOT block the DB restore
+ * that follows.  The file stays in the archive folder on Drive in that case,
+ * but the document is still visible again in the UI.
+ */
+async function callDriveRestoreApi(params: {
+  gdriveFileId:  string
+  poolAccountId: string
+  category:      string
+}): Promise<void> {
+  try {
+    const res = await fetch('/api/gdrive/restore', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(params),
+    })
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      console.warn(
+        `[restoreArchivedDoc] Drive restore API returned ${res.status}:`,
+        json.error ?? '(no detail)'
+      )
+    }
+  } catch (err: any) {
+    console.warn('[restoreArchivedDoc] Drive restore call failed (non-fatal):', err.message)
+  }
+}
+
 export async function restoreArchivedDoc(id: string): Promise<void> {
+  // ── 1. Fetch the archived_docs row ────────────────────────────────────────
   const { data: archived, error: fetchError } = await supabase
     .from('archived_docs')
     .select('*')
@@ -753,10 +787,51 @@ export async function restoreArchivedDoc(id: string): Promise<void> {
     console.warn('Supabase unavailable (fetch archived_doc):', fetchError.message)
   }
 
-  const archiveType = String(archived?.type ?? '').toLowerCase()
+  const archiveType = String(archived?.type ?? '').trim()
 
-  if (id.startsWith('arc-so-') || archiveType === 'special order') {
-    const sourceId = id.startsWith('arc-so-') ? id.replace('arc-so-', '') : undefined
+  // ── 2. Derive the original document ID from the arc-xx- prefix ───────────
+  let sourceId: string | undefined
+  let sourceTable: string | undefined
+
+  for (const [prefix, table] of Object.entries(PREFIX_TO_TABLE)) {
+    if (id.startsWith(prefix)) {
+      sourceId    = id.slice(prefix.length)
+      sourceTable = table
+      break
+    }
+  }
+
+  // ── 3. Move file in Drive back to the main folder ────────────────────────
+  //   Fetch the original document row to get its gdrive_file_id and
+  //   pool_account_id, then call /api/gdrive/restore.
+  if (sourceId && sourceTable) {
+    const driveCategory = ARCHIVE_TYPE_TO_DRIVE_CATEGORY[archiveType]
+
+    if (driveCategory) {
+      const { data: sourceRow } = await supabase
+        .from(sourceTable)
+        .select('gdrive_file_id, pool_account_id')
+        .eq('id', sourceId)
+        .maybeSingle()
+
+      const gdriveFileId  = (sourceRow as any)?.gdrive_file_id
+      const poolAccountId = (sourceRow as any)?.pool_account_id
+
+      if (gdriveFileId && poolAccountId) {
+        await callDriveRestoreApi({ gdriveFileId, poolAccountId, category: driveCategory })
+      } else {
+        console.warn(
+          `[restoreArchivedDoc] Source row ${sourceTable}/${sourceId} has no Drive ` +
+          `metadata (gdrive_file_id=${gdriveFileId}, pool_account_id=${poolAccountId}). ` +
+          `Skipping Drive file move — DB status will still be restored.`
+        )
+      }
+    }
+  }
+
+  // ── 4. Update DB status back to active ────────────────────────────────────
+
+  if (id.startsWith('arc-so-') || archiveType === 'Special Order') {
     if (sourceId) {
       const { error } = await supabase
         .from('special_orders')
@@ -766,8 +841,7 @@ export async function restoreArchivedDoc(id: string): Promise<void> {
     }
   }
 
-  if (id.startsWith('arc-cd-') || archiveType === 'classified document') {
-    const sourceId = id.startsWith('arc-cd-') ? id.replace('arc-cd-', '') : undefined
+  if (id.startsWith('arc-cd-') || archiveType === 'Classified Document') {
     if (sourceId) {
       const { error } = await supabase
         .from('confidential_docs')
@@ -777,12 +851,17 @@ export async function restoreArchivedDoc(id: string): Promise<void> {
     }
   }
 
-  if (id.startsWith('arc-md-') || archiveType === 'master document') {
-    // No row update needed for master_documents.
+  if (id.startsWith('arc-md-') || archiveType === 'Master Document') {
+    if (sourceId) {
+      const { error } = await supabase
+        .from('master_documents')
+        .update({ archived: false })
+        .eq('id', sourceId)
+      if (error) console.warn('Supabase unavailable (restore master_document):', error.message)
+    }
   }
 
-  if (id.startsWith('arc-lib-') || archiveType === 'library item') {
-    const sourceId = id.startsWith('arc-lib-') ? id.replace('arc-lib-', '') : undefined
+  if (id.startsWith('arc-lib-') || archiveType === 'Library Item') {
     if (sourceId) {
       const { error } = await supabase
         .from('library_items')
@@ -792,6 +871,17 @@ export async function restoreArchivedDoc(id: string): Promise<void> {
     }
   }
 
+  if (id.startsWith('arc-dj-') || archiveType === 'Daily Journal') {
+    if (sourceId) {
+      const { error } = await supabase
+        .from('daily_journals')
+        .update({ archived: false, updated_at: new Date().toISOString() })
+        .eq('id', sourceId)
+      if (error) console.warn('Supabase unavailable (restore daily_journal):', error.message)
+    }
+  }
+
+  // ── 5. Remove the archived_docs row ───────────────────────────────────────
   const { error } = await supabase.from('archived_docs').delete().eq('id', id)
   if (error) console.warn('Supabase unavailable (delete archived_doc on restore):', error.message)
 }

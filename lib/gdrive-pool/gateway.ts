@@ -6,6 +6,10 @@
 //   It NEVER routes an upload to another user's Drive account.
 //   The username (= role string e.g. 'P1', 'DPDA') is resolved from req.uploadedBy
 //   and passed through every fallback path.
+//
+// FIX (restore):
+//   Added moveFileFromArchiveFolder() — the exact inverse of moveFileToArchiveFolder().
+//   Called by /api/gdrive/restore when a document is restored from the Archive page.
 
 import { getDriveClient, findOrCreateFolder, uploadFileToDrive, deleteFileFromDrive } from './drive-client'
 import {
@@ -32,7 +36,7 @@ import type {
 } from './types'
 
 // =============================================================================
-// MIME ALLOWLIST — must match /api/gdrive/upload/route.ts
+// MIME ALLOWLIST
 // =============================================================================
 
 const ALLOWED_MIMES = new Set([
@@ -52,32 +56,18 @@ function isMimeAllowed(mimeType: string): boolean {
 // =============================================================================
 
 interface ScopedPoolSelectionOptions {
-  /** The uploading user's username/role string — e.g. 'P1', 'DPDA', 'admin' */
   username:       string
   fileSizeBytes:  number
-  /** Pin to a specific account ID (must still belong to username) */
   pinnedPoolId?:  string
   excludePoolIds?: string[]
 }
 
-/**
- * Picks the best Drive account for an upload.
- * ONLY considers accounts owned by `username` — never touches other users' Drives.
- *
- * Strategy:
- *  1. Pinned account (if valid and belongs to this user)
- *  2. RPC pick_upload_target scoped to username (least-used with quota)
- *  3. Fallback: any ACTIVE + is_active account for this user ignoring size
- *  4. Last resort: any is_active account for this user even if status=ERROR
- */
 async function selectPoolAccount(opts: ScopedPoolSelectionOptions): Promise<string | null> {
   const { username, fileSizeBytes, pinnedPoolId, excludePoolIds = [] } = opts
 
-  // ── 1. Pinned account ────────────────────────────────────────────────────
   if (pinnedPoolId) {
     try {
       const row = await getPoolAccountFull(pinnedPoolId)
-      // Security check: the pinned account MUST belong to this user
       if (row.owner_username !== username) {
         console.error(
           `[Gateway] SECURITY: pinned pool ${pinnedPoolId} belongs to ` +
@@ -92,7 +82,6 @@ async function selectPoolAccount(opts: ScopedPoolSelectionOptions): Promise<stri
     }
   }
 
-  // ── 2. RPC least-used selection (scoped to this user) ───────────────────
   try {
     const target = await rpcPickUploadTarget(username, fileSizeBytes)
     if (target) {
@@ -110,7 +99,6 @@ async function selectPoolAccount(opts: ScopedPoolSelectionOptions): Promise<stri
     console.warn('[Gateway] rpcPickUploadTarget threw:', e.message)
   }
 
-  // ── 3 & 4. Fallback: scan this user's own accounts directly ─────────────
   const userAccounts = await getPoolAccountsByUsername(username)
 
   console.log(
@@ -125,7 +113,6 @@ async function selectPoolAccount(opts: ScopedPoolSelectionOptions): Promise<stri
     return null
   }
 
-  // Fallback 3: ACTIVE + is_active, not excluded
   const active = userAccounts.find(
     a => a.is_active && a.status === 'ACTIVE' && !excludePoolIds.includes(a.id)
   )
@@ -137,7 +124,6 @@ async function selectPoolAccount(opts: ScopedPoolSelectionOptions): Promise<stri
     return active.id
   }
 
-  // Fallback 4: any is_active (status=ERROR may be stale)
   const anyActive = userAccounts.find(
     a => a.is_active && !excludePoolIds.includes(a.id)
   )
@@ -169,7 +155,6 @@ async function resolveCategoryFolder(
 ): Promise<string> {
   const folderName = CATEGORY_DISPLAY_NAMES[category]
 
-  // DB cache hit → no Drive API call needed
   const cached = await getCachedFolderId(poolAccountId, folderName)
   if (cached) {
     console.log(`[Gateway] Category folder cache hit: "${folderName}" → ${cached}`)
@@ -204,18 +189,12 @@ export async function uploadFile(req: UploadRequest): Promise<UploadResult> {
     `size=${req.fileSizeBytes}, category="${req.category}", uploadedBy="${req.uploadedBy}"`
   )
 
-  // ── 1. Validate MIME type ────────────────────────────────────────────────
   if (!isMimeAllowed(req.mimeType)) {
     const msg = `Unsupported MIME type: ${req.mimeType}. Allowed: PDF, images, DOCX, XLSX.`
     console.error('[Gateway]', msg)
     return { success: false, error: msg }
   }
 
-  // ── 2. Pick upload target — scoped to the uploading user ─────────────────
-  //
-  //  req.uploadedBy is the username/role string (e.g. 'P1', 'DPDA', 'admin').
-  //  selectPoolAccount guarantees it only picks from that user's own Drives.
-  //
   const poolAccountId = await selectPoolAccount({
     username:      req.uploadedBy,
     fileSizeBytes: req.fileSizeBytes,
@@ -230,7 +209,6 @@ export async function uploadFile(req: UploadRequest): Promise<UploadResult> {
     return { success: false, error: msg }
   }
 
-  // ── 3. Get pool account details ──────────────────────────────────────────
   let poolRow: Awaited<ReturnType<typeof getPoolAccountFull>>
   try {
     poolRow = await getPoolAccountFull(poolAccountId)
@@ -243,7 +221,6 @@ export async function uploadFile(req: UploadRequest): Promise<UploadResult> {
     return { success: false, error: `Failed to load pool account: ${err.message}` }
   }
 
-  // Final ownership check — belt-and-suspenders
   if (poolRow.owner_username !== req.uploadedBy) {
     const msg =
       `[Gateway] SECURITY VIOLATION: pool account ${poolAccountId} ` +
@@ -260,7 +237,6 @@ export async function uploadFile(req: UploadRequest): Promise<UploadResult> {
     return { success: false, error: msg }
   }
 
-  // ── 4. Resolve category folder ───────────────────────────────────────────
   let categoryFolderId: string
   try {
     categoryFolderId = await resolveCategoryFolder(
@@ -276,7 +252,6 @@ export async function uploadFile(req: UploadRequest): Promise<UploadResult> {
     return { success: false, error: msg }
   }
 
-  // ── 5. Upload to Google Drive ────────────────────────────────────────────
   let driveFile: Awaited<ReturnType<typeof uploadFileToDrive>>
   let drive: Awaited<ReturnType<typeof getDriveClient>>
 
@@ -313,7 +288,6 @@ export async function uploadFile(req: UploadRequest): Promise<UploadResult> {
     return { success: false, poolAccountId, error: `Drive upload failed: ${msg}` }
   }
 
-  // ── 6. Insert record into Supabase ───────────────────────────────────────
   let record: DbRecord
   try {
     record = await insertRecord({
@@ -346,14 +320,12 @@ export async function uploadFile(req: UploadRequest): Promise<UploadResult> {
     }
   }
 
-  // ── 7. Increment storage accounting ─────────────────────────────────────
   try {
     await rpcIncrementStorage(poolAccountId, record.size_bytes)
   } catch (err: any) {
     console.warn('[Gateway] Storage increment failed (non-fatal):', err.message)
   }
 
-  // ── 8. Log success ───────────────────────────────────────────────────────
   await logHealthEvent({
     pool_account_id: poolAccountId,
     event_type:      'health_check',
@@ -415,8 +387,17 @@ export async function deleteFile(req: DeleteRequest): Promise<DeleteResult> {
   }
 }
 
+// =============================================================================
+// ARCHIVE — move file into the category's archive subfolder
+// =============================================================================
 
-//ARCHIVE
+/**
+ * Moves a file INTO the archive subfolder for its category.
+ * e.g.  "Master Documents" → "Master Documents – Archive"  (created if missing)
+ *
+ * findOrCreateFolder() searches before creating, so reconnecting a Drive
+ * account will reuse the existing archive folder rather than creating a new one.
+ */
 export async function moveFileToArchiveFolder(
   poolAccountId: string,
   gdriveFileId: string,
@@ -426,36 +407,127 @@ export async function moveFileToArchiveFolder(
   try {
     const drive = await getDriveClient(poolAccountId)
 
-    // Find or create an "Archive" subfolder inside the category folder
     const categoryFolderName = CATEGORY_DISPLAY_NAMES[category]
     const archiveFolderName  = `${categoryFolderName} – Archive`
 
-    // Get the category folder ID first
+    // Resolve the main category folder (find-or-create, cached)
     const categoryFolderId = await resolveCategoryFolder(
       poolAccountId,
       category,
       rootFolderId
     )
 
-    // Find or create the archive subfolder inside it
+    // Find-or-create the archive subfolder inside the category folder.
+    // findOrCreateFolder() always searches first, so this is idempotent —
+    // reconnecting a Drive account never creates a duplicate archive folder.
     const archiveFolder = await findOrCreateFolder(
       drive,
       archiveFolderName,
       categoryFolderId
     )
 
-    // Move the file: add new parent, remove old parent
+    // Move the file: add archive folder as parent, remove category folder
     await drive.files.update({
-      fileId:          gdriveFileId,
-      addParents:      archiveFolder.folderId,
-      removeParents:   categoryFolderId,
-      requestBody:     {},
-      fields:          'id, parents',
+      fileId:        gdriveFileId,
+      addParents:    archiveFolder.folderId,
+      removeParents: categoryFolderId,
+      requestBody:   {},
+      fields:        'id, parents',
     })
+
+    console.log(
+      `[Gateway] moveFileToArchiveFolder: moved file ${gdriveFileId} ` +
+      `to "${archiveFolderName}" (folderId=${archiveFolder.folderId}, ` +
+      `isNew=${archiveFolder.isNew})`
+    )
 
     return { success: true }
   } catch (err: any) {
     console.error('[Gateway] moveFileToArchiveFolder failed:', err.message)
+    return { success: false, error: err.message }
+  }
+}
+
+// =============================================================================
+// RESTORE — move file back from archive subfolder to main category folder
+// =============================================================================
+
+/**
+ * Moves a file FROM the archive subfolder BACK to the main category folder.
+ * This is the exact inverse of moveFileToArchiveFolder().
+ *
+ * e.g.  "Master Documents – Archive" → "Master Documents"
+ *
+ * If the archive folder doesn't exist (file was never moved, or folder was
+ * manually deleted), this is a safe no-op — the file is already in the right
+ * place and success is returned.
+ *
+ * findOrCreateFolder() is NOT used here for the archive subfolder — we only
+ * search for it.  We never want to create an archive folder during a restore.
+ */
+export async function moveFileFromArchiveFolder(
+  poolAccountId: string,
+  gdriveFileId: string,
+  category: DocumentCategory,
+  rootFolderId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const drive = await getDriveClient(poolAccountId)
+
+    const categoryFolderName = CATEGORY_DISPLAY_NAMES[category]
+    const archiveFolderName  = `${categoryFolderName} – Archive`
+
+    // ── 1. Resolve the main category folder (find-or-create, cached) ─────────
+    const categoryFolderId = await resolveCategoryFolder(
+      poolAccountId,
+      category,
+      rootFolderId
+    )
+
+    // ── 2. Search for the archive subfolder — do NOT create if missing ────────
+    const searchRes = await drive.files.list({
+      q: [
+        `name = '${archiveFolderName.replace(/'/g, "\\'")}'`,
+        `mimeType = 'application/vnd.google-apps.folder'`,
+        `'${categoryFolderId}' in parents`,
+        `trashed = false`,
+      ].join(' and '),
+      fields:    'files(id, name)',
+      spaces:    'drive',
+      pageSize:  1,
+    })
+
+    const archiveFolder = searchRes.data.files?.[0]
+
+    if (!archiveFolder?.id) {
+      // Archive folder doesn't exist — the file is already in the main folder
+      // (or was never moved).  Treat as success.
+      console.log(
+        `[Gateway] moveFileFromArchiveFolder: archive folder "${archiveFolderName}" ` +
+        `not found — file ${gdriveFileId} is already in the main folder. No-op.`
+      )
+      return { success: true }
+    }
+
+    const archiveFolderId = archiveFolder.id
+
+    // ── 3. Move the file: add main folder as parent, remove archive folder ────
+    await drive.files.update({
+      fileId:        gdriveFileId,
+      addParents:    categoryFolderId,
+      removeParents: archiveFolderId,
+      requestBody:   {},
+      fields:        'id, parents',
+    })
+
+    console.log(
+      `[Gateway] moveFileFromArchiveFolder: moved file ${gdriveFileId} ` +
+      `from "${archiveFolderName}" back to "${categoryFolderName}"`
+    )
+
+    return { success: true }
+  } catch (err: any) {
+    console.error('[Gateway] moveFileFromArchiveFolder failed:', err.message)
     return { success: false, error: err.message }
   }
 }
