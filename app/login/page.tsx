@@ -2,6 +2,7 @@
 
 import { useState, useCallback, Suspense } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import { getDefaultAdminRoute, type SessionRole } from '@/lib/adminRouteAccess'
@@ -342,7 +343,33 @@ function LoginForm() {
               </div>
             </form>
 
-            <div className="text-center mt-8 text-[11px] text-slate-400 leading-relaxed font-medium">
+            {/* Policy Links */}
+            <div className="mt-6 pt-6 border-t border-slate-200">
+              <p className="text-center text-[11px] text-slate-600 leading-relaxed font-medium mb-3">
+                By signing in, you agree to our
+              </p>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <Link
+                  href="/terms-and-condition"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-[#1b365d] hover:text-[#0f1c35] underline underline-offset-2 font-semibold transition"
+                >
+                  Terms and Conditions
+                </Link>
+                <span className="text-[11px] text-slate-400">and</span>
+                <Link
+                  href="/privacy-policy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-[#1b365d] hover:text-[#0f1c35] underline underline-offset-2 font-semibold transition"
+                >
+                  Privacy Policy
+                </Link>
+              </div>
+            </div>
+
+            <div className="text-center mt-6 text-[11px] text-slate-400 leading-relaxed font-medium">
               <p>Access credentials are issued by your system administrator</p>
               <p>No public registration available.</p>
             </div>

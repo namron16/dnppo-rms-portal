@@ -1,5 +1,10 @@
 export type SessionRole = 'admin' | 'PD' | 'DPDA' | 'DPDO' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9' | 'P10' | 'PPSMU' | 'WCPD'
 
+const PUBLIC_ROUTES = [
+  '/privacy-policy',
+  '/terms-and-condition',
+] as const
+
 const DOC_ROUTES = [
   '/admin/master',
   '/admin/admin-orders',
@@ -88,6 +93,9 @@ export function getAllowedAdminRoutes(role: SessionRole): string[] {
 
 export function isAllowedAdminPath(pathname: string, role: SessionRole): boolean {
   if (pathname === '/admin') return true
+
+  // Public routes are always allowed
+  if (PUBLIC_ROUTES.some(route => pathname === route)) return true
 
   const routes = getAllowedAdminRoutes(role)
   return routes.some(route => pathname === route || pathname.startsWith(`${route}/`))
