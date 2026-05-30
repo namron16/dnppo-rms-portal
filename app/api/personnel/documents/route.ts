@@ -4,12 +4,27 @@
 
 import { NextResponse } from 'next/server'
 import { upload201Document } from '@/lib/gdrive-pool/migrate-modal'
+import {updateDoc201Status} from '@/lib/data201'
+import {createClient} from '@/lib/supabase/server'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
 /** POST /api/personnel/documents — upload a 201 file to the Drive pool */
 export async function POST(request: Request) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 })
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (profile?.role !== 'P1') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
   try {
     const formData   = await request.formData()
     const file       = formData.get('file')       as File | null
@@ -23,12 +38,19 @@ export async function POST(request: Request) {
       )
     }
 
-    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
-      return NextResponse.json(
-        { error: `File type not allowed: ${file.type}. Only PDF and images are accepted.` },
-        { status: 415 }
-      )
-    }
+      const ALLOWED = new Set([
+          'application/pdf',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])
+        if (!file.type.startsWith('image/') && !ALLOWED.has(file.type)) {
+          return NextResponse.json(
+            { error: `File type not allowed: ${file.type}. Accepted: PDF, images, DOCX, XLSX.` },
+            { status: 415 }
+          )
+        }
 
     if (file.size > 50 * 1024 * 1024) {
       return NextResponse.json({ error: 'File exceeds 50 MB limit.' }, { status: 413 })
@@ -44,6 +66,9 @@ export async function POST(request: Request) {
       uploadedBy,
       fileSizeBytes: file.size,
     })
+
+    const fileSize = (file.size / 1024 / 1024).toFixed(1) + ' MB'
+    await updateDoc201Status(docId, 'COMPLETE', result.fileUrl, fileSize, uploadedBy)
 
     return NextResponse.json({ data: result }, { status: 201 })
   } catch (err: any) {

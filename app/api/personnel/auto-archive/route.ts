@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase/server'   // cookie-based, for auth
+import { getServiceClient } from '@/lib/gdrive-pool/db' // service-role, for DB writes
 
 function isSeparatedAndExpired(dateOfSeparation?: string | null): boolean {
   if (!dateOfSeparation) return false
@@ -9,30 +10,47 @@ function isSeparatedAndExpired(dateOfSeparation?: string | null): boolean {
   return new Date() >= threshold
 }
 
-/**
- * POST /api/personnel/auto-archive
- * Scans separated personnel records and persists Archived status for records
- * older than 15 years. Intended for manual triggering or scheduled cron use.
- */
-export async function POST() {
-  const { data, error } = await supabase
+export async function POST(request: Request) {
+  // ── Auth: cookie-based server client reads the actual session ─────────────
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthenticated.' }, { status: 401 })
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
+  if (profileError || !profile || profile.role !== 'P1') {
+    return NextResponse.json({ error: 'Forbidden. Only P1 may trigger auto-archive.' }, { status: 403 })
+  }
+
+  // ── Data operations: service-role client bypasses RLS safely ─────────────
+  const db = getServiceClient()
+
+  const { data, error } = await db
     .from('personnel_201')
-    .select('id,status,date_of_separation')
+    .select('id, status, date_of_separation')
+    .eq('status', 'Separated from Service') // filter server-side, not client-side
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
   const expiredIds = (data ?? [])
-    .filter((record: any) => record.status === 'Separated from Service' && isSeparatedAndExpired(record.date_of_separation))
-    .map((record: any) => record.id)
+    .filter((r: any) => isSeparatedAndExpired(r.date_of_separation))
+    .map((r: any) => r.id)
 
   if (expiredIds.length === 0) {
     return NextResponse.json({ updated: 0, archivedIds: [] })
   }
 
   const today = new Date().toISOString().split('T')[0]
-  const { error: updateError } = await supabase
+  const { error: updateError } = await db
     .from('personnel_201')
     .update({ status: 'Archived', last_updated: today })
     .in('id', expiredIds)

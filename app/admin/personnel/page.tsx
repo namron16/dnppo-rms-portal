@@ -502,9 +502,10 @@ function PersonnelCard({ person, onClick }: { person: Personnel201; onClick: () 
 }
 
 // ── Upload Doc Modal ──────────────────────────
-function UploadDocModal({ item, personName, open, onClose, onDone }: {
+function UploadDocModal({ item, personName, uploadedBy, open, onClose, onDone }: {
   item: Doc201Item | null
   personName: string
+  uploadedBy: string
   open: boolean
   onClose: () => void
   onDone: (docId: string, fileUrl: string, fileSize: string) => void
@@ -535,7 +536,7 @@ function UploadDocModal({ item, personName, open, onClose, onDone }: {
       return
     }
     setUploading(true)
-    const url = await uploadDoc201File(item.id, file, 'Admin')
+    const url = await uploadDoc201File(item.id, file, uploadedBy)
     if (url) {
       const size = (file.size / 1024 / 1024).toFixed(1) + ' MB'
       toast.success(`"${item.label}" uploaded successfully.`)
@@ -895,6 +896,7 @@ function Checklist201Modal({ person, onClose, onUpdate, onProfileSave, canManage
   }) => void
   canManage: boolean
 }) {
+  const { user }         = useAuth()
   const { toast }        = useToast()
   const [statusFilter, setStatusFilter] = useState<Doc201Status | 'ALL'>('ALL')
   const [catFilter,    setCatFilter]    = useState('ALL')
@@ -1121,6 +1123,7 @@ function Checklist201Modal({ person, onClose, onUpdate, onProfileSave, canManage
         <UploadDocModal
           item={uploadDisc.payload ?? null}
           personName={`${person.rank} ${person.name}`}
+          uploadedBy={user?.role ?? 'P1'}
           open={uploadDisc.isOpen}
           onClose={uploadDisc.close}
           onDone={(docId, fileUrl, fileSize) => {
@@ -1484,7 +1487,7 @@ export default function PersonnelFilesPage() {
         lastUpdated: today,
         documents: viewDisc.payload.documents.map(d => {
           if (d.id !== docId) return d
-          return { ...d, status, dateUpdated: today, filedBy: 'Admin',
+          return { ...d, status, dateUpdated: today, filedBy: user?.role ?? 'P1',
             ...(fileUrl ? { fileUrl } : {}), ...(fileSize ? { fileSize } : {}) }
         }),
       })
