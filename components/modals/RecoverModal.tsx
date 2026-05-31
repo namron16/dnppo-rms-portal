@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { RotateCcw, X, AlertTriangle, CheckCircle2, Shield, ChevronDown } from 'lucide-react'
+import { RotateCcw, X, AlertTriangle, CheckCircle2, Shield, ChevronDown, Info } from 'lucide-react'
 
 const MODULE_LABELS: Record<string, string> = {
   master_documents:     'Master Documents',
@@ -23,7 +23,6 @@ interface BackupJob {
   started_at:       string | null
   completed_at:     string | null
   total_size_bytes: number | null
-  // FIX: added download_url — engine.ts now stores this after every successful backup
   download_url:     string | null
 }
 
@@ -33,6 +32,12 @@ interface RecoveryResult {
   filesRestored:    number
   validationPassed: boolean
   durationSecs:     number
+}
+
+interface ApiError {
+  error:   string
+  code?:   string
+  detail?: string
 }
 
 interface Props {
@@ -60,7 +65,8 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
   const [selectedJob, setSelectedJob] = useState<BackupJob | null>(null)
   const [confirmed,   setConfirmed]   = useState(false)
   const [loading,     setLoading]     = useState(false)
-  const [error,       setError]       = useState<string | null>(null)
+  const [apiError,    setApiError]    = useState<ApiError | null>(null)
+  const [showDetail,  setShowDetail]  = useState(false)
   const [result,      setResult]      = useState<RecoveryResult | null>(null)
 
   useEffect(() => {
@@ -68,7 +74,8 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
       setModuleName(defaultModule)
       setSelectedJob(null)
       setConfirmed(false)
-      setError(null)
+      setApiError(null)
+      setShowDetail(false)
       setResult(null)
     }
   }, [open, defaultModule])
@@ -91,10 +98,19 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
   )
 
   const handleRecover = async () => {
-    if (!selectedJob) { setError('No completed backup selected.'); return }
-    if (!confirmed)   { setError('You must confirm to proceed.'); return }
-    setError(null)
+    if (!selectedJob) {
+      setApiError({ error: 'No completed backup selected.', code: 'NO_JOB_SELECTED' })
+      return
+    }
+    if (!confirmed) {
+      setApiError({ error: 'You must check the confirmation checkbox to proceed.', code: 'NOT_CONFIRMED' })
+      return
+    }
+
+    setApiError(null)
+    setShowDetail(false)
     setLoading(true)
+
     try {
       const res  = await fetch('/api/backup/recover', {
         method:  'POST',
@@ -106,10 +122,23 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
         }),
       })
       const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? 'Recovery failed')
+
+      if (!res.ok) {
+        setApiError({
+          error:  json.error  ?? 'Recovery failed.',
+          code:   json.code   ?? `HTTP_${res.status}`,
+          detail: json.detail ?? null,
+        })
+        return
+      }
+
       setResult(json.data)
     } catch (e: any) {
-      setError(e.message)
+      setApiError({
+        error:  'Could not reach the recovery API.',
+        code:   'NETWORK_ERROR',
+        detail: e?.message ?? String(e),
+      })
     } finally {
       setLoading(false)
     }
@@ -119,7 +148,8 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
     setModuleName('')
     setSelectedJob(null)
     setConfirmed(false)
-    setError(null)
+    setApiError(null)
+    setShowDetail(false)
     setResult(null)
     onClose()
   }
@@ -179,7 +209,6 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
               </button>
             </div>
           ) : (
-            /* ── Form State ── */
             <>
               {/* Warning Banner */}
               <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
@@ -233,28 +262,18 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
                             }`}
                           >
                             <div className="space-y-0.5">
-                              {/* FIX: text colors flip to white/slate-300 when card is selected */}
-                              <p className={`text-[12px] font-semibold capitalize ${
-                                isSelected ? 'text-white' : 'text-slate-900'
-                              }`}>
+                              <p className={`text-[12px] font-semibold capitalize ${isSelected ? 'text-white' : 'text-slate-900'}`}>
                                 {job.backup_type} backup
                               </p>
-                              <p className={`text-[11px] ${
-                                isSelected ? 'text-slate-300' : 'text-slate-400'
-                              }`}>
+                              <p className={`text-[11px] ${isSelected ? 'text-slate-300' : 'text-slate-400'}`}>
                                 {fmt(job.completed_at)}
                               </p>
                             </div>
                             <div className="text-right">
-                              {/* FIX: size text also flips on selection */}
-                              <p className={`text-[11px] ${
-                                isSelected ? 'text-slate-300' : 'text-slate-500'
-                              }`}>
+                              <p className={`text-[11px] ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
                                 {formatBytes(job.total_size_bytes)}
                               </p>
-                              {isSelected && (
-                                <Shield size={11} className="text-amber-400 ml-auto mt-1" />
-                              )}
+                              {isSelected && <Shield size={11} className="text-amber-400 ml-auto mt-1" />}
                             </div>
                           </button>
                         )
@@ -281,9 +300,36 @@ export function RecoverModal({ open, onClose, onSuccess, defaultModule, recentJo
                 </span>
               </label>
 
-              {error && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">
-                  <AlertTriangle size={13} /> {error}
+              {/* ── Error block — shows code + expandable detail ── */}
+              {apiError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 overflow-hidden">
+                  <div className="flex items-start gap-2 px-3 py-2.5">
+                    <AlertTriangle size={13} className="text-red-500 mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] text-red-700 font-medium">{apiError.error}</p>
+                      {apiError.code && (
+                        <p className="text-[10px] text-red-500 font-mono mt-0.5">
+                          code: {apiError.code}
+                        </p>
+                      )}
+                    </div>
+                    {apiError.detail && (
+                      <button
+                        onClick={() => setShowDetail(v => !v)}
+                        className="shrink-0 text-red-400 hover:text-red-600 transition"
+                        title="Toggle detail"
+                      >
+                        <Info size={13} />
+                      </button>
+                    )}
+                  </div>
+                  {showDetail && apiError.detail && (
+                    <div className="px-3 pb-2.5 border-t border-red-200">
+                      <p className="text-[11px] text-red-600 font-mono break-all mt-2">
+                        {apiError.detail}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 

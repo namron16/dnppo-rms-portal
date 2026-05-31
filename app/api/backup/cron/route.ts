@@ -1,57 +1,31 @@
 // app/api/backup/cron/route.ts
 //
 // FIX-3: backup_hour timezone support.
-//
-// Problem: Vercel cron (and pg_cron) always run in UTC.
-// The admin configures backup_hour in Philippine Time (UTC+8).
-// A backup_hour of 2 (2:00 AM PHT) should fire at 18:00 UTC the previous day,
-// not 2:00 AM UTC (which is 10:00 AM PHT — completely wrong).
-//
-// This route is the HTTP receiver called by the Vercel cron or pg_cron webhook.
-// It now:
-//   1. Reads the current time in PHT (UTC+8) so determineFrequency() correctly
-//      identifies the calendar day and day-of-week in local time.
-//   2. Compares the CURRENT PHT hour against each enabled module's backup_hour.
-//      Only modules whose configured hour matches the current PHT hour are run.
-//      This lets different modules fire at different times within the same day
-//      without needing separate cron jobs per module.
-//
-// Vercel cron configuration in vercel.json should run EVERY hour so all
-// backup_hour windows can be served:
-//   { "crons": [{ "path": "/api/backup/cron", "schedule": "0 * * * *" }] }
-//
-// If you prefer per-hour crons instead, keep the original schedule and remove
-// the backup_hour filtering in runScheduledBackupForHour().
+// Enhanced: all errors now include structured codes and contextual detail
+// so you can immediately tell WHAT failed and WHERE in the pipeline.
 
 import { NextResponse } from 'next/server'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
 import { runModuleBackup } from '@/lib/backup/engine'
 import type { BackupModuleName } from '@/lib/backup/modules'
 
-export const runtime    = 'nodejs'
+export const runtime     = 'nodejs'
 export const maxDuration = 300
 
-// Philippine Time offset: UTC+8
 const PHT_OFFSET_HOURS = 8
 
-/** Returns the current Date expressed in Philippine Time (UTC+8). */
 function nowInPHT(): Date {
-  const utcMs  = Date.now()
-  const phtMs  = utcMs + PHT_OFFSET_HOURS * 60 * 60 * 1000
+  const utcMs = Date.now()
+  const phtMs = utcMs + PHT_OFFSET_HOURS * 60 * 60 * 1000
   return new Date(phtMs)
 }
 
-/**
- * Determines the backup frequency based on the current PHT date.
- * Using PHT ensures Jan 1, Mondays, and the 1st of the month are
- * evaluated in local time, not UTC.
- */
 function determineFrequency(
   phtNow: Date
 ): 'daily' | 'weekly' | 'monthly' | 'yearly' {
-  const day   = phtNow.getUTCDay()    // 0=Sun,1=Mon  (phtNow is shifted, so getUTCDay = PHT day)
+  const day   = phtNow.getUTCDay()
   const date  = phtNow.getUTCDate()
-  const month = phtNow.getUTCMonth()  // 0=Jan
+  const month = phtNow.getUTCMonth()
 
   if (month === 0 && date === 1) return 'yearly'
   if (date === 1)                return 'monthly'
@@ -60,14 +34,32 @@ function determineFrequency(
 }
 
 export async function GET(request: Request) {
-  // Validate Vercel cron secret
+  // ── Auth: validate Vercel cron secret ──────────────────────────────────────
   const authHeader = request.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  if (!process.env.CRON_SECRET) {
+    console.error('[Cron] CRON_SECRET env var is not set. Set it in Vercel Environment Variables.')
+    return NextResponse.json({
+      error:  'Server misconfiguration: CRON_SECRET is not set.',
+      code:   'MISSING_CRON_SECRET',
+      detail: 'Add CRON_SECRET to your Vercel environment variables and redeploy.',
+    }, { status: 500 })
   }
 
-  const phtNow   = nowInPHT()
-  const phtHour  = phtNow.getUTCHours()   // hour in PHT (0–23)
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    console.warn(
+      `[Cron] Unauthorized request. ` +
+      `Expected Bearer <CRON_SECRET>, got: ${authHeader?.slice(0, 20) ?? '(empty)'}…`
+    )
+    return NextResponse.json({
+      error:  'Unauthorized. Invalid or missing CRON_SECRET.',
+      code:   'UNAUTHORIZED',
+      detail: 'Ensure the Authorization header is set to "Bearer <CRON_SECRET>".',
+    }, { status: 401 })
+  }
+
+  const phtNow    = nowInPHT()
+  const phtHour   = phtNow.getUTCHours()
   const frequency = determineFrequency(phtNow)
 
   console.log(
@@ -76,22 +68,24 @@ export async function GET(request: Request) {
     `(hour=${phtHour}, frequency=${frequency})`
   )
 
-  const result = await runScheduledBackupForHour({
-    frequency,
-    phtHour,
-    triggeredBy: 'system',
-  })
-
-  return NextResponse.json({ data: result })
+  try {
+    const result = await runScheduledBackupForHour({
+      frequency,
+      phtHour,
+      triggeredBy: 'system',
+    })
+    return NextResponse.json({ data: result })
+  } catch (err: any) {
+    const msg = err?.message ?? String(err)
+    console.error('[Cron] runScheduledBackupForHour threw unexpectedly:', msg)
+    return NextResponse.json({
+      error:  'Cron handler threw an unhandled error.',
+      code:   'CRON_HANDLER_ERROR',
+      detail: msg,
+    }, { status: 500 })
+  }
 }
 
-/**
- * Runs all enabled modules whose configured backup_hour matches the current
- * PHT hour AND whose frequency matches the calendar-derived frequency.
- *
- * This replaces the original runScheduledBackup() call so the engine only
- * activates the modules the admin scheduled for THIS hour.
- */
 async function runScheduledBackupForHour(opts: {
   frequency:   'daily' | 'weekly' | 'monthly' | 'yearly'
   phtHour:     number
@@ -99,34 +93,48 @@ async function runScheduledBackupForHour(opts: {
 }) {
   const db = getServiceClient()
 
-  // Fetch all enabled configs that match the frequency AND the current PHT hour.
-  // backup_hour stores the admin's intended PHT hour (0–23).
-  // If backup_hour is NULL (legacy rows), default to 2 (2:00 AM PHT).
-  const { data: configs, error } = await db
+  // ── Fetch matching configs ─────────────────────────────────────────────────
+  const { data: configs, error: configsError } = await db
     .from('backup_configs')
     .select('*')
     .eq('is_enabled', true)
     .eq('frequency', opts.frequency)
 
-  if (error) {
-    console.error('[Cron] Failed to fetch backup_configs:', error.message)
-    return { started: 0, results: [] }
+  if (configsError) {
+    const detail = [
+      `code=${configsError.code}`,
+      `message=${configsError.message}`,
+      `hint=${configsError.hint ?? 'none'}`,
+      `details=${configsError.details ?? 'none'}`,
+    ].join(', ')
+
+    console.error(`[Cron] backup_configs fetch failed: ${detail}`)
+
+    // Surface as a structured error so the caller can log it properly
+    throw new Error(
+      `Failed to fetch backup_configs from Supabase. ` +
+      `This usually means the table does not exist (run migration 004) ` +
+      `or SUPABASE_SERVICE_ROLE_KEY is wrong. Detail: ${detail}`
+    )
   }
 
   if (!configs || configs.length === 0) {
-    console.log(`[Cron] No enabled configs for frequency: ${opts.frequency}`)
+    console.log(
+      `[Cron] No enabled configs for frequency="${opts.frequency}". ` +
+      `Either all modules are disabled or none have been configured yet ` +
+      `(open Backup Schedule settings to configure them).`
+    )
     return { started: 0, results: [] }
   }
 
-  // Filter to only the modules whose configured hour matches NOW in PHT.
-  // Modules with no backup_hour set default to 2 (original system default).
+  // ── Filter to modules due NOW ──────────────────────────────────────────────
   const dueConfigs = configs.filter(config => {
     const configuredHour = config.backup_hour ?? 2
     const isDue          = configuredHour === opts.phtHour
     if (!isDue) {
       console.log(
-        `[Cron] Skipping ${config.module_name} — scheduled for ` +
-        `${configuredHour}:00 PHT, current PHT hour is ${opts.phtHour}`
+        `[Cron] Skipping "${config.module_name}" — ` +
+        `scheduled for ${configuredHour}:00 PHT, current PHT hour is ${opts.phtHour}`
       )
     }
     return isDue
@@ -134,20 +142,22 @@ async function runScheduledBackupForHour(opts: {
 
   if (dueConfigs.length === 0) {
     console.log(
-      `[Cron] No modules due at PHT hour ${opts.phtHour} ` +
-      `for frequency=${opts.frequency}`
+      `[Cron] No modules due at PHT ${opts.phtHour}:00 for frequency="${opts.frequency}". ` +
+      `Modules are configured but none match the current hour. ` +
+      `Check backup_hour values in the Schedule settings.`
     )
     return { started: 0, results: [] }
   }
 
   console.log(
-    `[Cron] Running ${dueConfigs.length} module(s) due at ` +
-    `PHT ${opts.phtHour}:00 (frequency=${opts.frequency}): ` +
-    dueConfigs.map(c => c.module_name).join(', ')
+    `[Cron] Running ${dueConfigs.length} module(s) at PHT ${opts.phtHour}:00 ` +
+    `(frequency=${opts.frequency}): ${dueConfigs.map(c => c.module_name).join(', ')}`
   )
 
+  // ── Create job records and run backups ─────────────────────────────────────
   const results = await Promise.allSettled(
     dueConfigs.map(async (config) => {
+      // Create job row
       const { data: job, error: jobErr } = await db
         .from('backup_jobs')
         .insert({
@@ -163,13 +173,25 @@ async function runScheduledBackupForHour(opts: {
         .single()
 
       if (jobErr || !job) {
+        const detail = jobErr
+          ? `code=${jobErr.code}, message=${jobErr.message}, hint=${jobErr.hint ?? 'none'}`
+          : 'insert returned no row'
+
         console.error(
-          `[Cron] Could not create job for ${config.module_name}:`,
-          jobErr?.message
+          `[Cron] Could not create backup_jobs row for module "${config.module_name}". ` +
+          `Check RLS on backup_jobs and that service role key is correct. Detail: ${detail}`
         )
-        return { success: false, jobId: '', folderName: '', fileCount: 0,
-                 totalBytes: 0, durationSecs: 0, manifestChecksum: '',
-                 error: jobErr?.message ?? 'Job insert failed' }
+
+        return {
+          success: false,
+          jobId: '',
+          folderName: '',
+          fileCount: 0,
+          totalBytes: 0,
+          durationSecs: 0,
+          manifestChecksum: '',
+          error: `Job insert failed for "${config.module_name}": ${detail}`,
+        }
       }
 
       return runModuleBackup({
@@ -180,11 +202,18 @@ async function runScheduledBackupForHour(opts: {
     })
   )
 
-  const settled = results.map(r =>
-    r.status === 'fulfilled'
-      ? r.value
-      : { success: false, error: String((r as any).reason) }
-  )
+  const settled = results.map((r, i) => {
+    if (r.status === 'fulfilled') return r.value
+
+    const reason = String((r as PromiseRejectedResult).reason)
+    console.error(
+      `[Cron] Module "${dueConfigs[i]?.module_name}" rejected unexpectedly: ${reason}`
+    )
+    return {
+      success: false,
+      error: `Unhandled rejection for "${dueConfigs[i]?.module_name}": ${reason}`,
+    }
+  })
 
   const succeeded = settled.filter(r => r.success).length
   console.log(`[Cron] Completed: ${succeeded}/${dueConfigs.length} succeeded`)

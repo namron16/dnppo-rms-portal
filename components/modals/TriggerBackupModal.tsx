@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Play, X, AlertTriangle, Shield, CheckCircle2 } from 'lucide-react'
+import { Play, X, AlertTriangle, Shield, CheckCircle2, ChevronDown, Info } from 'lucide-react'
 
 const MODULES = [
   { key: 'master_documents',     label: 'Master Documents',    encrypted: false },
@@ -17,6 +17,12 @@ const MODULES = [
 
 const BACKUP_TYPES = ['full', 'incremental', 'differential', 'manual'] as const
 
+interface ApiError {
+  error:   string
+  code?:   string
+  detail?: string
+}
+
 interface Props {
   open:      boolean
   onClose:   () => void
@@ -27,7 +33,8 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
   const [module_name, setModuleName] = useState('')
   const [backup_type, setBackupType] = useState<typeof BACKUP_TYPES[number]>('full')
   const [loading,     setLoading]    = useState(false)
-  const [error,       setError]      = useState<string | null>(null)
+  const [apiError,    setApiError]   = useState<ApiError | null>(null)
+  const [showDetail,  setShowDetail] = useState(false)
   const [result,      setResult]     = useState<{ jobId: string; message: string } | null>(null)
 
   if (!open) return null
@@ -35,25 +42,39 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
   const selectedMod = MODULES.find(m => m.key === module_name)
 
   const handleSubmit = async () => {
-    if (!module_name) { setError('Please select a module.'); return }
-    setError(null)
+    if (!module_name) {
+      setApiError({ error: 'Please select a module.', code: 'MISSING_MODULE' })
+      return
+    }
+    setApiError(null)
+    setShowDetail(false)
     setLoading(true)
+
     try {
-      const res = await fetch('/api/backup/trigger', {
+      const res  = await fetch('/api/backup/trigger', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        // FIX: removed hardcoded triggered_by: 'admin' from the request body.
-        // The API route (trigger/route.ts) derives triggered_by from the
-        // authenticated session via requireAdmin() + supabase.auth.getUser(),
-        // so sending it from the client was redundant and potentially misleading
-        // in the backup_jobs log if auth was ever bypassed.
-        body: JSON.stringify({ module_name, backup_type }),
+        body:    JSON.stringify({ module_name, backup_type }),
       })
       const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? 'Backup failed to start')
+
+      if (!res.ok) {
+        // Store the full structured error from the API
+        setApiError({
+          error:  json.error  ?? 'Backup failed to start.',
+          code:   json.code   ?? `HTTP_${res.status}`,
+          detail: json.detail ?? null,
+        })
+        return
+      }
+
       setResult({ jobId: json.data.jobId, message: json.data.message })
     } catch (e: any) {
-      setError(e.message)
+      setApiError({
+        error:  'Could not reach the backup API.',
+        code:   'NETWORK_ERROR',
+        detail: e?.message ?? String(e),
+      })
     } finally {
       setLoading(false)
     }
@@ -62,7 +83,8 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
   const handleClose = () => {
     setModuleName('')
     setBackupType('full')
-    setError(null)
+    setApiError(null)
+    setShowDetail(false)
     setResult(null)
     setLoading(false)
     onClose()
@@ -165,10 +187,36 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
                 </div>
               )}
 
-              {error && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">
-                  <AlertTriangle size={13} />
-                  {error}
+              {/* ── Error block — shows code + expandable detail ── */}
+              {apiError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 overflow-hidden">
+                  <div className="flex items-start gap-2 px-3 py-2.5">
+                    <AlertTriangle size={13} className="text-red-500 mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] text-red-700 font-medium">{apiError.error}</p>
+                      {apiError.code && (
+                        <p className="text-[10px] text-red-500 font-mono mt-0.5">
+                          code: {apiError.code}
+                        </p>
+                      )}
+                    </div>
+                    {apiError.detail && (
+                      <button
+                        onClick={() => setShowDetail(v => !v)}
+                        className="shrink-0 text-red-400 hover:text-red-600 transition"
+                        title="Toggle detail"
+                      >
+                        <Info size={13} />
+                      </button>
+                    )}
+                  </div>
+                  {showDetail && apiError.detail && (
+                    <div className="px-3 pb-2.5 border-t border-red-200">
+                      <p className="text-[11px] text-red-600 font-mono break-all mt-2">
+                        {apiError.detail}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 

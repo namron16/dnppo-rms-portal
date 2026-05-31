@@ -1,61 +1,96 @@
-// lib/backup/notifications.ts
-// Utility used by engine.ts to insert a backup_notifications row after
-// each backup job completes (success or failure).
-//
-// NOTE: The API route handlers live in app/api/backup/notifications/route.ts.
-// This file is the server-side helper only — no HTTP, no route exports.
+// app/api/backup/notifications/route.ts
+// Enhanced: structured error codes on every failure path.
 
+import { NextResponse } from 'next/server'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
+import { requireAdmin, AuthError } from '@/lib/backup/auth-guard'
 
-export interface NotifyBackupResultOptions {
-  jobId:        string
-  module_name:  string
-  success:      boolean
-  folderName?:  string
-  durationSecs?: number
-  totalBytes?:  number
-  error?:       string
-}
+export const runtime = 'nodejs'
 
-/**
- * Inserts a row into backup_notifications so the admin dashboard
- * can surface success/failure alerts without polling backup_jobs directly.
- *
- * Called from engine.ts after every backup run.
- * Non-fatal: if the insert fails, we log a warning but do not throw.
- */
-export async function notifyBackupResult(opts: NotifyBackupResultOptions): Promise<void> {
+export async function GET() {
+  try {
+    await requireAdmin()
+  } catch (err: any) {
+    if (err instanceof AuthError) {
+      return NextResponse.json(err.toJSON(), { status: 403 })
+    }
+    return NextResponse.json({
+      error:  'Auth check failed.',
+      code:   'AUTH_UNEXPECTED',
+      detail: err?.message ?? String(err),
+    }, { status: 403 })
+  }
+
   const db = getServiceClient()
-
-  const title = opts.success
-    ? `Backup completed — ${opts.module_name}`
-    : `Backup failed — ${opts.module_name}`
-
-  const body = opts.success
-    ? [
-        `Folder: ${opts.folderName ?? 'n/a'}`,
-        `Duration: ${opts.durationSecs ?? 0}s`,
-        `Size: ${formatBytes(opts.totalBytes ?? 0)}`,
-      ].join(' · ')
-    : `Error: ${opts.error ?? 'Unknown error'}`
-
-  const { error } = await db.from('backup_notifications').insert({
-    job_id:    opts.jobId,
-    type:      opts.success ? 'success' : 'error',
-    title,
-    message:   body,
-    is_read:   false,
-    created_at: new Date().toISOString(),
-  })
+  const { data, error } = await db
+    .from('backup_notifications')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(50)
 
   if (error) {
-    console.warn(`[Notifications] Failed to insert notification for job ${opts.jobId}:`, error.message)
+    const isMissingTable =
+      error.code === '42P01' || error.message.includes('does not exist')
+
+    return NextResponse.json({
+      error:  'Failed to fetch backup notifications.',
+      code:   'NOTIFICATIONS_FETCH_ERROR',
+      detail: isMissingTable
+        ? 'The backup_notifications table does not exist. Run migration 004.'
+        : `${error.code}: ${error.message}`,
+    }, { status: 500 })
   }
+
+  return NextResponse.json({ data })
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024)        return `${bytes} B`
-  if (bytes < 1024 ** 2)   return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 ** 3)   return `${(bytes / 1024 ** 2).toFixed(1)} MB`
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
+export async function PATCH(request: Request) {
+  try {
+    await requireAdmin()
+  } catch (err: any) {
+    if (err instanceof AuthError) {
+      return NextResponse.json(err.toJSON(), { status: 403 })
+    }
+    return NextResponse.json({
+      error:  'Auth check failed.',
+      code:   'AUTH_UNEXPECTED',
+      detail: err?.message ?? String(err),
+    }, { status: 403 })
+  }
+
+  let body: any
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({
+      error:  'Invalid request body — expected JSON.',
+      code:   'INVALID_BODY',
+    }, { status: 400 })
+  }
+
+  const { ids } = body
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return NextResponse.json({
+      error:  'ids must be a non-empty array of notification UUIDs.',
+      code:   'INVALID_FIELD',
+      detail: 'Example: { "ids": ["uuid-1", "uuid-2"] }',
+    }, { status: 400 })
+  }
+
+  const db = getServiceClient()
+  const { error } = await db
+    .from('backup_notifications')
+    .update({ is_read: true })
+    .in('id', ids)
+
+  if (error) {
+    return NextResponse.json({
+      error:  'Failed to mark notifications as read.',
+      code:   'NOTIFICATIONS_UPDATE_ERROR',
+      detail: `${error.code}: ${error.message}`,
+    }, { status: 500 })
+  }
+
+  return NextResponse.json({ data: { success: true, updated: ids.length } })
 }
