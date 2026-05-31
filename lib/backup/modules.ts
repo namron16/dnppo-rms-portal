@@ -60,8 +60,8 @@ export const BACKUP_MODULES = {
   },
   personnel_201: {
     label: '201 Files',
-    tables: ['records'],
-    gdrive_category: 'personnel_201',
+    tables: ['personnel_201', 'personnel_201_docs'],
+    gdrive_category: null,
     entity_type: 'doc_201',
     attachment_table: null,
     attachment_fk: null,

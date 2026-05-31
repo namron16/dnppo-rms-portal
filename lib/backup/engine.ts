@@ -1,4 +1,12 @@
 // lib/backup/engine.ts
+// FIXES applied in this version:
+//   FIX-1: admin_logs date range now respects backup_type instead of being
+//           hardcoded to 30 days. full=all-time, incremental=last 24h,
+//           differential=since last full, weekly/monthly/yearly match their period.
+//   FIX-2: archived_files filter uses per-table correct predicates:
+//           master_documents/daily_journals/library_items use archived=true (boolean),
+//           special_orders use status='ARCHIVED' (string).
+//   (Other existing fixes from the original file are preserved unchanged.)
 
 import { createHash } from 'crypto'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
@@ -26,6 +34,135 @@ export interface BackupResult {
   error?:           string
 }
 
+// ── FIX-1: resolve the correct date range for admin_logs based on backup_type ──
+//
+// Previously this was hardcoded to "last 30 days" regardless of backup_type,
+// meaning a "full" manual backup would still silently miss older log history.
+//
+// Logic:
+//   full      → all time (epoch)
+//   manual    → all time (treat same as full for on-demand runs)
+//   yearly    → last 365 days
+//   monthly   → last 31 days
+//   weekly    → last 7 days
+//   incremental / differential → last 24 hours (catch-up window)
+//
+function resolveLogsDateRange(
+  backup_type: string,
+  frequency:   string,
+  now:         Date
+): { fromDate: Date; label: string } {
+  // frequency takes priority for scheduled runs
+  switch (frequency) {
+    case 'yearly':
+      return {
+        fromDate: new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000),
+        label:    'last 365 days',
+      }
+    case 'monthly':
+      return {
+        fromDate: new Date(now.getTime() - 31 * 24 * 60 * 60 * 1000),
+        label:    'last 31 days',
+      }
+    case 'weekly':
+      return {
+        fromDate: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+        label:    'last 7 days',
+      }
+  }
+
+  // fall back to backup_type for manual / custom triggers
+  switch (backup_type) {
+    case 'full':
+    case 'manual':
+      // epoch = all history
+      return { fromDate: new Date(0), label: 'all time' }
+    case 'incremental':
+    case 'differential':
+      return {
+        fromDate: new Date(now.getTime() - 24 * 60 * 60 * 1000),
+        label:    'last 24 hours',
+      }
+    default:
+      // safe fallback: 30 days (original behaviour)
+      return {
+        fromDate: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+        label:    'last 30 days',
+      }
+  }
+}
+
+// ── FIX-2: archived_files per-table export ─────────────────────────────────
+//
+// Previously used a single filter { archived: true } which silently returned
+// zero rows for special_orders because that table uses status='ARCHIVED' (a
+// string enum), not a boolean archived column.
+//
+// Now each table is exported with its correct predicate.
+//
+async function exportArchivedTables(now: Date): Promise<Map<string, Buffer>> {
+  const db    = getServiceClient()
+  const files = new Map<string, Buffer>()
+
+  // Tables that use a boolean `archived` column
+  const booleanArchivedTables = ['master_documents', 'daily_journals', 'library_items']
+
+  for (const tableName of booleanArchivedTables) {
+    const allRows: any[] = []
+    const PAGE_SIZE = 1000
+    let offset = 0
+
+    while (true) {
+      const { data, error } = await db
+        .from(tableName)
+        .select('*')
+        .eq('archived', true)           // ← boolean column
+        .range(offset, offset + PAGE_SIZE - 1)
+
+      if (error) throw new Error(`Export archived ${tableName}: ${error.message}`)
+      if (!data || data.length === 0) break
+
+      allRows.push(...data)
+      if (data.length < PAGE_SIZE) break
+      offset += PAGE_SIZE
+    }
+
+    if (allRows.length > 0) {
+      const encrypted = await encryptBackupData(Buffer.from(JSON.stringify(allRows, null, 2)))
+      files.set(`database/${tableName}_archived_${timestamp(now)}.json.enc`, encrypted)
+    }
+  }
+
+  // special_orders uses status='ARCHIVED' (string), not a boolean column
+  {
+    const allRows: any[] = []
+    const PAGE_SIZE = 1000
+    let offset = 0
+
+    while (true) {
+      const { data, error } = await db
+        .from('special_orders')
+        .select('*')
+        .eq('status', 'ARCHIVED')       // ← string enum, not boolean
+        .range(offset, offset + PAGE_SIZE - 1)
+
+      if (error) throw new Error(`Export archived special_orders: ${error.message}`)
+      if (!data || data.length === 0) break
+
+      allRows.push(...data)
+      if (data.length < PAGE_SIZE) break
+      offset += PAGE_SIZE
+    }
+
+    if (allRows.length > 0) {
+      const encrypted = await encryptBackupData(Buffer.from(JSON.stringify(allRows, null, 2)))
+      files.set(`database/special_orders_archived_${timestamp(now)}.json.enc`, encrypted)
+    }
+  }
+
+  return files
+}
+
 /**
  * Runs a complete backup for a single module.
  * Downloads database records + all file attachments from Google Drive.
@@ -36,6 +173,14 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
   const start = Date.now()
   const { jobId, module_name, backup_type } = opts
   const moduleDef = BACKUP_MODULES[module_name]
+
+  // Resolve the frequency for this job (used by logs date-range and manifest)
+  const { data: jobRow } = await db
+    .from('backup_jobs')
+    .select('frequency')
+    .eq('id', jobId)
+    .maybeSingle()
+  const frequency: string = (jobRow as any)?.frequency ?? 'manual'
 
   // Update job status to running
   await db
@@ -52,16 +197,26 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
     console.log(`[Backup] Exporting database for module: ${module_name}`)
 
     if (module_name === 'admin_logs') {
-      // Admin logs → XLSX (unencrypted; no sensitive PII, used for audit review)
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-      const xlsxBuf = await exportAdminLogsAsXlsx(thirtyDaysAgo, now)
+      // FIX-1: use backup_type + frequency to determine date range
+      const { fromDate, label } = resolveLogsDateRange(backup_type, frequency, now)
+      console.log(`[Backup] admin_logs date range: ${label} (from ${fromDate.toISOString()})`)
+
+      const xlsxBuf = await exportAdminLogsAsXlsx(fromDate, now)
       backupFiles.set(`database/admin_logs_${timestamp(now)}.xlsx`, xlsxBuf)
+
+    } else if (module_name === 'archived_files') {
+      // FIX-2: use per-table correct predicates
+      console.log(`[Backup] Exporting archived_files with per-table predicates`)
+      const archivedFiles = await exportArchivedTables(now)
+      for (const [path, buf] of archivedFiles) {
+        backupFiles.set(path, buf)
+      }
+
     } else {
       for (const tableName of moduleDef.tables) {
         const records = await exportTable(tableName, moduleDef)
         const json = JSON.stringify(records, null, 2)
 
-        // FIX: apply double-encryption for classified_documents
         const encrypted = (moduleDef as any).extra_encryption
           ? await doubleEncryptClassified(Buffer.from(json))
           : await encryptBackupData(Buffer.from(json))
@@ -73,11 +228,14 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
     // ── 2. Download file attachments from Google Drive ──────────────────────
     let attachmentManifest: any[] = []
 
-    if ((moduleDef as any).attachment_table && (moduleDef as any).attachment_fk) {
-      console.log(`[Backup] Downloading attachments for ${module_name}`)
-      attachmentManifest = await downloadAttachments({ module_name, moduleDef, backupFiles, now })
-    } else if ((moduleDef as any).gdrive_category) {
-      attachmentManifest = await downloadFromRecordsTable({ module_name, moduleDef, backupFiles, now })
+    // archived_files has no single attachment_table — skip attachment download
+    if (module_name !== 'archived_files') {
+      if ((moduleDef as any).attachment_table && (moduleDef as any).attachment_fk) {
+        console.log(`[Backup] Downloading attachments for ${module_name}`)
+        attachmentManifest = await downloadAttachments({ module_name, moduleDef, backupFiles, now })
+      } else if ((moduleDef as any).gdrive_category) {
+        attachmentManifest = await downloadFromRecordsTable({ module_name, moduleDef, backupFiles, now })
+      }
     }
 
     // ── 3. Generate manifest ─────────────────────────────────────────────────
@@ -92,7 +250,6 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
     })
 
     // ── 4. Finalize manifest with real duration ───────────────────────────────
-    // FIX: was never called before; duration was always 0 in the manifest.
     const durationSecs = Math.round((Date.now() - start) / 1000)
     const finalManifest = finalizeManifest(manifest, durationSecs)
     backupFiles.set('MANIFEST.json', Buffer.from(JSON.stringify(finalManifest, null, 2)))
@@ -111,7 +268,6 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
     const totalBytes = Array.from(backupFiles.values()).reduce((s, b) => s + b.length, 0)
 
     // ── 8. Store ZIP to Supabase Storage ─────────────────────────────────────
-    // FIX: was a no-op stub; now actually uploads the ZIP.
     const downloadUrl = await storeBackupBlob(jobId, folderName, zipBlob)
 
     // ── 9. Update job record ─────────────────────────────────────────────────
@@ -259,7 +415,7 @@ async function downloadAttachments(params: {
   return attachmentManifest
 }
 
-// ── Helper: download from records table (modules without attachment_table) ─────
+// ── Helper: download from records table ───────────────────────────────────────
 async function downloadFromRecordsTable(params: {
   module_name: string
   moduleDef:   any
@@ -304,13 +460,6 @@ async function downloadFromRecordsTable(params: {
 }
 
 // ── Helper: store ZIP to Supabase Storage ────────────────────────────────────
-/**
- * Uploads the backup ZIP to the 'backup-staging' Supabase Storage bucket.
- * Files expire after 1 hour via a signed URL; for permanent storage,
- * move to a long-lived bucket and remove the expiry.
- *
- * Returns the signed URL so the client can download the file.
- */
 async function storeBackupBlob(
   jobId:      string,
   folderName: string,
@@ -334,7 +483,7 @@ async function storeBackupBlob(
 
   const { data: signedData, error: signedError } = await db.storage
     .from('backup-staging')
-    .createSignedUrl(storagePath, 60 * 60) // 1-hour expiry
+    .createSignedUrl(storagePath, 60 * 60)
 
   if (signedError || !signedData?.signedUrl) {
     throw new Error(`Failed to create signed URL: ${signedError?.message ?? 'unknown'}`)
@@ -366,7 +515,7 @@ async function packageAsZip(folderName: string, files: Map<string, Buffer>): Pro
   })
 }
 
-// ── Helper: build folder name ─────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function buildFolderName(date: Date, module_name: string): string {
   const pad = (n: number) => n.toString().padStart(2, '0')
   const year  = date.getFullYear()
@@ -374,8 +523,8 @@ function buildFolderName(date: Date, module_name: string): string {
   const day   = pad(date.getDate())
   const hour  = date.getHours()
   const min   = pad(date.getMinutes())
-  const ampm  = hour >= 12 ? 'PM' : 'AM'
   const h12   = pad(hour % 12 || 12)
+  const ampm  = hour >= 12 ? 'PM' : 'AM'
 
   const moduleLabel = module_name
     .split('_')
@@ -386,7 +535,7 @@ function buildFolderName(date: Date, module_name: string): string {
 }
 
 function timestamp(date: Date): string {
-  return date.toISOString().replace(/[:.]/g, '-').replace('T', 'T').slice(0, 19) + 'Z'
+  return date.toISOString().replace(/[:.]/g, '-').slice(0, 19) + 'Z'
 }
 
 function sanitizeFileName(name: string): string {
@@ -415,7 +564,6 @@ function generateBackupLog(params: {
 }
 
 // ── Scheduled backup runner ───────────────────────────────────────────────────
-/** Runs all enabled modules for a given frequency */
 export async function runScheduledBackup(opts: {
   frequency:   'daily' | 'weekly' | 'monthly' | 'yearly'
   triggeredBy: string

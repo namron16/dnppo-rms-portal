@@ -23,7 +23,7 @@ export async function GET(request: Request) {
           .order('created_at', { ascending: false })
           .limit(20),
         db.from('backup_configs')
-          .select('module_name, is_enabled, frequency, last_configured_at'),
+          .select('*'),
         db.from('backup_notifications')
           .select('id', { count: 'exact', head: true })
           .eq('is_read', false),

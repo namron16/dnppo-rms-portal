@@ -43,7 +43,7 @@ export async function notifyBackupResult(opts: NotifyBackupResultOptions): Promi
     job_id:    opts.jobId,
     type:      opts.success ? 'success' : 'error',
     title,
-    body,
+    message:   body,
     is_read:   false,
     created_at: new Date().toISOString(),
   })
