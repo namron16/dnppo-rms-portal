@@ -10,7 +10,7 @@ import { getDefaultAdminRoute, type SessionRole } from '@/lib/adminRouteAccess'
 // ── Role map (labels only — no emails) ───────────────────────────────────────
 
 const ROLE_IDS = [
-  'admin', 'PD', 'DPDA', 'DPDO',
+  'admin', 'DPDA',
   'P1', 'P2', 'P3', 'P4', 'P5',
   'P6', 'P7', 'P8', 'P9', 'P10', 'PPSMU', 'WCPD',
 ] as const
@@ -18,9 +18,7 @@ const ROLE_IDS = [
 function getRoleLabel(id: string): string {
   switch (id) {
     case 'admin': return 'admin — Super Administrator'
-    case 'PD':    return 'PD — Provincial Director'
     case 'DPDA':  return 'DPDA — Deputy Director for Administration'
-    case 'DPDO':  return 'DPDO — Deputy Director for Operations'
     case 'P1':    return 'P1 — Records Officer'
     case 'PPSMU': return 'PPSMU — Provincial Police Strategy Management Unit'
     case 'WCPD':  return 'WCPD — Women and Children Protection Desk'
