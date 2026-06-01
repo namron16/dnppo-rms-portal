@@ -358,7 +358,7 @@ export function Sidebar() {
         {isDPDA && (
           <div className="px-3 pt-5 pb-2">
             <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">Management</div>
-            // AFTER
+            
             {DPDA_NAV.map(item => (
               <NavLink key={item.href} item={item}
                 active={pathname === item.href || pendingHref === item.href}
