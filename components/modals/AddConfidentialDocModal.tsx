@@ -82,16 +82,19 @@ export function AddConfidentialDocModal({ open, onClose, onAdd }: Props) {
       const docId = `cd-${Date.now()}`
 
       // ── Drive Pool upload (replaces supabase.storage) ─────────────────
-      const fileUrl = await uploadToDrive(selectedFile, 'classified_documents', {
+      const uploadResult = await uploadToDrive(selectedFile, 'classified_documents', {
         uploadedBy: user?.role ?? 'unknown',
         entityId:   docId,
         entityType: 'classified_document',
       })
 
-      if (!fileUrl) {
+      if (!uploadResult) {
         toast.error(uploadError ?? 'File upload failed. Please try again.')
         return
       }
+
+      // Extract the URL from the result (handle both string and object returns)
+      const fileUrl = typeof uploadResult === 'string' ? uploadResult : uploadResult.fileUrl || uploadResult.fileUrl
 
       const newDoc: ConfidentialDoc & { fileUrl?: string; passwordHash: string } = {
         id:             docId,
