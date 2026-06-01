@@ -138,6 +138,8 @@ export interface Doc201Item {
   fileSize?: string
   /** Remarks or annotation */
   remarks?: string
+
+  fileUrl?: string
 }
 
 export interface Personnel201 {
