@@ -32,6 +32,7 @@ import { FileDetailsModal } from '@/components/dpda-inbox/FileDetailsModal'
 import type { ForwardedDocument } from '@/components/dpda-inbox/FileDetailsModal'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { supabase } from '@/lib/supabase'
 
 // Use the shared `ForwardedDocument` type exported by `FileDetailsModal` to
 // avoid duplicate incompatible definitions across modules.
@@ -122,6 +123,22 @@ export default function DPDAInboxPage() {
   useEffect(() => {
     fetchDocuments()
   }, [fetchDocuments])
+
+// user.role is available
+
+    useEffect(() => {
+      if (!user?.role) return
+      const channel = supabase
+        .channel('dpda_inbox_realtime')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'forwarded_documents',
+          filter: `recipient_role=eq.${user.role}`,
+        }, () => fetchDocuments())
+        .subscribe()
+      return () => { supabase.removeChannel(channel) }
+    }, [user?.role, fetchDocuments])
 
   // FIX: Role guard moved here — AFTER all hook declarations — to satisfy React rules of hooks.
   // Previously this guard appeared between hook declarations, which is a rules violation.

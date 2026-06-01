@@ -43,16 +43,22 @@ export async function POST(
   // FIX: Build dpda_comments as a JSONB-compatible array.
   // Storing a raw string into a JSONB column can cause type errors or silent coercion,
   // and breaks the comment route's JSON.parse() when appending further comments.
-  const commentsArray = comments.trim()
-    ? [
-        {
-          text: comments,
-          author: profile.display_name || profile.role,
-          timestamp: new Date().toISOString(),
-          action: 'disapproved',
-        },
-      ]
-    : []
+  // NEW — add reason field so it travels with the comment everywhere
+// NEW — reason is embedded so both DPDA and P2 can see it wherever comments render
+    const hasCommentText = comments.trim().length > 0
+    const hasReason      = reason.trim().length > 0
+
+    const commentsArray = hasCommentText || hasReason
+      ? [
+          {
+            text:      comments.trim() || '',
+            reason:    hasReason ? reason.trim() : null,
+            author:    profile.display_name || profile.role,
+            timestamp: new Date().toISOString(),
+            action:    'disapproved',
+          },
+        ]
+      : []
 
   try {
     const { data: updated, error: updateError } = await supabase

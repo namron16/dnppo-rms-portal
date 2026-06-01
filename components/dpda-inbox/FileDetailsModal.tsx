@@ -71,7 +71,7 @@ type ActionType = 'approve' | 'disapprove' | 'comment' | null
 // ── Helper: safely parse dpda_comments regardless of storage format ───────────
 // The column is JSONB so Supabase may return it already parsed (array) or as a
 // raw JSON string depending on the client version. Handle both.
-function parseComments(raw: any): Array<{ text: string; author: string; timestamp: string; action: string }> {
+function parseComments(raw: any): Array<{ text: string; author: string; timestamp: string; action: string; reason?: string }> {
   if (!raw) return []
   if (Array.isArray(raw)) return raw
   if (typeof raw === 'string') {
@@ -127,52 +127,61 @@ export function FileDetailsModal({
   const parsedComments = parseComments(document.dpda_comments)
 
   const handleApprove = async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const res = await fetch(`/api/dpda-inbox/${document.id}/approve`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ comments }),
-      })
+  setLoading(true)
+  setError('')
+  try {
+    const res = await fetch(`/api/dpda-inbox/${document.id}/approve`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ comments }),
+    })
 
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || 'Failed to approve')
-      }
-
-      setSuccess('Document approved successfully!')
-      setTimeout(() => { onRefresh(); onClose() }, 1500)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
-    } finally {
-      setLoading(false)
+    if (!res.ok) {
+      const data = await res.json()
+      throw new Error(data.error || 'Failed to approve')
     }
+
+    // Same pattern as comment: update status locally, clear action panel,
+    // keep modal open so "Forward back to sender" appears immediately.
+    setLocalDpdaStatus('approved')
+    setComments('')
+    setAction(null)
+    onRefresh()
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'An error occurred')
+  } finally {
+    setLoading(false)
   }
+}
 
   const handleDisapprove = async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const res = await fetch(`/api/dpda-inbox/${document.id}/disapprove`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ comments, reason: rejectionReason }),
-      })
+  setLoading(true)
+  setError('')
+  try {
+    const res = await fetch(`/api/dpda-inbox/${document.id}/disapprove`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ comments, reason: rejectionReason }),
+    })
 
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || 'Failed to disapprove')
-      }
-
-      setSuccess('Document disapproved successfully!')
-      setTimeout(() => { onRefresh(); onClose() }, 1500)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
-    } finally {
-      setLoading(false)
+    if (!res.ok) {
+      const data = await res.json()
+      throw new Error(data.error || 'Failed to disapprove')
     }
+
+    // Same pattern as comment: update status locally, clear action panel,
+    // keep modal open so "Forward back to sender" appears immediately.
+    setLocalDpdaStatus('disapproved')
+    setComments('')
+    setRejectionReason('')
+    setAction(null)
+    onRefresh()
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'An error occurred')
+  } finally {
+    setLoading(false)
   }
+}
 
   // FIX 2: After a successful comment:
   //   • Do NOT show a success toast.
@@ -372,6 +381,14 @@ export function FileDetailsModal({
                       </span>
                     </div>
                     <p className="text-sm text-slate-700">{c.text}</p>
+                    {(c as any).reason && (
+                      <div className="mt-2 flex items-start gap-1.5 px-2.5 py-1.5 bg-red-50 border border-red-100 rounded-md">
+                        <span className="text-[10px] font-bold text-red-600 uppercase tracking-wide shrink-0 mt-0.5">
+                          Reason:
+                        </span>
+                        <span className="text-xs text-red-700">{(c as any).reason}</span>
+                      </div>
+)}
                     {c.action && c.action !== 'comment' && (
                       <span className={`inline-block mt-1.5 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
                         c.action === 'approved'    ? 'bg-green-100 text-green-700' :

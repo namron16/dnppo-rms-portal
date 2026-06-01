@@ -21,6 +21,7 @@ import {
   ExternalLink, Save, X, CheckCircle, Plus, RefreshCw,
   AlertCircle, MessageCircle,
 } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -51,7 +52,7 @@ type ForwardedDocument = {
 
 // Safely parse dpda_comments regardless of whether Supabase returned it as a
 // parsed array or a raw JSON string. Returns an empty array on any failure.
-function parseComments(raw: any): Array<{ text: string; author: string; timestamp: string; action: string }> {
+function parseComments(raw: any): Array<{ text: string; author: string; timestamp: string; action: string; reason?: string }> {
   if (!raw) return []
   if (Array.isArray(raw)) return raw
   if (typeof raw === 'string') {
@@ -196,6 +197,14 @@ function DpdaComments({ raw }: { raw: any }) {
               </span>
             </div>
             <p className="text-xs text-slate-700">{c.text}</p>
+            {c.reason && (
+                <div className="mt-1.5 flex items-start gap-1.5 px-2 py-1.5 bg-red-50 border border-red-100 rounded-md">
+                  <span className="text-[10px] font-bold text-red-600 uppercase tracking-wide shrink-0">
+                    Reason:
+                  </span>
+                  <span className="text-xs text-red-700">{c.reason}</span>
+                </div>
+              )}
             {c.action && c.action !== 'comment' && (
               <span className={`inline-block mt-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
                 c.action === 'approved'    ? 'bg-green-100 text-green-700' :
@@ -453,6 +462,7 @@ export default function ForwardedInboxPage() {
   const [saving, setSaving]         = useState<string | null>(null)
   const [dismissing, setDismissing] = useState<string | null>(null)
   const [expanded, setExpanded]     = useState<string | null>(null)
+  const [userRole, setUserRole] = useState<string | null>(null)
 
   // Per-row save error state (id + human-readable message)
   const [saveError, setSaveError]   = useState<{ id: string; message: string } | null>(null)
@@ -469,6 +479,31 @@ export default function ForwardedInboxPage() {
   }, [activeTab])
 
   useEffect(() => { fetchInbox() }, [fetchInbox])
+
+
+  
+
+      useEffect(() => {
+        supabase.auth.getUser().then(({ data }) => {
+          if (data.user) {
+            supabase.from('profiles').select('role').eq('id', data.user.id).single()
+              .then(({ data: p }) => { if (p) setUserRole(p.role) })
+          }
+        })
+      }, [])
+        useEffect(() => {
+        if (!userRole) return
+        const channel = supabase
+          .channel('forwarded_inbox_realtime')
+          .on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'forwarded_documents',
+            filter: `recipient_role=eq.${userRole}`,
+          }, () => fetchInbox())
+          .subscribe()
+        return () => { supabase.removeChannel(channel) }
+      }, [userRole, fetchInbox])
 
   const handleSave = async (doc: ForwardedDocument) => {
     setSaving(doc.id)
