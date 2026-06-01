@@ -1582,16 +1582,46 @@ export default function PersonnelFilesPage() {
   const [personnel, setPersonnel] = useState<Personnel201[]>([])
   const [loading, setLoading]     = useState(true)
 
-  useRealtimeTable('personnel_201', {
-    channelSuffix: 'page',
-    onUpdate: row => {
-      setPersonnel(prev => prev.map(p =>
-        p.id === row.id
-          ? { ...p, name: row.name, rank: row.rank, unit: row.unit, status: row.status }
-          : p
-      ))
-    },
-  })
+  useRealtimeTable('personnel_201_docs', {
+  channelSuffix: 'page',
+  onInsert: row => {
+    const newDoc: Doc201Item = {
+      id:          row.id,
+      category:    row.category,
+      label:       row.label,
+      sublabel:    row.sublabel    ?? undefined,
+      status:      row.status,
+      dateUpdated: row.date_updated ?? '',
+      filedBy:     row.filed_by    ?? undefined,
+      fileSize:    row.file_size   ?? undefined,
+      fileUrl:     row.file_url    ?? undefined,
+      remarks:     row.remarks     ?? undefined,
+    }
+
+    setPersonnel(prev => prev.map(p => {
+      if (p.id !== row.personnel_id) return p
+      if (p.documents.some(d => d.id === row.id)) return p  // no duplicates
+      return { ...p, documents: [...p.documents, newDoc] }
+    }))
+  },
+  onUpdate: row => {
+    setPersonnel(prev => prev.map(p => {
+      if (p.id !== row.personnel_id) return p
+      return {
+        ...p,
+        documents: p.documents.map(d => d.id !== row.id ? d : {
+          ...d,
+          status:      row.status,
+          dateUpdated: row.date_updated ?? '',
+          filedBy:     row.filed_by    ?? undefined,
+          fileSize:    row.file_size   ?? undefined,
+          fileUrl:     row.file_url    ?? undefined,
+          remarks:     row.remarks     ?? undefined,
+        }),
+      }
+    }))
+  },
+})
 
   const viewDisc = useDisclosure<Personnel201>()
   const addModal = useModal()
@@ -1706,14 +1736,34 @@ export default function PersonnelFilesPage() {
     loadPersonnel()
   }, [])
 
-  function handleAdd(p: Personnel201) {
-    if (!isSuperAdmin) {
-      toast.error('Only P1 can create 201 files.')
-      return
-    }
-
-    setPersonnel(prev => [p, ...prev])
+  async function handleAdd(p: Personnel201) {
+  if (!isSuperAdmin) {
+    toast.error('Only P1 can create 201 files.')
+    return
   }
+
+  // Generate the blank 24-item checklist and insert it right away
+  // so it exists in the DB before the user can open the modal
+  const blank = makeBlankChecklist(p.id)
+  const docsToInsert = blank.map(d => ({
+    id:           d.id,
+    personnel_id: p.id,
+    category:     d.category,
+    label:        d.label,
+    sublabel:     d.sublabel ?? null,
+    status:       d.status,
+    date_updated: null,
+    filed_by:     null,
+    file_size:    null,
+    file_url:     null,
+    remarks:      null,
+  }))
+
+  await supabase.from('personnel_201_docs').insert(docsToInsert)
+
+  // Push to state with documents already populated — no refresh needed
+  setPersonnel(prev => [{ ...p, documents: blank }, ...prev])
+}
 
   function handleDocUpdate(personId: string, docId: string, status: Doc201Status, fileUrl?: string, fileSize?: string) {
     if (!isSuperAdmin) {
