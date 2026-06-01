@@ -239,7 +239,7 @@ function EditDocumentModal({ open, doc, onClose, onSubmit }: EditModalProps) {
   return (
     <Modal open={open} onClose={saving ? () => {} : onClose} title="Edit Classified Document" width="max-w-2xl">
       <div className="p-6 space-y-4">
-        <AlertWarning message="Only P1 and P2 may update classified documents. Replacing the file or password is optional." />
+        <AlertWarning message="Only P2 may update classified documents. Replacing the file or password is optional." />
 
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Document Title</label>
@@ -438,7 +438,7 @@ export default function ClassifiedDocumentsPage() {
 
   async function handleAdd(newDoc: ConfidentialDoc & { fileUrl?: string; passwordHash?: string }) {
     if (!canManage) {
-      toast.error('Only P1 and P2 can add classified documents.')
+      toast.error('Only P2 can add classified documents.')
       return
     }
 
@@ -456,7 +456,7 @@ export default function ClassifiedDocumentsPage() {
 
   async function handleEdit(payload: DocUpdatePayload): Promise<boolean> {
     if (!canManage) {
-      toast.error('Only P1 and P2 can edit classified documents.')
+      toast.error('Only P2 can edit classified documents.')
       return false
     }
 
@@ -475,7 +475,7 @@ export default function ClassifiedDocumentsPage() {
 
   async function handleDelete() {
     if (!canDelete) {
-      toast.error('Only P1 and P2 can delete classified documents.')
+      toast.error('Only P2 can delete classified documents.')
       return
     }
 
@@ -489,7 +489,7 @@ export default function ClassifiedDocumentsPage() {
 
   async function handlePrint(doc: ClassifiedDocRecord) {
     if (!canPrint) {
-      toast.error('Only P1 and P2 can print classified documents.')
+      toast.error('Only P2 can print classified documents.')
       return
     }
 
@@ -514,7 +514,7 @@ export default function ClassifiedDocumentsPage() {
       <div className="p-8 space-y-6">
         {!canManage && (
           <div className="max-w-4xl">
-            <AlertWarning message="Only P1 and P2 can manage classified documents (upload, edit, delete, archive, print). Other roles are view-only." />
+            <AlertWarning message="Only P2 can manage classified documents (upload, edit, delete, archive, print). Other roles are view-only." />
           </div>
         )}
 
@@ -525,7 +525,7 @@ export default function ClassifiedDocumentsPage() {
               <p className="text-3xl font-black text-slate-800">{docs.length}</p>
               <FileText className="h-6 w-6 text-slate-300" />
             </div>
-            <p className="mt-2 text-sm text-slate-500">Viewable by P2. Managed by P1 and P2.</p>
+            <p className="mt-2 text-sm text-slate-500">Viewable by P2. Managed by P2.</p>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -542,7 +542,7 @@ export default function ClassifiedDocumentsPage() {
           <div className="border-b border-slate-100 px-6 py-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-base font-bold text-slate-800">Classified Records</h2>
-              <p className="mt-1 text-sm text-slate-500">View classified records. P1 and P2 can create, edit, and delete.</p>
+              <p className="mt-1 text-sm text-slate-500">View classified records. P2 can create, edit, and delete.</p>
             </div>
             {canManage && (
               <Button variant="primary" onClick={addModal.open}>
