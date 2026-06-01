@@ -19,7 +19,7 @@ export function zodErrors(error: z.ZodError): Record<string, string> {
 // ══════════════════════════════════════════════════════════════════════════
 
 export const LoginSchema = z.object({
-  email:    z.string().min(1, 'Email is required.').email('Please enter a valid email address.'),
+  email:    z.email('Please enter a valid email address.'),
   password: z.string().min(1, 'Password is required.'),
 })
 export type LoginInput = z.infer<typeof LoginSchema>
@@ -34,8 +34,6 @@ export const AccessRequestSchema = z.object({
     .min(1, 'Full name is required.')
     .min(2, 'Full name must be at least 2 characters.'),
   email: z
-    .string()
-    .min(1, 'Email address is required.')
     .email('Please enter a valid email address.'),
   contactNo: z
     .string()
@@ -133,8 +131,6 @@ export const AddUserSchema = z.object({
   firstName: z.string().min(1, 'First name is required.').max(50, 'First name must be 50 characters or less.'),
   lastName:  z.string().min(1, 'Last name is required.').max(50, 'Last name must be 50 characters or less.'),
   email: z
-    .string()
-    .min(1, 'Email is required.')
     .email('Please enter a valid email address.')
     .endsWith('@ddnppo.gov.ph', 'Email must use the @ddnppo.gov.ph domain.'),
   role: z.enum(['officer', 'admin']),
@@ -264,7 +260,6 @@ export const BackupSettingsSchema = z.object({
   retain_last_n:     z.coerce.number().int().min(1, 'Must retain at least 1 backup.').max(30),
   email_on_complete: z.boolean(),
   backup_email: z
-    .string()
     .email('Please enter a valid email address.')
     .or(z.literal(''))
     .optional(),
