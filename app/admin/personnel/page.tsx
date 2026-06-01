@@ -807,7 +807,7 @@ function EditProfileModal({ person, open, onClose, onSave }: {
         {/* Unit */}
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Unit / Assignment</label>
-          <input className={cls} placeholder="e.g. DDNPPO HQ"
+          <input className={cls} placeholder="e.g. DNPPO HQ"
             value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} disabled={saving} />
         </div>
 
@@ -1279,7 +1279,7 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
         </div>
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Unit / Assignment</label>
-          <input className={cls} placeholder="e.g. DDNPPO HQ, PCADU" value={form.unit}
+          <input className={cls} placeholder="e.g. DNPPO HQ, PCADU" value={form.unit}
             onChange={e => f('unit', e.target.value)} disabled={loading} />
         </div>
 
