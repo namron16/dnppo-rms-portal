@@ -1,11 +1,50 @@
-// app/api/backup/notifications/route.ts
-// Enhanced: structured error codes on every failure path.
+// lib/backup/notifications.ts
+// Backup notification utilities and API handlers.
 
 import { NextResponse } from 'next/server'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
 import { requireAdmin, AuthError } from '@/lib/backup/auth-guard'
 
 export const runtime = 'nodejs'
+
+/**
+ * Notifies about a backup result by creating a database record.
+ * Called from the backup engine on success or failure.
+ */
+export async function notifyBackupResult(params: {
+  jobId: string
+  module_name: string
+  success: boolean
+  folderName?: string
+  durationSecs?: number
+  totalBytes?: number
+  error?: string
+}): Promise<void> {
+  const { jobId, module_name, success, folderName, durationSecs, totalBytes, error } = params
+  
+  try {
+    const db = getServiceClient()
+    const message = success
+      ? `Backup completed for ${module_name} (${durationSecs}s, ${totalBytes} bytes)`
+      : `Backup failed for ${module_name}: ${error || 'unknown error'}`
+
+    await db.from('backup_notifications').insert({
+      job_id: jobId,
+      module_name,
+      message,
+      is_success: success,
+      folder_name: folderName || null,
+      duration_seconds: durationSecs || null,
+      total_size_bytes: totalBytes || null,
+      error_message: error || null,
+      is_read: false,
+      created_at: new Date().toISOString(),
+    })
+  } catch (err: any) {
+    console.error('[Backup] Failed to create notification:', err?.message ?? String(err))
+    // Don't throw; notifications are non-critical
+  }
+}
 
 export async function GET() {
   try {
