@@ -46,11 +46,11 @@ interface ForwardDocumentModalProps {
 }
 
 const ALL_FORWARDABLE_ROLES: AdminRole[] = [
-  'DPDA', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10'
+  'DPDA', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'WCPD', 'PPSMU'
 ]
 
 const ROLE_LABELS: Partial<Record<AdminRole, string>> = {
-  DPDA: 'Deputy Director A',
+  DPDA: 'Deputy Director for Administration',
   P1:   'Records Officer',
   P2:   'Classified Documents',
 }
