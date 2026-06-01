@@ -28,6 +28,12 @@ export const CATEGORY_LABELS: Record<Doc201Category, string> = {
   IDENTIFICATION: 'Identification',
 }
 
+// At the top of data201.ts, add this tiny helper if not already present:
+function generateId(): string {
+  // Uses the same UUID v4 format as gen_random_uuid()
+  return crypto.randomUUID()
+}
+
 // ── Create a new personnel 201 record ─────────────────────────────────────
 export async function createPersonnel201(
   input: Partial<Personnel201> & {
@@ -44,28 +50,33 @@ export async function createPersonnel201(
   const today = new Date().toISOString().split('T')[0]
   const now   = new Date().toISOString()
 
-  const row = {
-    name:               input.name,
-    rank:               input.rank,
-    serial_no:          input.serialNo         ?? '',
-    unit:               input.unit             ?? '',
-    date_created:       today,
-    last_updated:       today,
-    initials:           input.initials,
-    avatar_color:       input.avatarColor,
-    status:             input.status           ?? 'In Service',
-    inactive_reason:    input.inactiveReason   ?? null,
-    separated_reason:   input.separatedReason  ?? null,
-    date_of_separation: input.dateOfSeparation ?? null,
-    contact_no:         input.contactNo        ?? null,
-    address:            input.address          ?? null,
-    photo_url:          input.photoUrl         ?? null,
-    tin:                input.tin              ?? null,
-    pag_ibig_no:        input.pagIbigNo        ?? null,
-    phil_health_no:     input.philHealthNo     ?? null,
-    firearm_serial_no:  input.firearmSerialNo  ?? null,
-    created_at:         now,
+  // Build row — only include optional columns when they have a real value.
+// Sending null for a column that doesn't exist yet causes a schema cache error.
+  const row: Record<string, unknown> = {
+    id:          generateId(),
+    name:         input.name,
+    rank:         input.rank,
+    serial_no:    input.serialNo  ?? '',
+    unit:         input.unit      ?? '',
+    date_created: today,
+    last_updated: today,
+    initials:     input.initials,
+    avatar_color: input.avatarColor,
+    status:       input.status    ?? 'In Service',
+    created_at:   now,
   }
+
+  // Optional — only added when the caller provides them
+  if (input.photoUrl         != null) row.photo_url          = input.photoUrl
+  if (input.contactNo        != null) row.contact_no         = input.contactNo
+  if (input.address          != null) row.address            = input.address
+  if (input.tin              != null) row.tin                = input.tin
+  if (input.pagIbigNo        != null) row.pag_ibig_no        = input.pagIbigNo
+  if (input.philHealthNo     != null) row.phil_health_no     = input.philHealthNo
+  if (input.firearmSerialNo  != null) row.firearm_serial_no  = input.firearmSerialNo
+  if (input.inactiveReason   != null) row.inactive_reason    = input.inactiveReason
+  if (input.separatedReason  != null) row.separated_reason   = input.separatedReason
+  if (input.dateOfSeparation != null) row.date_of_separation = input.dateOfSeparation
 
   const { data, error } = await supabase
     .from('personnel_201')

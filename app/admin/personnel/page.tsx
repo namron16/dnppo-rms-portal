@@ -25,6 +25,8 @@ import { logUpdatePersonnel, logCreatePersonnel, logUploadDocument } from '@/lib
 import { supabase } from '@/lib/supabase'
 import { status201BadgeClass, status201Icon, formatDate } from '@/lib/utils'
 import type { Personnel201, Doc201Item, Doc201Status, Doc201Category } from '@/types'
+import { addPersonnelSchema, editPersonnelSchema } from '@/lib/validations/personnel201'
+import type { AddPersonnelFormData, EditPersonnelFormData } from '@/lib/validations/personnel201'
 
 // ── Status Constants ──────────────────────────
 
@@ -1152,25 +1154,83 @@ function Checklist201Modal({ person, onClose, onUpdate, onProfileSave, canManage
 }
 
 // ── Add Personnel Modal ───────────────────────
+function FieldError({ message }: { message?: string }) {
+  if (!message) return null
+  return (
+    <p className="text-[11px] text-red-500 mt-1 font-medium flex items-center gap-1">
+      <span>⚠</span> {message}
+    </p>
+  )
+}
+ 
+// ── Format helpers ────────────────────────────────────────────────────────────
+// These auto-insert hyphens as the user types so they don't have to.
+ 
+/** 123456789 → 123-456-789 */
+function formatTIN(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 12)
+  if (digits.length <= 3)  return digits
+  if (digits.length <= 6)  return `${digits.slice(0,3)}-${digits.slice(3)}`
+  if (digits.length <= 9)  return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6)}`
+  return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6,9)}-${digits.slice(9)}`
+}
+ 
+/** 123456789012 → 1234-5678-9012 */
+function formatPagIbig(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 12)
+  if (digits.length <= 4)  return digits
+  if (digits.length <= 8)  return `${digits.slice(0,4)}-${digits.slice(4)}`
+  return `${digits.slice(0,4)}-${digits.slice(4,8)}-${digits.slice(8)}`
+}
+ 
+/** 12345678901 2 → 12-345678901-2 */
+function formatPhilHealth(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 12)
+  if (digits.length <= 2)  return digits
+  if (digits.length <= 11) return `${digits.slice(0,2)}-${digits.slice(2)}`
+  return `${digits.slice(0,2)}-${digits.slice(2,11)}-${digits.slice(11)}`
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD PERSONNEL MODAL  (replaces the old version in page.tsx)
+// ─────────────────────────────────────────────────────────────────────────────
 function AddPersonnelModal({ open, onClose, onAdd }: {
   open: boolean
   onClose: () => void
   onAdd: (p: Personnel201) => void
 }) {
-  const { toast }  = useToast()
-  const [loading, setLoading] = useState(false)
-
+  const { user }     = useAuth()
+  const { toast }    = useToast()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+ 
+  const [loading,   setLoading]   = useState(false)
+  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [preview,   setPreview]   = useState<string>('')
+ 
+  // Validation errors — keyed by field name
+  const [errors, setErrors] = useState<Record<string, string>>({})
+ 
   // Status compound state
   const [statusVal,        setStatusVal]        = useState('In Service')
   const [inactiveReason,   setInactiveReason]   = useState('')
   const [separatedReason,  setSeparatedReason]  = useState('')
   const [dateOfSeparation, setDateOfSeparation] = useState('')
-
+ 
   const [form, setForm] = useState({
     lastName: '', firstName: '', rank: '', serialNo: '', unit: '',
+    contactNo: '', address: '', tin: '', pagIbigNo: '', philHealthNo: '',
+    firearmSerialNo: '',
   })
-  const f = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
-
+ 
+  // ── Guard: only P1 may use this modal ─────────────────────────────────────
+  if (user?.role !== 'P1') return null
+ 
+  const f = (k: string, v: string) => {
+    setForm(p => ({ ...p, [k]: v }))
+    // Clear the error for this field as the user types
+    if (errors[k]) setErrors(prev => { const n = { ...prev }; delete n[k]; return n })
+  }
+ 
   function handleStatusChange(v: string) {
     setStatusVal(v)
     if (v !== 'Inactive') setInactiveReason('')
@@ -1180,134 +1240,331 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
       setSeparatedReason('')
       setDateOfSeparation('')
     }
+    if (errors.status)         setErrors(p => { const n={...p}; delete n.status; return n })
+    if (errors.inactiveReason) setErrors(p => { const n={...p}; delete n.inactiveReason; return n })
+    if (errors.separatedReason)setErrors(p => { const n={...p}; delete n.separatedReason; return n })
   }
-
+ 
+  function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPhotoFile(file)
+    const reader = new FileReader()
+    reader.onload = ev => setPreview(ev.target?.result as string)
+    reader.readAsDataURL(file)
+  }
+ 
+  function resetAndClose() {
+    setForm({ lastName:'', firstName:'', rank:'', serialNo:'', unit:'',
+      contactNo:'', address:'', tin:'', pagIbigNo:'', philHealthNo:'', firearmSerialNo:'' })
+    setStatusVal('In Service')
+    setInactiveReason(''); setSeparatedReason(''); setDateOfSeparation('')
+    setPhotoFile(null); setPreview(''); setErrors({})
+    onClose()
+  }
+ 
   async function submit() {
-    if (!form.lastName || !form.firstName || !form.rank) {
-      toast.error('Fill in all required fields.')
+    // ── 1. Run Zod validation ─────────────────────────────────────────────
+    const parseResult = addPersonnelSchema.safeParse({
+      firstName:       form.firstName,
+      lastName:        form.lastName,
+      rank:            form.rank,
+      serialNo:        form.serialNo       || undefined,
+      unit:            form.unit           || undefined,
+      contactNo:       form.contactNo      || undefined,
+      address:         form.address        || undefined,
+      tin:             form.tin            || undefined,
+      pagIbigNo:       form.pagIbigNo      || undefined,
+      philHealthNo:    form.philHealthNo   || undefined,
+      firearmSerialNo: form.firearmSerialNo|| undefined,
+      status:          statusVal,
+      inactiveReason:  inactiveReason      || undefined,
+      separatedReason: separatedReason     || undefined,
+    })
+ 
+    if (!parseResult.success) {
+      // Convert Zod errors into a flat { fieldName: message } map
+      const fieldErrors: Record<string, string> = {}
+      for (const issue of parseResult.error.issues) {
+        const key = issue.path[0] as string
+        if (!fieldErrors[key]) fieldErrors[key] = issue.message
+      }
+      setErrors(fieldErrors)
+      toast.error('Please fix the highlighted fields before continuing.')
       return
     }
-    if (!statusVal) { toast.error('Please select a status.'); return }
-    if (statusVal === 'Inactive' && !inactiveReason) {
-      toast.error('Please select a reason for inactivity.')
+ 
+    // ── 2. Double-check P1 role before touching the database ──────────────
+    if (user?.role !== 'P1') {
+      toast.error('Only P1 can create 201 files.')
       return
     }
-    if (statusVal === 'Separated from Service') {
-      if (!separatedReason) { toast.error('Please select a reason for separation.'); return }
-    }
-
+ 
     setLoading(true)
-    const fullName = `${form.firstName} ${form.lastName}`
-    const initials = `${form.firstName[0]}${form.lastName[0]}`.toUpperCase()
-    const colors   = ['#3b63b8','#f0b429','#8b5cf6','#10b981','#ef4444','#0891b2']
-    const color    = colors[Math.floor(Math.random() * colors.length)]
-
-     const result = await createPersonnel201({
-      name: fullName, rank: form.rank, serialNo: form.serialNo,
-      unit: form.unit, initials, avatarColor: color,
-      status: statusVal,
-      ...(statusVal === 'Inactive'               ? { inactiveReason }  : {}),
-      ...(statusVal === 'Separated from Service' ? { separatedReason, dateOfSeparation: (dateOfSeparation || getTodayISODate()) } : {}),
-    } as any)
-
-    if (result) {
-      const subNote = statusVal === 'Inactive'
-        ? ` (${inactiveReason})`
-        : statusVal === 'Separated from Service'
-          ? ` (${separatedReason})`
-          : ''
-      toast.success(`201 file for ${form.rank} ${fullName} created — ${statusVal}${subNote}.`)
-      await logCreatePersonnel(fullName)
-      onAdd(result)
-      setForm({ lastName: '', firstName: '', rank: '', serialNo: '', unit: '' })
-      setStatusVal('In Service')
-      setInactiveReason('')
-      setSeparatedReason('')
-      setDateOfSeparation('')
-      onClose()
-    } else {
-      toast.error('Failed to create 201 file. Please try again.')
+    try {
+      const fullName = `${form.firstName} ${form.lastName}`
+      const initials = `${form.firstName[0]}${form.lastName[0]}`.toUpperCase()
+      const colors   = ['#3b63b8','#f0b429','#8b5cf6','#10b981','#ef4444','#0891b2']
+      const color    = colors[Math.floor(Math.random() * colors.length)]
+ 
+      // ── 3. Upload photo if provided ───────────────────────────────────
+      let photoUrl: string | undefined
+      if (photoFile) {
+        const avatarForm = new FormData()
+        avatarForm.append('file',     photoFile)
+        avatarForm.append('username', 'P1')
+        const avatarRes  = await fetch('/api/users/avatar', { method: 'POST', body: avatarForm })
+        const avatarJson = await avatarRes.json()
+        if (avatarRes.ok && avatarJson.data?.fileUrl) {
+          photoUrl = avatarJson.data.fileUrl
+        } else {
+          // Non-fatal — continue without photo
+          toast.error('Photo upload failed. Profile will be created without a photo.')
+        }
+      }
+ 
+      // ── 4. Create the record ──────────────────────────────────────────
+      const result = await createPersonnel201({
+        name:            fullName,
+        rank:            form.rank,
+        serialNo:        form.serialNo        || undefined,
+        unit:            form.unit            || undefined,
+        initials,
+        avatarColor:     color,
+        status:          statusVal,
+        photoUrl,
+        contactNo:       form.contactNo       || undefined,
+        address:         form.address         || undefined,
+        tin:             form.tin             || undefined,
+        pagIbigNo:       form.pagIbigNo       || undefined,
+        philHealthNo:    form.philHealthNo    || undefined,
+        firearmSerialNo: form.firearmSerialNo || undefined,
+        ...(statusVal === 'Inactive'               ? { inactiveReason }  : {}),
+        ...(statusVal === 'Separated from Service' ? {
+          separatedReason,
+          dateOfSeparation: dateOfSeparation || getTodayISODate(),
+        } : {}),
+      } as any)
+ 
+      if (result) {
+        const subNote = statusVal === 'Inactive'
+          ? ` (${inactiveReason})`
+          : statusVal === 'Separated from Service' ? ` (${separatedReason})` : ''
+        toast.success(`201 file for ${form.rank} ${fullName} created — ${statusVal}${subNote}.`)
+        await logCreatePersonnel(fullName)
+        onAdd(result)
+        resetAndClose()
+      } else {
+        toast.error('Failed to create 201 file. Please try again.')
+      }
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
-
+ 
   const hasRequiredStatusReason =
     statusVal !== 'Inactive' && statusVal !== 'Separated from Service'
       ? true
-      : statusVal === 'Inactive'
-        ? Boolean(inactiveReason)
-        : Boolean(separatedReason)
-
-  const cls = 'w-full px-3 py-2.5 border-[1.5px] border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition'
-
+      : statusVal === 'Inactive' ? Boolean(inactiveReason) : Boolean(separatedReason)
+ 
+  // Shared input class — turns red border when field has an error
+  const cls = (field?: string) =>
+    `w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-slate-50 focus:outline-none focus:bg-white transition ${
+      field && errors[field]
+        ? 'border-red-400 focus:border-red-500'
+        : 'border-slate-200 focus:border-blue-500'
+    }`
+ 
   return (
-    <Modal open={open} onClose={loading ? () => {} : onClose} title="Create New 201 File" width="max-w-md">
-      <div className="p-6 space-y-4">
+    <Modal open={open} onClose={loading ? () => {} : resetAndClose} title="Create New 201 File" width="max-w-lg">
+      <div className="p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+ 
+        {/* ── Photo ── */}
+        <div className="flex flex-col items-center gap-2">
+          <div
+            onClick={() => !loading && fileInputRef.current?.click()}
+            className="w-20 h-20 rounded-full border-4 border-dashed border-slate-300 hover:border-blue-400 cursor-pointer flex items-center justify-center overflow-hidden relative group transition"
+          >
+            {preview
+              ? <img src={preview} alt="preview" className="w-full h-full object-cover rounded-full" />
+              : <span className="text-2xl text-slate-400">📷</span>
+            }
+            <div className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+              <span className="text-white text-[10px] font-semibold">Change</span>
+            </div>
+          </div>
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
+          <button onClick={() => !loading && fileInputRef.current?.click()}
+            className="text-xs text-blue-600 hover:underline font-medium">
+            {preview ? 'Change Photo' : 'Upload Photo (optional)'}
+          </button>
+        </div>
+ 
+        {/* ── Name ── */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
               Last Name <span className="text-red-500">*</span>
             </label>
-            <input className={cls} placeholder="Santos" value={form.lastName}
-              onChange={e => f('lastName', e.target.value)} disabled={loading} />
+            <input className={cls('lastName')} placeholder="Santos"
+              value={form.lastName} onChange={e => f('lastName', e.target.value)} disabled={loading} />
+            <FieldError message={errors.lastName} />
           </div>
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
               First Name <span className="text-red-500">*</span>
             </label>
-            <input className={cls} placeholder="Ana" value={form.firstName}
-              onChange={e => f('firstName', e.target.value)} disabled={loading} />
+            <input className={cls('firstName')} placeholder="Ana"
+              value={form.firstName} onChange={e => f('firstName', e.target.value)} disabled={loading} />
+            <FieldError message={errors.firstName} />
           </div>
         </div>
+ 
+        {/* ── Rank + Serial ── */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
               Rank <span className="text-red-500">*</span>
             </label>
-            <select className={cls} value={form.rank} onChange={e => f('rank', e.target.value)} disabled={loading}>
+            <select className={cls('rank')} value={form.rank}
+              onChange={e => f('rank', e.target.value)} disabled={loading}>
               <option value="">Select rank…</option>
               {['P/Col.','P/Lt. Col.','P/Maj.','P/Capt.','P/Lt.','P/Insp.','PSMS','PMMS','PEMS','PNCOP'].map(r => (
                 <option key={r}>{r}</option>
               ))}
             </select>
+            <FieldError message={errors.rank} />
           </div>
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Serial No.</label>
-            <input className={cls} placeholder="PN-2024-0001" value={form.serialNo}
-              onChange={e => f('serialNo', e.target.value)} disabled={loading} />
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+              Serial No.
+              <span className="text-[10px] text-slate-400 ml-1 normal-case font-normal">(PN-YYYY-NNNNN)</span>
+            </label>
+            <input className={cls('serialNo')} placeholder="PN-2024-00001"
+              value={form.serialNo}
+              onChange={e => f('serialNo', e.target.value.toUpperCase())}
+              disabled={loading} />
+            <FieldError message={errors.serialNo} />
           </div>
         </div>
+ 
+        {/* ── Unit ── */}
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Unit / Assignment</label>
-          <input className={cls} placeholder="e.g. DNPPO HQ, PCADU" value={form.unit}
-            onChange={e => f('unit', e.target.value)} disabled={loading} />
+          <input className={cls('unit')} placeholder="e.g. DNPPO HQ"
+            value={form.unit} onChange={e => f('unit', e.target.value)} disabled={loading} />
+          <FieldError message={errors.unit} />
         </div>
-
-        {/* ── Status + Conditional Reason ── */}
+ 
+        {/* ── Status ── */}
         <StatusReasonSelector
-          status={statusVal}
-          inactiveReason={inactiveReason}
-          separatedReason={separatedReason}
-          dateOfSeparation={dateOfSeparation}
+          status={statusVal} inactiveReason={inactiveReason}
+          separatedReason={separatedReason} dateOfSeparation={dateOfSeparation}
           onStatusChange={handleStatusChange}
-          onInactiveReasonChange={setInactiveReason}
-          onSeparatedReasonChange={setSeparatedReason}
+          onInactiveReasonChange={v => { setInactiveReason(v); setErrors(p => { const n={...p}; delete n.inactiveReason; return n }) }}
+          onSeparatedReasonChange={v => { setSeparatedReason(v); setErrors(p => { const n={...p}; delete n.separatedReason; return n }) }}
           onDateOfSeparationChange={setDateOfSeparation}
           disabled={loading}
         />
-
+        <FieldError message={errors.inactiveReason  ?? errors.separatedReason} />
+ 
+        {/* ── Contact + Firearm ── */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+              Contact No.
+              <span className="text-[10px] text-slate-400 ml-1 normal-case font-normal">(PH mobile/landline)</span>
+            </label>
+            <input className={cls('contactNo')} placeholder="09171234567"
+              value={form.contactNo} onChange={e => f('contactNo', e.target.value)} disabled={loading} />
+            <FieldError message={errors.contactNo} />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+              Firearm Serial No.
+            </label>
+            <input className={cls('firearmSerialNo')} placeholder="SER-2024-001"
+              value={form.firearmSerialNo}
+              onChange={e => f('firearmSerialNo', e.target.value.toUpperCase())}
+              disabled={loading} />
+            <FieldError message={errors.firearmSerialNo} />
+          </div>
+        </div>
+ 
+        {/* ── Address ── */}
+        <div>
+          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Address</label>
+          <textarea rows={2} className={`${cls('address')} resize-none`}
+            placeholder="e.g. Tagum City, Davao del Norte"
+            value={form.address} onChange={e => f('address', e.target.value)} disabled={loading} />
+          <FieldError message={errors.address} />
+        </div>
+ 
+        {/* ── ID Numbers ── */}
+        <div className="border-t border-slate-200 pt-3">
+          <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3">ID Numbers</p>
+          <div className="grid grid-cols-2 gap-3">
+ 
+            {/* TIN */}
+            <div>
+              <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+                TIN
+                <span className="text-[10px] text-slate-400 ml-1 normal-case font-normal">(123-456-789)</span>
+              </label>
+              <input className={cls('tin')} placeholder="123-456-789"
+                value={form.tin}
+                onChange={e => f('tin', formatTIN(e.target.value))}
+                maxLength={15}
+                disabled={loading} />
+              <FieldError message={errors.tin} />
+            </div>
+ 
+            {/* Pag-IBIG */}
+            <div>
+              <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+                Pag-IBIG No.
+                <span className="text-[10px] text-slate-400 ml-1 normal-case font-normal">(1234-5678-9012)</span>
+              </label>
+              <input className={cls('pagIbigNo')} placeholder="1234-5678-9012"
+                value={form.pagIbigNo}
+                onChange={e => f('pagIbigNo', formatPagIbig(e.target.value))}
+                maxLength={14}
+                disabled={loading} />
+              <FieldError message={errors.pagIbigNo} />
+            </div>
+ 
+            {/* PhilHealth */}
+            <div className="col-span-2">
+              <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+                PhilHealth No.
+                <span className="text-[10px] text-slate-400 ml-1 normal-case font-normal">(12-345678901-2)</span>
+              </label>
+              <input className={cls('philHealthNo')} placeholder="12-345678901-2"
+                value={form.philHealthNo}
+                onChange={e => f('philHealthNo', formatPhilHealth(e.target.value))}
+                maxLength={14}
+                disabled={loading} />
+              <FieldError message={errors.philHealthNo} />
+            </div>
+ 
+          </div>
+        </div>
+ 
         <p className="text-xs text-slate-400 leading-relaxed">
-          A blank 201 checklist (24 items, A–X) based on the PNP DPRM standard form will be created.
+          A blank 201 checklist (24 items, A–X) based on the PNP DPRM standard form will be created automatically.
         </p>
+ 
         {loading && (
           <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
             <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin flex-shrink-0" />
             <p className="text-sm text-blue-700 font-medium">Creating 201 file…</p>
           </div>
         )}
+ 
         <div className="flex justify-end gap-2.5 pt-1">
-          <Button variant="outline" onClick={onClose} disabled={loading}>Cancel</Button>
-          <Button variant="primary" onClick={submit} disabled={loading || !hasRequiredStatusReason}>
+          <Button variant="outline" onClick={resetAndClose} disabled={loading}>Cancel</Button>
+          <Button variant="primary" onClick={submit}
+            disabled={loading || !hasRequiredStatusReason}>
             {loading ? 'Creating…' : '📁 Create 201 File'}
           </Button>
         </div>
