@@ -10,7 +10,7 @@ import { SearchInput }  from '@/components/ui/SearchInput'
 import { EmptyState }   from '@/components/ui/EmptyState'
 import { Modal }        from '@/components/ui/Modal'
 import { useToast }     from '@/components/ui/Toast'
-import { FileText, Paperclip } from 'lucide-react'
+import { FileText, Paperclip, Trash2 } from 'lucide-react'
 import { useSearch, useModal, useDisclosure } from '@/hooks'
 import { useRealtimeTable } from '@/hooks/useRealtimeTable'
 import {
@@ -30,17 +30,13 @@ import type { AddPersonnelFormData, EditPersonnelFormData } from '@/lib/validati
 
 // ── Status Constants ──────────────────────────
 
-/** Top-level personnel status options */
 export type PersonnelStatus =
   | 'In Service'
   | 'Inactive'
   | 'Separated from Service'
   | 'Reassigned from Other Unit'
 
-/** Sub-reasons when status === 'Inactive' */
 export type InactiveReason = 'Detached Service' | 'On Schooling' | 'Maternity Leave'
-
-/** Sub-reasons when status === 'Separated from Service' */
 export type SeparatedReason = 'Resigned' | 'Dismissed' | 'Retired' | 'AWOL'
 
 const INACTIVE_REASONS: InactiveReason[] = [
@@ -60,13 +56,8 @@ function getTodayISODate() {
   return new Date().toISOString().split('T')[0]
 }
 
-/** Number of years after separation before a record is auto-archived */
 const ARCHIVE_AFTER_YEARS = 15
 
-/**
- * Returns true if a "Separated from Service" record should be auto-archived.
- * @param dateOfSeparation – ISO date string (YYYY-MM-DD)
- */
 function isSeparatedAndExpired(dateOfSeparation?: string): boolean {
   if (!dateOfSeparation) return false
   const separated = new Date(dateOfSeparation)
@@ -75,10 +66,6 @@ function isSeparatedAndExpired(dateOfSeparation?: string): boolean {
   return new Date() >= threshold
 }
 
-/**
- * Computes years remaining before a separated record auto-archives.
- * Returns null if not applicable or already past the threshold.
- */
 function yearsUntilArchive(dateOfSeparation?: string): number | null {
   if (!dateOfSeparation) return null
   const separated = new Date(dateOfSeparation)
@@ -89,7 +76,6 @@ function yearsUntilArchive(dateOfSeparation?: string): number | null {
   return Math.ceil(diff / (1000 * 60 * 60 * 24 * 365.25))
 }
 
-// ── Blank checklist (fallback for records with no docs in DB) ──
 function makeBlankChecklist(personnelId: string): Doc201Item[] {
   const template: Array<{ category: Doc201Category; label: string; sublabel?: string }> = [
     { category: 'PERSONAL_DATA',  label: 'Updated PDS (DPRM Form)',                         sublabel: 'With latest 2x2 ID in Type A GOA Uniform' },
@@ -127,7 +113,6 @@ function makeBlankChecklist(personnelId: string): Doc201Item[] {
   }))
 }
 
-// ── Helpers ───────────────────────────────────
 function completionPercent(docs: Doc201Item[]) {
   if (docs.length === 0) return 0
   return Math.round((docs.filter(d => d.status === 'COMPLETE').length / docs.length) * 100)
@@ -138,7 +123,6 @@ function completionColor(pct: number) {
   return 'bg-red-500'
 }
 
-/** Visual badge config for each personnel status */
 function personnelStatusBadge(status: string) {
   switch (status) {
     case 'In Service':
@@ -155,30 +139,20 @@ function personnelStatusBadge(status: string) {
 }
 
 const STATUS_FILTERS: Array<{ label: string; value: Doc201Status | 'ALL' }> = [
-  { label: 'All',           value: 'ALL' },
-  { label: '✅ Complete',   value: 'COMPLETE' },
-  { label: '🔄 For Update', value: 'FOR_UPDATE' },
-  { label: '⚠️ Expired',   value: 'EXPIRED' },
-  { label: '❌ Missing',    value: 'MISSING' },
+  { label: 'All',        value: 'ALL' },
+  { label: '✅ Done',    value: 'COMPLETE' },
+  { label: '🔄 Update',  value: 'FOR_UPDATE' },
+  { label: '⚠️ Expired', value: 'EXPIRED' },
+  { label: '❌ Missing', value: 'MISSING' },
 ]
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
 // ── Shared: Status + Reason Selector ─────────
-/**
- * Reusable compound selector for personnel status + conditional reason.
- * Used in both AddPersonnelModal and EditProfileModal.
- */
 function StatusReasonSelector({
-  status,
-  inactiveReason,
-  separatedReason,
-  dateOfSeparation,
-  onStatusChange,
-  onInactiveReasonChange,
-  onSeparatedReasonChange,
-  onDateOfSeparationChange,
-  disabled = false,
+  status, inactiveReason, separatedReason, dateOfSeparation,
+  onStatusChange, onInactiveReasonChange, onSeparatedReasonChange,
+  onDateOfSeparationChange, disabled = false,
 }: {
   status: string
   inactiveReason: string
@@ -193,7 +167,7 @@ function StatusReasonSelector({
   const cls = 'w-full px-3 py-2.5 border-[1.5px] border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition'
   const isInactive   = status === 'Inactive'
   const isSeparated  = status === 'Separated from Service'
-  const hasInactiveReason = Boolean(inactiveReason)
+  const hasInactiveReason  = Boolean(inactiveReason)
   const hasSeparatedReason = Boolean(separatedReason)
 
   useEffect(() => {
@@ -204,17 +178,11 @@ function StatusReasonSelector({
 
   return (
     <div className="space-y-3">
-      {/* Primary status */}
       <div>
         <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
           Status <span className="text-red-500">*</span>
         </label>
-        <select
-          className={cls}
-          value={status}
-          onChange={e => onStatusChange(e.target.value)}
-          disabled={disabled}
-        >
+        <select className={cls} value={status} onChange={e => onStatusChange(e.target.value)} disabled={disabled}>
           <option value="">Select status…</option>
           <option value="In Service">In Service</option>
           <option value="Inactive">Inactive</option>
@@ -222,8 +190,6 @@ function StatusReasonSelector({
           <option value="Reassigned from Other Unit">Reassigned from Other Unit</option>
         </select>
       </div>
-
-      {/* Inactive reason */}
       {isInactive && (
         <div className={`rounded-xl p-4 space-y-2 border ${hasInactiveReason ? 'bg-slate-50 border-slate-200' : 'bg-red-50 border-red-200'}`}>
           <div className="flex items-center gap-2 mb-1">
@@ -234,20 +200,13 @@ function StatusReasonSelector({
             </span>
           </div>
           <select
-            className={`w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-white transition ${hasInactiveReason ? 'border-slate-300 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100' : 'border-red-200 focus:outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100'}`}
-            value={inactiveReason}
-            onChange={e => onInactiveReasonChange(e.target.value)}
-            disabled={disabled}
-          >
+            className={`w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-white transition ${hasInactiveReason ? 'border-slate-300 focus:outline-none focus:border-blue-500' : 'border-red-200 focus:outline-none focus:border-red-400'}`}
+            value={inactiveReason} onChange={e => onInactiveReasonChange(e.target.value)} disabled={disabled}>
             <option value="">Select reason…</option>
-            {INACTIVE_REASONS.map(r => (
-              <option key={r} value={r}>{r}</option>
-            ))}
+            {INACTIVE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
       )}
-
-      {/* Separated from Service reason + date */}
       {isSeparated && (
         <div className={`rounded-xl p-4 space-y-3 border ${hasSeparatedReason ? 'bg-slate-50 border-slate-200' : 'bg-red-50 border-red-200'}`}>
           <div className="flex items-start gap-2">
@@ -264,35 +223,21 @@ function StatusReasonSelector({
               </p>
             </div>
           </div>
-
           <select
-            className={`w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-white transition ${hasSeparatedReason ? 'border-slate-300 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100' : 'border-red-200 focus:outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100'}`}
-            value={separatedReason}
-            onChange={e => onSeparatedReasonChange(e.target.value)}
-            disabled={disabled}
-          >
+            className={`w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-white transition ${hasSeparatedReason ? 'border-slate-300 focus:outline-none focus:border-blue-500' : 'border-red-200 focus:outline-none focus:border-red-400'}`}
+            value={separatedReason} onChange={e => onSeparatedReasonChange(e.target.value)} disabled={disabled}>
             <option value="">Select reason…</option>
-            {SEPARATED_REASONS.map(r => (
-              <option key={r} value={r}>{r}</option>
-            ))}
+            {SEPARATED_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
-
-          {/* Date of separation (auto-generated) */}
           <div>
             <label className={`block text-[11px] font-semibold uppercase tracking-widest mb-1.5 ${hasSeparatedReason ? 'text-slate-600' : 'text-red-700'}`}>
               Date of Separation <span className={`text-[10px] font-semibold ${hasSeparatedReason ? 'text-slate-500' : 'text-red-500'}`}>(Auto)</span>
             </label>
-            <input
-              type="text"
-              readOnly
-              disabled={disabled}
-              className={`w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-white transition disabled:opacity-50 ${hasSeparatedReason ? 'border-slate-300 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100' : 'border-red-200 focus:outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100'}`}
-              value={dateOfSeparation || getTodayISODate()}
-            />
+            <input type="text" readOnly disabled={disabled}
+              className={`w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-white transition disabled:opacity-50 ${hasSeparatedReason ? 'border-slate-300' : 'border-red-200'}`}
+              value={dateOfSeparation || getTodayISODate()} />
             <p className={`text-[11px] mt-1 ${hasSeparatedReason ? 'text-slate-500' : 'text-red-500'}`}>Date is automatically set when status is marked as separated.</p>
           </div>
-
-          {/* Archive countdown preview */}
           {dateOfSeparation && (
             <div className="flex items-start gap-2 bg-white border border-red-100 rounded-lg px-3 py-2">
               <span className="text-red-400 text-sm">🗄️</span>
@@ -322,7 +267,6 @@ function ViewFileModal({ item, open, onClose }: {
   const isImage = !!fileUrl.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i)
   const isDocx  = !!fileUrl.match(/\.docx?(\?|$)/i)
   const isXlsx  = !!fileUrl.match(/\.xlsx?(\?|$)/i)
-
   const fileIcon = isPDF ? '📕' : isDocx ? '📘' : isXlsx ? '📗' : isImage ? '🖼️' : '📄'
 
   return (
@@ -375,48 +319,55 @@ function ViewFileModal({ item, open, onClose }: {
 }
 
 // ── Checklist Row ─────────────────────────────
-function ChecklistRow({ item, index, onUpload, onView, canManage }: {
+function ChecklistRow({ item, index, onUpload, onView, onDelete, canManage }: {
   item: Doc201Item & { fileUrl?: string }
   index: number
   onUpload: (item: Doc201Item) => void
   onView: (item: Doc201Item & { fileUrl?: string }) => void
+  onDelete: (item: Doc201Item) => void
   canManage: boolean
 }) {
   return (
     <tr className="border-b border-slate-100 hover:bg-slate-50/80 transition group">
-      <td className="px-3 py-2.5 text-center">
-        <span className="inline-flex items-center justify-center w-6 h-6 bg-slate-100 text-slate-500 text-[11px] font-bold rounded-full">
+      <td className="px-2 py-2 text-center">
+        <span className="inline-flex items-center justify-center w-5 h-5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-full">
           {LETTERS[index]}
         </span>
       </td>
-      <td className="px-3 py-2.5">
-        <div className="font-semibold text-[12.5px] text-slate-800 leading-snug">{item.label}</div>
-        {item.sublabel && <div className="text-[11px] text-slate-400 mt-0.5">{item.sublabel}</div>}
-        {item.remarks  && <div className="text-[11px] text-amber-600 mt-1 font-medium">⚠ {item.remarks}</div>}
+      <td className="px-2 py-2">
+        <div className="font-semibold text-[11.5px] text-slate-800 leading-snug">{item.label}</div>
+        {item.sublabel && <div className="text-[10px] text-slate-400 leading-tight mt-0.5">{item.sublabel}</div>}
+        {item.remarks  && <div className="text-[10px] text-amber-600 mt-0.5 font-medium">⚠ {item.remarks}</div>}
       </td>
-      <td className="px-3 py-2.5 text-xs text-slate-500">{CATEGORY_LABELS[item.category]}</td>
-      <td className="px-3 py-2.5">
+      <td className="px-2 py-2 text-[10.5px] text-slate-500">{CATEGORY_LABELS[item.category]}</td>
+      <td className="px-2 py-2">
         <Badge className={status201BadgeClass(item.status)}>
           {status201Icon(item.status)} {item.status.replace('_', ' ')}
         </Badge>
       </td>
-      <td className="px-3 py-2.5 text-xs text-slate-500 whitespace-nowrap">
-        {item.dateUpdated ? formatDate(item.dateUpdated) : <span className="text-red-400">Not filed</span>}
+      <td className="px-2 py-2 text-[10.5px] text-slate-500 whitespace-nowrap">
+        {item.dateUpdated ? formatDate(item.dateUpdated) : <span className="text-red-400">—</span>}
       </td>
-      <td className="px-3 py-2.5 text-xs text-slate-400">{item.filedBy ?? '—'}</td>
-      <td className="px-3 py-2.5 text-xs text-slate-400">{item.fileSize ?? '—'}</td>
-      <td className="px-3 py-2.5">
+      <td className="px-2 py-2 text-[10.5px] text-slate-400">{item.filedBy ?? '—'}</td>
+      <td className="px-2 py-2 text-[10.5px] text-slate-400">{item.fileSize ?? '—'}</td>
+      <td className="px-2 py-2">
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
           {canManage && (
             <button onClick={() => onUpload(item)}
-              className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition">
-              <Paperclip size={11} /> Upload
+              className="inline-flex items-center gap-0.5 text-[9.5px] font-semibold px-1.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition">
+              <Paperclip size={9} /> Upload
             </button>
           )}
           {(item as any).fileUrl && (
             <button onClick={() => onView(item)}
-              className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition">
-              <FileText size={11} /> View
+              className="inline-flex items-center gap-0.5 text-[9.5px] font-semibold px-1.5 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 transition">
+              <FileText size={9} /> View
+            </button>
+          )}
+          {canManage && (
+            <button onClick={() => onDelete(item)}
+              className="inline-flex items-center gap-0.5 text-[9.5px] font-semibold px-1.5 py-1 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100 transition">
+              <Trash2 size={9} /> Del
             </button>
           )}
         </div>
@@ -450,31 +401,23 @@ function PersonnelCard({ person, onClick }: { person: Personnel201; onClick: () 
         <div className="flex-1 min-w-0">
           <div className="font-bold text-slate-800 text-[15px] leading-tight truncate">{person.rank} {person.name}</div>
           <div className="text-xs text-slate-400 mt-0.5">{person.serialNo} · {person.unit}</div>
-
-          {/* Status badge row */}
           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${badge.bg} ${badge.text}`}>
               {badge.icon} {person.status}
             </span>
-            {/* Inactive sub-reason */}
             {person.status === 'Inactive' && (person as any).inactiveReason && (
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
                 {(person as any).inactiveReason}
               </span>
             )}
-            {/* Separated sub-reason */}
             {isSeparated && (person as any).separatedReason && (
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-600">
                 {(person as any).separatedReason}
               </span>
             )}
-            {/* Auto-archive badge */}
             {isAutoArchived && (
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-200 text-red-700">
-                🗄 Auto-Archived
-              </span>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-200 text-red-700">🗄 Auto-Archived</span>
             )}
-            {/* Years until archive countdown */}
             {isSeparated && !isAutoArchived && (person as any).dateOfSeparation && (
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
                 🗄 Archive in {yearsUntilArchive((person as any).dateOfSeparation)}y
@@ -484,9 +427,7 @@ function PersonnelCard({ person, onClick }: { person: Personnel201; onClick: () 
           <div className="text-xs text-slate-400 mt-0.5">Updated: {formatDate(person.lastUpdated)}</div>
         </div>
         <span className={`text-xs font-bold px-2 py-1 rounded-full flex-shrink-0 ${
-          pct === 100 ? 'bg-emerald-100 text-emerald-700'
-          : pct >= 60  ? 'bg-amber-100 text-amber-700'
-          : 'bg-red-100 text-red-700'
+          pct === 100 ? 'bg-emerald-100 text-emerald-700' : pct >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
         }`}>{pct}%</span>
       </div>
       <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-3">
@@ -533,10 +474,7 @@ function UploadDocModal({ item, personName, uploadedBy, open, onClose, onDone }:
 
   async function submit() {
     if (!item) return
-    if (!file) {
-      setErrors(prev => ({ ...prev, file: 'Attachment is required.' }))
-      return
-    }
+    if (!file) { setErrors(prev => ({ ...prev, file: 'Attachment is required.' })); return }
     setUploading(true)
     const url = await uploadDoc201File(item.id, file, uploadedBy)
     if (url) {
@@ -558,9 +496,7 @@ function UploadDocModal({ item, personName, uploadedBy, open, onClose, onDone }:
           <p className="text-sm font-semibold text-slate-800">{item?.label}</p>
           <p className="text-xs text-slate-400 mt-0.5">For: {personName}</p>
         </div>
-        <input ref={fileInputRef} type="file"
-          accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-          className="hidden"
+        <input ref={fileInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" className="hidden"
           onChange={e => handleFileChange(e.target.files?.[0] ?? null)} />
         {file ? (
           <div className="flex items-center justify-between px-4 py-3 bg-blue-50 border-[1.5px] border-blue-200 rounded-xl">
@@ -577,11 +513,7 @@ function UploadDocModal({ item, personName, uploadedBy, open, onClose, onDone }:
           </div>
         ) : (
           <div onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition ${
-              errors.file
-                ? 'border-red-400 bg-red-50'
-                : 'border-slate-200 hover:border-blue-400 hover:bg-blue-50'
-            }`}>
+            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition ${errors.file ? 'border-red-400 bg-red-50' : 'border-slate-200 hover:border-blue-400 hover:bg-blue-50'}`}>
             <Paperclip size={28} className="mx-auto mb-2 text-slate-400" />
             <p className="text-sm font-medium text-slate-600 mb-1">Click to browse</p>
             <p className="text-xs text-slate-400">PDF, DOCX, JPG — max 50 MB</p>
@@ -623,7 +555,6 @@ function EditProfileModal({ person, open, onClose, onSave }: {
   const [preview, setPreview] = useState<string>('')
   const [photoFile, setPhotoFile] = useState<File | null>(null)
 
-  // Status compound state
   const [statusVal,        setStatusVal]        = useState('')
   const [inactiveReason,   setInactiveReason]   = useState('')
   const [separatedReason,  setSeparatedReason]  = useState('')
@@ -667,7 +598,6 @@ function EditProfileModal({ person, open, onClose, onSave }: {
 
   function handleStatusChange(v: string) {
     setStatusVal(v)
-    // Clear sub-reasons when status changes
     if (v !== 'Inactive') setInactiveReason('')
     if (v === 'Separated from Service') {
       setDateOfSeparation(prev => prev || getTodayISODate())
@@ -680,117 +610,81 @@ function EditProfileModal({ person, open, onClose, onSave }: {
   const hasRequiredStatusReason =
     statusVal !== 'Inactive' && statusVal !== 'Separated from Service'
       ? true
-      : statusVal === 'Inactive'
-        ? Boolean(inactiveReason)
-        : Boolean(separatedReason)
+      : statusVal === 'Inactive' ? Boolean(inactiveReason) : Boolean(separatedReason)
 
   async function submit() {
-  if (!form.name.trim()) { toast.error('Name is required.'); return }
-  if (!statusVal) { toast.error('Please select a status.'); return }
-  if (statusVal === 'Inactive' && !inactiveReason) {
-    toast.error('Please select a reason for inactivity.')
-    return
-  }
-  if (statusVal === 'Separated from Service' && !separatedReason) {
-    toast.error('Please select a reason for separation.')
-    return
-  }
- 
-  setSaving(true)
-  try {
-    let photoUrl = person?.photoUrl ?? undefined
- 
-    // ── Upload new photo to Drive pool (replaces supabase.storage) ─────
-    if (photoFile) {
-      const avatarForm = new FormData()
-      avatarForm.append('file',     photoFile)
-      // Use the personnel record ID as the username key so the file is
-      // stored under a stable, unique identifier in the Drive pool.
-      avatarForm.append('username', person?.id ?? 'unknown')
- 
-      const avatarRes  = await fetch('/api/users/avatar', {
-        method: 'POST',
-        body:   avatarForm,
-      })
-      const avatarJson = await avatarRes.json()
- 
-      if (avatarRes.ok && avatarJson.data?.fileUrl) {
-        photoUrl = avatarJson.data.fileUrl
-      } else {
-        // Photo upload failed — not fatal, proceed with existing photo
-        console.warn('[EditProfileModal] Avatar upload failed:', avatarJson.error)
-        toast.error('Photo upload failed. Profile info will still be saved.')
-        // Don't return — continue saving the rest of the profile
+    if (!form.name.trim()) { toast.error('Name is required.'); return }
+    if (!statusVal) { toast.error('Please select a status.'); return }
+    if (statusVal === 'Inactive' && !inactiveReason) { toast.error('Please select a reason for inactivity.'); return }
+    if (statusVal === 'Separated from Service' && !separatedReason) { toast.error('Please select a reason for separation.'); return }
+
+    setSaving(true)
+    try {
+      let photoUrl = person?.photoUrl ?? undefined
+      if (photoFile) {
+        const avatarForm = new FormData()
+        avatarForm.append('file',     photoFile)
+        avatarForm.append('username', person?.id ?? 'unknown')
+        const avatarRes  = await fetch('/api/users/avatar', { method: 'POST', body: avatarForm })
+        const avatarJson = await avatarRes.json()
+        if (avatarRes.ok && avatarJson.data?.fileUrl) {
+          photoUrl = avatarJson.data.fileUrl
+        } else {
+          console.warn('[EditProfileModal] Avatar upload failed:', avatarJson.error)
+          toast.error('Photo upload failed. Profile info will still be saved.')
+        }
       }
+      onSave({
+        name:            form.name.trim(),
+        rank:            form.rank.trim(),
+        unit:            form.unit.trim(),
+        status:          statusVal,
+        contactNo:       form.contactNo.trim(),
+        address:         form.address.trim(),
+        photoUrl,
+        tin:             form.tin.trim()             || undefined,
+        pagIbigNo:       form.pagIbigNo.trim()       || undefined,
+        philHealthNo:    form.philHealthNo.trim()    || undefined,
+        firearmSerialNo: form.firearmSerialNo.trim() || undefined,
+        inactiveReason:   statusVal === 'Inactive'               ? inactiveReason  : undefined,
+        separatedReason:  statusVal === 'Separated from Service' ? separatedReason : undefined,
+        dateOfSeparation: statusVal === 'Separated from Service' ? (dateOfSeparation || getTodayISODate()) : undefined,
+      })
+      toast.success('Profile updated.')
+      onClose()
+    } catch {
+      toast.error('Something went wrong.')
+    } finally {
+      setSaving(false)
     }
- 
-    onSave({
-      name:            form.name.trim(),
-      rank:            form.rank.trim(),
-      unit:            form.unit.trim(),
-      status:          statusVal,
-      contactNo:       form.contactNo.trim(),
-      address:         form.address.trim(),
-      photoUrl,
-      tin:             form.tin.trim()             || undefined,
-      pagIbigNo:       form.pagIbigNo.trim()       || undefined,
-      philHealthNo:    form.philHealthNo.trim()    || undefined,
-      firearmSerialNo: form.firearmSerialNo.trim() || undefined,
-      inactiveReason:   statusVal === 'Inactive'               ? inactiveReason  : undefined,
-      separatedReason:  statusVal === 'Separated from Service' ? separatedReason : undefined,
-      dateOfSeparation: statusVal === 'Separated from Service'
-        ? (dateOfSeparation || getTodayISODate())
-        : undefined,
-    })
-    toast.success('Profile updated.')
-    onClose()
-  } catch {
-    toast.error('Something went wrong.')
-  } finally {
-    setSaving(false)
   }
-}
 
   const cls = 'w-full px-3 py-2.5 border-[1.5px] border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition'
 
   return (
     <Modal open={open} onClose={saving ? () => {} : onClose} title="Edit Profile" width="max-w-md">
       <div className="p-6 space-y-4">
-
-        {/* Photo Upload */}
         <div className="flex flex-col items-center gap-2">
-          <div
-            onClick={() => !saving && fileInputRef.current?.click()}
-            className="w-24 h-24 rounded-full border-4 border-dashed border-slate-300 hover:border-blue-400 cursor-pointer flex items-center justify-center overflow-hidden transition relative group"
-          >
-            {preview ? (
-              <img src={preview} alt="preview" className="w-full h-full object-cover rounded-full" />
-            ) : (
-              <span className="text-3xl font-bold text-slate-400">
-                {form.name ? form.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : '📷'}
-              </span>
-            )}
+          <div onClick={() => !saving && fileInputRef.current?.click()}
+            className="w-24 h-24 rounded-full border-4 border-dashed border-slate-300 hover:border-blue-400 cursor-pointer flex items-center justify-center overflow-hidden relative group transition">
+            {preview
+              ? <img src={preview} alt="preview" className="w-full h-full object-cover rounded-full" />
+              : <span className="text-3xl font-bold text-slate-400">{form.name ? form.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : '📷'}</span>
+            }
             <div className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
               <span className="text-white text-xs font-semibold">Change</span>
             </div>
           </div>
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
-          <button onClick={() => !saving && fileInputRef.current?.click()}
-            className="text-xs text-blue-600 hover:underline font-medium">
+          <button onClick={() => !saving && fileInputRef.current?.click()} className="text-xs text-blue-600 hover:underline font-medium">
             {preview ? 'Change Photo' : 'Upload Photo'}
           </button>
-          {preview && (
-            <button onClick={() => { setPreview(''); setPhotoFile(null) }}
-              className="text-xs text-red-500 hover:underline">Remove Photo</button>
-          )}
+          {preview && <button onClick={() => { setPreview(''); setPhotoFile(null) }} className="text-xs text-red-500 hover:underline">Remove Photo</button>}
         </div>
-
-        {/* Rank + Name */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Rank</label>
-            <select className={cls} value={form.rank}
-              onChange={e => setForm(f => ({ ...f, rank: e.target.value }))} disabled={saving}>
+            <select className={cls} value={form.rank} onChange={e => setForm(f => ({ ...f, rank: e.target.value }))} disabled={saving}>
               <option value="">None</option>
               {['P/Col.','P/Lt. Col.','P/Maj.','P/Capt.','P/Lt.','P/Insp.','PSMS','PMMS','PEMS','PNCOP'].map(r => (
                 <option key={r}>{r}</option>
@@ -798,82 +692,54 @@ function EditProfileModal({ person, open, onClose, onSave }: {
             </select>
           </div>
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-              Full Name <span className="text-red-500">*</span>
-            </label>
-            <input className={cls} placeholder="e.g. Ana Santos"
-              value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} disabled={saving} />
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Full Name <span className="text-red-500">*</span></label>
+            <input className={cls} placeholder="e.g. Ana Santos" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} disabled={saving} />
           </div>
         </div>
-
-        {/* Unit */}
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Unit / Assignment</label>
-          <input className={cls} placeholder="e.g. DNPPO HQ"
-            value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} disabled={saving} />
+          <input className={cls} placeholder="e.g. DNPPO HQ" value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} disabled={saving} />
         </div>
-
-        {/* ── Status + Conditional Reason ── */}
         <StatusReasonSelector
-          status={statusVal}
-          inactiveReason={inactiveReason}
-          separatedReason={separatedReason}
-          dateOfSeparation={dateOfSeparation}
-          onStatusChange={handleStatusChange}
-          onInactiveReasonChange={setInactiveReason}
-          onSeparatedReasonChange={setSeparatedReason}
-          onDateOfSeparationChange={setDateOfSeparation}
-          disabled={saving}
+          status={statusVal} inactiveReason={inactiveReason} separatedReason={separatedReason} dateOfSeparation={dateOfSeparation}
+          onStatusChange={handleStatusChange} onInactiveReasonChange={setInactiveReason}
+          onSeparatedReasonChange={setSeparatedReason} onDateOfSeparationChange={setDateOfSeparation} disabled={saving}
         />
-
-        {/* Contact No */}
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Contact No.</label>
-          <input className={cls} placeholder="e.g. 09171234567"
-            value={form.contactNo} onChange={e => setForm(f => ({ ...f, contactNo: e.target.value }))} disabled={saving} />
+          <input className={cls} placeholder="e.g. 09171234567" value={form.contactNo} onChange={e => setForm(f => ({ ...f, contactNo: e.target.value }))} disabled={saving} />
         </div>
-
-        {/* Address */}
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Address</label>
-          <textarea rows={2} className={`${cls} resize-none`} placeholder="e.g. Tagum City, Davao del Norte"
-            value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} disabled={saving} />
+          <textarea rows={2} className={`${cls} resize-none`} placeholder="e.g. Tagum City, Davao del Norte" value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} disabled={saving} />
         </div>
-
-        {/* Divider */}
         <div className="border-t border-slate-200 pt-2">
           <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3">ID Numbers</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">TIN</label>
-              <input className={cls} placeholder="e.g. 123-456-789"
-                value={form.tin} onChange={e => setForm(f => ({ ...f, tin: e.target.value }))} disabled={saving} />
+              <input className={cls} placeholder="e.g. 123-456-789" value={form.tin} onChange={e => setForm(f => ({ ...f, tin: e.target.value }))} disabled={saving} />
             </div>
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Pag-IBIG No.</label>
-              <input className={cls} placeholder="e.g. 1234-5678-9012"
-                value={form.pagIbigNo} onChange={e => setForm(f => ({ ...f, pagIbigNo: e.target.value }))} disabled={saving} />
+              <input className={cls} placeholder="e.g. 1234-5678-9012" value={form.pagIbigNo} onChange={e => setForm(f => ({ ...f, pagIbigNo: e.target.value }))} disabled={saving} />
             </div>
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">PhilHealth No.</label>
-              <input className={cls} placeholder="e.g. 12-345678901-2"
-                value={form.philHealthNo} onChange={e => setForm(f => ({ ...f, philHealthNo: e.target.value }))} disabled={saving} />
+              <input className={cls} placeholder="e.g. 12-345678901-2" value={form.philHealthNo} onChange={e => setForm(f => ({ ...f, philHealthNo: e.target.value }))} disabled={saving} />
             </div>
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Firearm Serial No.</label>
-              <input className={cls} placeholder="e.g. SER-2024-001"
-                value={form.firearmSerialNo} onChange={e => setForm(f => ({ ...f, firearmSerialNo: e.target.value }))} disabled={saving} />
+              <input className={cls} placeholder="e.g. SER-2024-001" value={form.firearmSerialNo} onChange={e => setForm(f => ({ ...f, firearmSerialNo: e.target.value }))} disabled={saving} />
             </div>
           </div>
         </div>
-
         {saving && (
           <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
             <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin flex-shrink-0" />
             <p className="text-sm text-blue-700 font-medium">Saving…</p>
           </div>
         )}
-
         <div className="flex justify-end gap-2.5 pt-1">
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button variant="primary" onClick={submit} disabled={saving || !hasRequiredStatusReason}>
@@ -886,6 +752,7 @@ function EditProfileModal({ person, open, onClose, onSave }: {
 }
 
 // ── 201 Checklist Modal ───────────────────────
+// Redesigned: compact header + flex-col layout — no external scroll
 function Checklist201Modal({ person, onClose, onUpdate, onProfileSave, canManage }: {
   person: Personnel201 | null
   onClose: () => void
@@ -924,199 +791,207 @@ function Checklist201Modal({ person, onClose, onUpdate, onProfileSave, canManage
   const missing    = person.documents.filter(d => d.status === 'MISSING').length
   const forUpdate  = person.documents.filter(d => d.status === 'FOR_UPDATE').length
   const expired    = person.documents.filter(d => d.status === 'EXPIRED').length
-  const isSeparated = person.status === 'Separated from Service'
+  const isSeparated    = person.status === 'Separated from Service'
   const isAutoArchived = isSeparated && isSeparatedAndExpired((person as any).dateOfSeparation)
   const badge = personnelStatusBadge(person.status ?? '')
 
+  function handleDelete(item: Doc201Item) {
+    if (!person || !canManage) return
+    if (!window.confirm(`Delete "${item.label}"? This will reset it to MISSING status.`)) return
+    onUpdate(person.id, item.id, 'MISSING')
+    toast.success(`"${item.label}" reset to Missing.`)
+  }
+
   return (
     <>
-      <Modal open={!!person} onClose={onClose} title="Police Personal File" width="max-w-5xl">
+      {/*
+        Modal width: max-w-5xl
+        Layout: flex flex-col, fixed height h-[92vh] — fills the screen, nothing overflows outside
+      */}
+      <Modal open={!!person} onClose={onClose} title="" width="max-w-5xl">
+        <div className="flex flex-col h-[88vh]">
 
-        {/* Blue Header */}
-        <div className="border-b border-slate-200">
-          <div className="bg-[#0f1c35] px-6 py-5 flex items-stretch gap-5">
-            <div className="flex-shrink-0">
-              <div className="w-40 h-40 rounded-xl border-2 border-white/20 flex flex-col items-center justify-center text-center overflow-hidden relative"
-                style={{ background: person.avatarColor + '33' }}>
+          {/* ── COMPACT HEADER ── */}
+          <div className="flex-shrink-0 bg-[#0f1c35]">
+
+            {/* Top strip: photo + name/unit + ids + edit button */}
+            <div className="flex items-center gap-4 px-5 py-3">
+
+              {/* Avatar — small circle */}
+              <div className="flex-shrink-0">
                 {person.photoUrl ? (
-                  <img src={person.photoUrl} alt={person.name} className="w-full h-full object-cover" />
+                  <img src={person.photoUrl} alt={person.name}
+                    className="w-12 h-12 rounded-full object-cover border-2 border-white/20" />
                 ) : (
-                  <>
-                    <div className="w-20 h-20 rounded-full flex items-center justify-center text-3xl font-bold text-white mb-2"
-                      style={{ background: person.avatarColor }}>{person.initials}</div>
-                    <span className="text-[9px] text-white/40 uppercase tracking-wide">2x2 Photo</span>
-                  </>
+                  <div className="w-12 h-12 rounded-full flex items-center justify-center text-base font-bold text-white border-2 border-white/20"
+                    style={{ background: person.avatarColor }}>
+                    {person.initials}
+                  </div>
                 )}
               </div>
-            </div>
-            <div className="w-px bg-white/10 self-stretch" />
-            <div className="flex-1 flex flex-col gap-2 justify-center min-w-0">
-              {[
-                { label: 'Name',    value: `${person.rank} ${person.name}` },
-                { label: 'Unit',    value: person.unit },
-                { label: 'Contact', value: person.contactNo ?? '—' },
-                { label: 'Address', value: person.address ?? '—' },
-              ].map(r => (
-                <div key={r.label} className="flex items-baseline gap-2 min-w-0">
-                  <span className="text-[9.5px] text-white/45 font-semibold uppercase tracking-wide whitespace-nowrap w-20 flex-shrink-0">{r.label}:</span>
-                  <span className="text-[12px] font-medium truncate text-white">{r.value}</span>
+
+              {/* Name + rank + unit + status */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-white font-bold text-[14px] leading-tight">{person.rank} {person.name}</span>
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${badge.bg} ${badge.text}`}>
+                    {badge.icon} {person.status}
+                  </span>
+                  {person.status === 'Inactive' && (person as any).inactiveReason && (
+                    <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full bg-slate-600 text-slate-200">
+                      {(person as any).inactiveReason}
+                    </span>
+                  )}
+                  {isSeparated && (person as any).separatedReason && (
+                    <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full bg-red-900/60 text-red-300">
+                      {(person as any).separatedReason}
+                    </span>
+                  )}
+                  {isAutoArchived && (
+                    <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full bg-red-800 text-red-200">🗄 Auto-Archived</span>
+                  )}
                 </div>
-              ))}
-
-              {/* Status row with sub-reason */}
-              <div className="flex items-center gap-2 flex-wrap mt-1">
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${badge.bg} ${badge.text}`}>
-                  {badge.icon} {person.status}
-                </span>
-                {person.status === 'Inactive' && (person as any).inactiveReason && (
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-600 text-slate-200">
-                    {(person as any).inactiveReason}
-                  </span>
-                )}
-                {isSeparated && (person as any).separatedReason && (
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-900/60 text-red-300">
-                    {(person as any).separatedReason}
-                  </span>
-                )}
-                {isAutoArchived && (
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-800 text-red-200">
-                    🗄 Auto-Archived
-                  </span>
-                )}
-                {isSeparated && (person as any).dateOfSeparation && !isAutoArchived && (
-                  <span className="text-[10px] text-white/40 ml-1">
-                    · Archive in {yearsUntilArchive((person as any).dateOfSeparation)}y
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="w-px bg-white/10 self-stretch" />
-            <div className="flex-1 flex flex-col gap-2 justify-center min-w-0">
-              {[
-                { label: 'Serial No.',      value: person.serialNo },
-                { label: 'Firearm No.',     value: person.firearmSerialNo ?? '—' },
-                { label: 'Pag-IBIG',        value: person.pagIbigNo ?? '—' },
-                { label: 'PhilHealth',      value: person.philHealthNo ?? '—' },
-                { label: 'TIN',             value: person.tin ?? '—' },
-                ...(isSeparated && (person as any).dateOfSeparation
-                  ? [{ label: 'Separated', value: formatDate((person as any).dateOfSeparation) }]
-                  : []),
-              ].map(r => (
-                <div key={r.label} className="flex items-baseline gap-2 min-w-0">
-                  <span className="text-[9.5px] text-white/45 font-semibold uppercase tracking-wide whitespace-nowrap w-24 flex-shrink-0">{r.label}:</span>
-                  <span className="text-[12px] text-white font-medium truncate">{r.value}</span>
+                <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                  <span className="text-[11px] text-white/50">{person.unit}</span>
+                  <span className="text-[11px] text-white/40">#{person.serialNo}</span>
+                  {person.contactNo && <span className="text-[11px] text-white/40">📞 {person.contactNo}</span>}
+                  {person.address   && <span className="text-[11px] text-white/40 truncate max-w-[180px]">📍 {person.address}</span>}
                 </div>
-              ))}
-            </div>
-            {/* Edit button */}
-            <div className="flex flex-col justify-start pt-1 flex-shrink-0">
-              {canManage && (
-                <button
-                  onClick={editProfileModal.open}
-                  className="text-[11px] font-semibold px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white/80 hover:text-white border border-white/20 rounded-lg transition flex items-center gap-1.5"
-                >
-                  ✏️ Edit
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Auto-archive warning banner */}
-          {isAutoArchived && (
-            <div className="bg-red-700 px-6 py-2.5 flex items-center gap-2">
-              <span className="text-white text-sm">🗄️</span>
-              <p className="text-[12px] text-red-100 font-medium">
-                This record has exceeded the {ARCHIVE_AFTER_YEARS}-year retention period and has been <strong>automatically archived</strong>.
-              </p>
-            </div>
-          )}
-
-          {/* Progress */}
-          <div className="bg-slate-50 px-6 border-t border-slate-200">
-            <div className="flex items-center gap-3 py-2.5 border-b border-slate-100">
-              <div className="flex-1 h-2.5 bg-slate-200 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full transition-all ${completionColor(pct)}`} style={{ width: `${pct}%` }} />
               </div>
-              <span className="text-sm font-bold text-slate-700 whitespace-nowrap">{pct}% Complete</span>
-            </div>
-            <div className="flex items-center gap-2 py-2">
-              <div className="flex gap-1.5 flex-wrap text-xs font-semibold">
-                <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">✅ {complete}</span>
-                <span className="bg-red-100    text-red-700    px-2 py-0.5 rounded-full">❌ {missing}</span>
-                <span className="bg-amber-100  text-amber-700  px-2 py-0.5 rounded-full">🔄 {forUpdate}</span>
-                <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">⚠️ {expired}</span>
-              </div>
-            </div>
-          </div>
-        </div>
 
-        {/* Filters */}
-        <div className="flex items-center gap-2 px-7 py-3 bg-slate-50 border-b border-slate-100 flex-wrap">
-          <SearchInput value={docQuery} onChange={setDocQuery} placeholder="Search documents…" className="w-48" />
-          <div className="flex gap-1 ml-2 flex-wrap">
-            {STATUS_FILTERS.map(f => (
-              <button key={f.value} onClick={() => setStatusFilter(f.value)}
-                className={`px-2.5 py-1.5 text-[11px] font-semibold rounded-lg transition whitespace-nowrap ${
-                  statusFilter === f.value ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:border-blue-400'
-                }`}>
-                {f.label}
-              </button>
-            ))}
-          </div>
-          <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
-            className="ml-auto px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white text-slate-700 focus:outline-none">
-            <option value="ALL">All Categories</option>
-            {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Checklist table */}
-        {docs.length === 0 ? (
-          <div className="py-12 text-center text-slate-400 text-sm">No documents match your filters.</div>
-        ) : (
-          <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
-            <table className="w-full border-collapse table-fixed">
-              <thead className="sticky top-0 z-10">
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-400 text-center w-9">#</th>
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-400 text-left w-[28%]">Document</th>
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-400 text-left w-[18%]">Category</th>
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-400 text-left w-[13%]">Status</th>
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-400 text-left w-[12%]">Date Updated</th>
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-400 text-left w-[9%]">Filed By</th>
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-400 text-left w-[7%]">Size</th>
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-400 text-left">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {docs.map((item, idx) => (
-                  <ChecklistRow
-                    key={item.id}
-                    item={item}
-                    index={idx}
-                    onUpload={d => uploadDisc.open(d)}
-                    onView={d => viewDisc.open(d)}
-                    canManage={canManage}
-                  />
+              {/* ID numbers — compact right column */}
+              <div className="hidden md:flex flex-col gap-0.5 text-right flex-shrink-0">
+                {[
+                  { label: 'TIN',        value: person.tin },
+                  { label: 'Pag-IBIG',   value: person.pagIbigNo },
+                  { label: 'PhilHealth', value: person.philHealthNo },
+                  { label: 'Firearm',    value: person.firearmSerialNo },
+                ].filter(r => r.value).map(r => (
+                  <div key={r.label} className="flex items-center gap-1.5 justify-end">
+                    <span className="text-[9px] text-white/35 uppercase tracking-wide">{r.label}:</span>
+                    <span className="text-[10.5px] text-white/70 font-medium">{r.value}</span>
+                  </div>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                {isSeparated && (person as any).dateOfSeparation && (
+                  <div className="flex items-center gap-1.5 justify-end">
+                    <span className="text-[9px] text-white/35 uppercase tracking-wide">Separated:</span>
+                    <span className="text-[10.5px] text-white/70 font-medium">{formatDate((person as any).dateOfSeparation)}</span>
+                  </div>
+                )}
+              </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between px-7 py-4 border-t border-slate-100 bg-slate-50">
-          <span className="text-xs text-slate-400">
-            Showing {docs.length} of {person.documents.length} documents
-          </span>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
-            <Button variant="primary" size="sm"
-              onClick={() => toast.success('201 file submitted for DPRM review.')}>
-              📨 Submit to DPRM
-            </Button>
+              {/* Edit + Close */}
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {canManage && (
+                  <button onClick={editProfileModal.open}
+                    className="text-[11px] font-semibold px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white/80 hover:text-white border border-white/20 rounded-lg transition">
+                    ✏️ Edit
+                  </button>
+                )}
+                <button onClick={onClose}
+                  className="text-[11px] font-semibold px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white/60 hover:text-white border border-white/20 rounded-lg transition">
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Progress strip */}
+            <div className="px-5 pb-2.5">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full transition-all ${completionColor(pct)}`} style={{ width: `${pct}%` }} />
+                </div>
+                <span className="text-[11px] font-bold text-white/70 whitespace-nowrap">{pct}%</span>
+                <div className="flex gap-1.5">
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 bg-emerald-900/50 text-emerald-400 rounded-full">✅ {complete}</span>
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 bg-red-900/50    text-red-400    rounded-full">❌ {missing}</span>
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 bg-amber-900/50  text-amber-400  rounded-full">🔄 {forUpdate}</span>
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 bg-orange-900/50 text-orange-400 rounded-full">⚠️ {expired}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Auto-archive warning */}
+            {isAutoArchived && (
+              <div className="bg-red-700 px-5 py-2 flex items-center gap-2">
+                <span className="text-white text-xs">🗄️</span>
+                <p className="text-[11px] text-red-100 font-medium">
+                  This record has exceeded the {ARCHIVE_AFTER_YEARS}-year retention and has been <strong>automatically archived</strong>.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* ── FILTER BAR ── */}
+          <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-slate-50 border-b border-slate-100 flex-wrap">
+            <SearchInput value={docQuery} onChange={setDocQuery} placeholder="Search docs…" className="w-40" />
+            <div className="flex gap-1">
+              {STATUS_FILTERS.map(f => (
+                <button key={f.value} onClick={() => setStatusFilter(f.value)}
+                  className={`px-2 py-1 text-[10px] font-semibold rounded-md transition whitespace-nowrap ${
+                    statusFilter === f.value ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:border-blue-400'
+                  }`}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+              className="ml-auto px-2 py-1 border border-slate-200 rounded-md text-[10.5px] bg-white text-slate-700 focus:outline-none">
+              <option value="ALL">All Categories</option>
+              {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+            <span className="text-[10px] text-slate-400 whitespace-nowrap">{docs.length}/{person.documents.length}</span>
+          </div>
+
+          {/* ── TABLE — flex-1 = takes all remaining height, scrolls internally ── */}
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {docs.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-slate-400 text-sm">No documents match your filters.</div>
+            ) : (
+              <table className="w-full border-collapse table-fixed">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-slate-100 border-b border-slate-200">
+                    <th className="px-2 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center w-8">#</th>
+                    <th className="px-2 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-left w-[28%]">Document</th>
+                    <th className="px-2 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-left w-[17%]">Category</th>
+                    <th className="px-2 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-left w-[12%]">Status</th>
+                    <th className="px-2 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-left w-[11%]">Updated</th>
+                    <th className="px-2 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-left w-[9%]">By</th>
+                    <th className="px-2 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-left w-[7%]">Size</th>
+                    <th className="px-2 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 text-left">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {docs.map((item, idx) => (
+                    <ChecklistRow
+                      key={item.id}
+                      item={item}
+                      index={idx}
+                      onUpload={d => uploadDisc.open(d)}
+                      onView={d => viewDisc.open(d)}
+                      onDelete={handleDelete}
+                      canManage={canManage}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* ── FOOTER ── */}
+          <div className="flex-shrink-0 flex items-center justify-between px-5 py-3 border-t border-slate-100 bg-white">
+            <span className="text-[11px] text-slate-400">
+              {docs.length} of {person.documents.length} documents · Last updated {formatDate(person.lastUpdated)}
+            </span>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+              <Button variant="primary" size="sm"
+                onClick={() => toast.success('201 file submitted for DPRM review.')}>
+                📨 Submit to DPRM
+              </Button>
+            </div>
           </div>
         </div>
       </Modal>
@@ -1162,11 +1037,7 @@ function FieldError({ message }: { message?: string }) {
     </p>
   )
 }
- 
-// ── Format helpers ────────────────────────────────────────────────────────────
-// These auto-insert hyphens as the user types so they don't have to.
- 
-/** 123456789 → 123-456-789 */
+
 function formatTIN(raw: string): string {
   const digits = raw.replace(/\D/g, '').slice(0, 12)
   if (digits.length <= 3)  return digits
@@ -1174,26 +1045,21 @@ function formatTIN(raw: string): string {
   if (digits.length <= 9)  return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6)}`
   return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6,9)}-${digits.slice(9)}`
 }
- 
-/** 123456789012 → 1234-5678-9012 */
+
 function formatPagIbig(raw: string): string {
   const digits = raw.replace(/\D/g, '').slice(0, 12)
   if (digits.length <= 4)  return digits
   if (digits.length <= 8)  return `${digits.slice(0,4)}-${digits.slice(4)}`
   return `${digits.slice(0,4)}-${digits.slice(4,8)}-${digits.slice(8)}`
 }
- 
-/** 12345678901 2 → 12-345678901-2 */
+
 function formatPhilHealth(raw: string): string {
   const digits = raw.replace(/\D/g, '').slice(0, 12)
   if (digits.length <= 2)  return digits
   if (digits.length <= 11) return `${digits.slice(0,2)}-${digits.slice(2)}`
   return `${digits.slice(0,2)}-${digits.slice(2,11)}-${digits.slice(11)}`
 }
- 
-// ─────────────────────────────────────────────────────────────────────────────
-// ADD PERSONNEL MODAL  (replaces the old version in page.tsx)
-// ─────────────────────────────────────────────────────────────────────────────
+
 function AddPersonnelModal({ open, onClose, onAdd }: {
   open: boolean
   onClose: () => void
@@ -1202,35 +1068,30 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
   const { user }     = useAuth()
   const { toast }    = useToast()
   const fileInputRef = useRef<HTMLInputElement>(null)
- 
+
   const [loading,   setLoading]   = useState(false)
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [preview,   setPreview]   = useState<string>('')
- 
-  // Validation errors — keyed by field name
-  const [errors, setErrors] = useState<Record<string, string>>({})
- 
-  // Status compound state
+  const [errors,    setErrors]    = useState<Record<string, string>>({})
+
   const [statusVal,        setStatusVal]        = useState('In Service')
   const [inactiveReason,   setInactiveReason]   = useState('')
   const [separatedReason,  setSeparatedReason]  = useState('')
   const [dateOfSeparation, setDateOfSeparation] = useState('')
- 
+
   const [form, setForm] = useState({
     lastName: '', firstName: '', rank: '', serialNo: '', unit: '',
     contactNo: '', address: '', tin: '', pagIbigNo: '', philHealthNo: '',
     firearmSerialNo: '',
   })
- 
-  // ── Guard: only P1 may use this modal ─────────────────────────────────────
+
   if (user?.role !== 'P1') return null
- 
+
   const f = (k: string, v: string) => {
     setForm(p => ({ ...p, [k]: v }))
-    // Clear the error for this field as the user types
     if (errors[k]) setErrors(prev => { const n = { ...prev }; delete n[k]; return n })
   }
- 
+
   function handleStatusChange(v: string) {
     setStatusVal(v)
     if (v !== 'Inactive') setInactiveReason('')
@@ -1240,11 +1101,11 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
       setSeparatedReason('')
       setDateOfSeparation('')
     }
-    if (errors.status)         setErrors(p => { const n={...p}; delete n.status; return n })
-    if (errors.inactiveReason) setErrors(p => { const n={...p}; delete n.inactiveReason; return n })
-    if (errors.separatedReason)setErrors(p => { const n={...p}; delete n.separatedReason; return n })
+    if (errors.status)          setErrors(p => { const n={...p}; delete n.status; return n })
+    if (errors.inactiveReason)  setErrors(p => { const n={...p}; delete n.inactiveReason; return n })
+    if (errors.separatedReason) setErrors(p => { const n={...p}; delete n.separatedReason; return n })
   }
- 
+
   function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -1253,7 +1114,7 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
     reader.onload = ev => setPreview(ev.target?.result as string)
     reader.readAsDataURL(file)
   }
- 
+
   function resetAndClose() {
     setForm({ lastName:'', firstName:'', rank:'', serialNo:'', unit:'',
       contactNo:'', address:'', tin:'', pagIbigNo:'', philHealthNo:'', firearmSerialNo:'' })
@@ -1262,28 +1123,21 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
     setPhotoFile(null); setPreview(''); setErrors({})
     onClose()
   }
- 
+
   async function submit() {
-    // ── 1. Run Zod validation ─────────────────────────────────────────────
     const parseResult = addPersonnelSchema.safeParse({
-      firstName:       form.firstName,
-      lastName:        form.lastName,
-      rank:            form.rank,
-      serialNo:        form.serialNo       || undefined,
-      unit:            form.unit           || undefined,
-      contactNo:       form.contactNo      || undefined,
-      address:         form.address        || undefined,
-      tin:             form.tin            || undefined,
-      pagIbigNo:       form.pagIbigNo      || undefined,
-      philHealthNo:    form.philHealthNo   || undefined,
-      firearmSerialNo: form.firearmSerialNo|| undefined,
-      status:          statusVal,
-      inactiveReason:  inactiveReason      || undefined,
-      separatedReason: separatedReason     || undefined,
+      firstName: form.firstName, lastName: form.lastName, rank: form.rank,
+      serialNo: form.serialNo || undefined, unit: form.unit || undefined,
+      contactNo: form.contactNo || undefined, address: form.address || undefined,
+      tin: form.tin || undefined, pagIbigNo: form.pagIbigNo || undefined,
+      philHealthNo: form.philHealthNo || undefined,
+      firearmSerialNo: form.firearmSerialNo || undefined,
+      status: statusVal,
+      inactiveReason: inactiveReason || undefined,
+      separatedReason: separatedReason || undefined,
     })
- 
+
     if (!parseResult.success) {
-      // Convert Zod errors into a flat { fieldName: message } map
       const fieldErrors: Record<string, string> = {}
       for (const issue of parseResult.error.issues) {
         const key = issue.path[0] as string
@@ -1293,51 +1147,37 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
       toast.error('Please fix the highlighted fields before continuing.')
       return
     }
- 
-    // ── 2. Double-check P1 role before touching the database ──────────────
-    if (user?.role !== 'P1') {
-      toast.error('Only P1 can create 201 files.')
-      return
-    }
- 
+
+    if (user?.role !== 'P1') { toast.error('Only P1 can create 201 files.'); return }
+
     setLoading(true)
     try {
       const fullName = `${form.firstName} ${form.lastName}`
       const initials = `${form.firstName[0]}${form.lastName[0]}`.toUpperCase()
       const colors   = ['#3b63b8','#f0b429','#8b5cf6','#10b981','#ef4444','#0891b2']
       const color    = colors[Math.floor(Math.random() * colors.length)]
- 
-      // ── 3. Upload photo if provided ───────────────────────────────────
+
       let photoUrl: string | undefined
       if (photoFile) {
         const avatarForm = new FormData()
-        avatarForm.append('file',     photoFile)
+        avatarForm.append('file', photoFile)
         avatarForm.append('username', 'P1')
         const avatarRes  = await fetch('/api/users/avatar', { method: 'POST', body: avatarForm })
         const avatarJson = await avatarRes.json()
         if (avatarRes.ok && avatarJson.data?.fileUrl) {
           photoUrl = avatarJson.data.fileUrl
         } else {
-          // Non-fatal — continue without photo
           toast.error('Photo upload failed. Profile will be created without a photo.')
         }
       }
- 
-      // ── 4. Create the record ──────────────────────────────────────────
+
       const result = await createPersonnel201({
-        name:            fullName,
-        rank:            form.rank,
-        serialNo:        form.serialNo        || undefined,
-        unit:            form.unit            || undefined,
-        initials,
-        avatarColor:     color,
-        status:          statusVal,
-        photoUrl,
-        contactNo:       form.contactNo       || undefined,
-        address:         form.address         || undefined,
-        tin:             form.tin             || undefined,
-        pagIbigNo:       form.pagIbigNo       || undefined,
-        philHealthNo:    form.philHealthNo    || undefined,
+        name: fullName, rank: form.rank, serialNo: form.serialNo || undefined,
+        unit: form.unit || undefined, initials, avatarColor: color,
+        status: statusVal, photoUrl,
+        contactNo: form.contactNo || undefined, address: form.address || undefined,
+        tin: form.tin || undefined, pagIbigNo: form.pagIbigNo || undefined,
+        philHealthNo: form.philHealthNo || undefined,
         firearmSerialNo: form.firearmSerialNo || undefined,
         ...(statusVal === 'Inactive'               ? { inactiveReason }  : {}),
         ...(statusVal === 'Separated from Service' ? {
@@ -1345,11 +1185,9 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
           dateOfSeparation: dateOfSeparation || getTodayISODate(),
         } : {}),
       } as any)
- 
+
       if (result) {
-        const subNote = statusVal === 'Inactive'
-          ? ` (${inactiveReason})`
-          : statusVal === 'Separated from Service' ? ` (${separatedReason})` : ''
+        const subNote = statusVal === 'Inactive' ? ` (${inactiveReason})` : statusVal === 'Separated from Service' ? ` (${separatedReason})` : ''
         toast.success(`201 file for ${form.rank} ${fullName} created — ${statusVal}${subNote}.`)
         await logCreatePersonnel(fullName)
         onAdd(result)
@@ -1361,73 +1199,49 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
       setLoading(false)
     }
   }
- 
+
   const hasRequiredStatusReason =
     statusVal !== 'Inactive' && statusVal !== 'Separated from Service'
       ? true
       : statusVal === 'Inactive' ? Boolean(inactiveReason) : Boolean(separatedReason)
- 
-  // Shared input class — turns red border when field has an error
+
   const cls = (field?: string) =>
     `w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-slate-50 focus:outline-none focus:bg-white transition ${
-      field && errors[field]
-        ? 'border-red-400 focus:border-red-500'
-        : 'border-slate-200 focus:border-blue-500'
+      field && errors[field] ? 'border-red-400 focus:border-red-500' : 'border-slate-200 focus:border-blue-500'
     }`
- 
+
   return (
     <Modal open={open} onClose={loading ? () => {} : resetAndClose} title="Create New 201 File" width="max-w-lg">
       <div className="p-6 space-y-4 max-h-[85vh] overflow-y-auto">
- 
-        {/* ── Photo ── */}
         <div className="flex flex-col items-center gap-2">
-          <div
-            onClick={() => !loading && fileInputRef.current?.click()}
-            className="w-20 h-20 rounded-full border-4 border-dashed border-slate-300 hover:border-blue-400 cursor-pointer flex items-center justify-center overflow-hidden relative group transition"
-          >
-            {preview
-              ? <img src={preview} alt="preview" className="w-full h-full object-cover rounded-full" />
-              : <span className="text-2xl text-slate-400">📷</span>
-            }
+          <div onClick={() => !loading && fileInputRef.current?.click()}
+            className="w-20 h-20 rounded-full border-4 border-dashed border-slate-300 hover:border-blue-400 cursor-pointer flex items-center justify-center overflow-hidden relative group transition">
+            {preview ? <img src={preview} alt="preview" className="w-full h-full object-cover rounded-full" /> : <span className="text-2xl text-slate-400">📷</span>}
             <div className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
               <span className="text-white text-[10px] font-semibold">Change</span>
             </div>
           </div>
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
-          <button onClick={() => !loading && fileInputRef.current?.click()}
-            className="text-xs text-blue-600 hover:underline font-medium">
+          <button onClick={() => !loading && fileInputRef.current?.click()} className="text-xs text-blue-600 hover:underline font-medium">
             {preview ? 'Change Photo' : 'Upload Photo (optional)'}
           </button>
         </div>
- 
-        {/* ── Name ── */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-              Last Name <span className="text-red-500">*</span>
-            </label>
-            <input className={cls('lastName')} placeholder="Santos"
-              value={form.lastName} onChange={e => f('lastName', e.target.value)} disabled={loading} />
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Last Name <span className="text-red-500">*</span></label>
+            <input className={cls('lastName')} placeholder="Santos" value={form.lastName} onChange={e => f('lastName', e.target.value)} disabled={loading} />
             <FieldError message={errors.lastName} />
           </div>
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-              First Name <span className="text-red-500">*</span>
-            </label>
-            <input className={cls('firstName')} placeholder="Ana"
-              value={form.firstName} onChange={e => f('firstName', e.target.value)} disabled={loading} />
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">First Name <span className="text-red-500">*</span></label>
+            <input className={cls('firstName')} placeholder="Ana" value={form.firstName} onChange={e => f('firstName', e.target.value)} disabled={loading} />
             <FieldError message={errors.firstName} />
           </div>
         </div>
- 
-        {/* ── Rank + Serial ── */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-              Rank <span className="text-red-500">*</span>
-            </label>
-            <select className={cls('rank')} value={form.rank}
-              onChange={e => f('rank', e.target.value)} disabled={loading}>
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Rank <span className="text-red-500">*</span></label>
+            <select className={cls('rank')} value={form.rank} onChange={e => f('rank', e.target.value)} disabled={loading}>
               <option value="">Select rank…</option>
               {['P/Col.','P/Lt. Col.','P/Maj.','P/Capt.','P/Lt.','P/Insp.','PSMS','PMMS','PEMS','PNCOP'].map(r => (
                 <option key={r}>{r}</option>
@@ -1436,135 +1250,73 @@ function AddPersonnelModal({ open, onClose, onAdd }: {
             <FieldError message={errors.rank} />
           </div>
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-              Serial No.
-              <span className="text-[10px] text-slate-400 ml-1 normal-case font-normal">(PN-YYYY-NNNNN)</span>
-            </label>
-            <input className={cls('serialNo')} placeholder="PN-2024-00001"
-              value={form.serialNo}
-              onChange={e => f('serialNo', e.target.value.toUpperCase())}
-              disabled={loading} />
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Serial No.</label>
+            <input className={cls('serialNo')} placeholder="PN-2024-00001" value={form.serialNo} onChange={e => f('serialNo', e.target.value.toUpperCase())} disabled={loading} />
             <FieldError message={errors.serialNo} />
           </div>
         </div>
- 
-        {/* ── Unit ── */}
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Unit / Assignment</label>
-          <input className={cls('unit')} placeholder="e.g. DNPPO HQ"
-            value={form.unit} onChange={e => f('unit', e.target.value)} disabled={loading} />
+          <input className={cls('unit')} placeholder="e.g. DNPPO HQ" value={form.unit} onChange={e => f('unit', e.target.value)} disabled={loading} />
           <FieldError message={errors.unit} />
         </div>
- 
-        {/* ── Status ── */}
         <StatusReasonSelector
-          status={statusVal} inactiveReason={inactiveReason}
-          separatedReason={separatedReason} dateOfSeparation={dateOfSeparation}
+          status={statusVal} inactiveReason={inactiveReason} separatedReason={separatedReason} dateOfSeparation={dateOfSeparation}
           onStatusChange={handleStatusChange}
           onInactiveReasonChange={v => { setInactiveReason(v); setErrors(p => { const n={...p}; delete n.inactiveReason; return n }) }}
           onSeparatedReasonChange={v => { setSeparatedReason(v); setErrors(p => { const n={...p}; delete n.separatedReason; return n }) }}
-          onDateOfSeparationChange={setDateOfSeparation}
-          disabled={loading}
+          onDateOfSeparationChange={setDateOfSeparation} disabled={loading}
         />
-        <FieldError message={errors.inactiveReason  ?? errors.separatedReason} />
- 
-        {/* ── Contact + Firearm ── */}
+        <FieldError message={errors.inactiveReason ?? errors.separatedReason} />
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-              Contact No.
-              <span className="text-[10px] text-slate-400 ml-1 normal-case font-normal">(PH mobile/landline)</span>
-            </label>
-            <input className={cls('contactNo')} placeholder="09171234567"
-              value={form.contactNo} onChange={e => f('contactNo', e.target.value)} disabled={loading} />
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Contact No.</label>
+            <input className={cls('contactNo')} placeholder="09171234567" value={form.contactNo} onChange={e => f('contactNo', e.target.value)} disabled={loading} />
             <FieldError message={errors.contactNo} />
           </div>
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-              Firearm Serial No.
-            </label>
-            <input className={cls('firearmSerialNo')} placeholder="SER-2024-001"
-              value={form.firearmSerialNo}
-              onChange={e => f('firearmSerialNo', e.target.value.toUpperCase())}
-              disabled={loading} />
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Firearm Serial No.</label>
+            <input className={cls('firearmSerialNo')} placeholder="SER-2024-001" value={form.firearmSerialNo} onChange={e => f('firearmSerialNo', e.target.value.toUpperCase())} disabled={loading} />
             <FieldError message={errors.firearmSerialNo} />
           </div>
         </div>
- 
-        {/* ── Address ── */}
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Address</label>
-          <textarea rows={2} className={`${cls('address')} resize-none`}
-            placeholder="e.g. Tagum City, Davao del Norte"
-            value={form.address} onChange={e => f('address', e.target.value)} disabled={loading} />
+          <textarea rows={2} className={`${cls('address')} resize-none`} placeholder="e.g. Tagum City, Davao del Norte" value={form.address} onChange={e => f('address', e.target.value)} disabled={loading} />
           <FieldError message={errors.address} />
         </div>
- 
-        {/* ── ID Numbers ── */}
         <div className="border-t border-slate-200 pt-3">
           <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3">ID Numbers</p>
           <div className="grid grid-cols-2 gap-3">
- 
-            {/* TIN */}
             <div>
-              <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-                TIN
-                <span className="text-[10px] text-slate-400 ml-1 normal-case font-normal">(123-456-789)</span>
-              </label>
-              <input className={cls('tin')} placeholder="123-456-789"
-                value={form.tin}
-                onChange={e => f('tin', formatTIN(e.target.value))}
-                maxLength={15}
-                disabled={loading} />
+              <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">TIN</label>
+              <input className={cls('tin')} placeholder="123-456-789" value={form.tin} onChange={e => f('tin', formatTIN(e.target.value))} maxLength={15} disabled={loading} />
               <FieldError message={errors.tin} />
             </div>
- 
-            {/* Pag-IBIG */}
             <div>
-              <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-                Pag-IBIG No.
-                <span className="text-[10px] text-slate-400 ml-1 normal-case font-normal">(1234-5678-9012)</span>
-              </label>
-              <input className={cls('pagIbigNo')} placeholder="1234-5678-9012"
-                value={form.pagIbigNo}
-                onChange={e => f('pagIbigNo', formatPagIbig(e.target.value))}
-                maxLength={14}
-                disabled={loading} />
+              <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Pag-IBIG No.</label>
+              <input className={cls('pagIbigNo')} placeholder="1234-5678-9012" value={form.pagIbigNo} onChange={e => f('pagIbigNo', formatPagIbig(e.target.value))} maxLength={14} disabled={loading} />
               <FieldError message={errors.pagIbigNo} />
             </div>
- 
-            {/* PhilHealth */}
             <div className="col-span-2">
-              <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
-                PhilHealth No.
-                <span className="text-[10px] text-slate-400 ml-1 normal-case font-normal">(12-345678901-2)</span>
-              </label>
-              <input className={cls('philHealthNo')} placeholder="12-345678901-2"
-                value={form.philHealthNo}
-                onChange={e => f('philHealthNo', formatPhilHealth(e.target.value))}
-                maxLength={14}
-                disabled={loading} />
+              <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">PhilHealth No.</label>
+              <input className={cls('philHealthNo')} placeholder="12-345678901-2" value={form.philHealthNo} onChange={e => f('philHealthNo', formatPhilHealth(e.target.value))} maxLength={14} disabled={loading} />
               <FieldError message={errors.philHealthNo} />
             </div>
- 
           </div>
         </div>
- 
         <p className="text-xs text-slate-400 leading-relaxed">
           A blank 201 checklist (24 items, A–X) based on the PNP DPRM standard form will be created automatically.
         </p>
- 
         {loading && (
           <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
             <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin flex-shrink-0" />
             <p className="text-sm text-blue-700 font-medium">Creating 201 file…</p>
           </div>
         )}
- 
         <div className="flex justify-end gap-2.5 pt-1">
           <Button variant="outline" onClick={resetAndClose} disabled={loading}>Cancel</Button>
-          <Button variant="primary" onClick={submit}
-            disabled={loading || !hasRequiredStatusReason}>
+          <Button variant="primary" onClick={submit} disabled={loading || !hasRequiredStatusReason}>
             {loading ? 'Creating…' : '📁 Create 201 File'}
           </Button>
         </div>
@@ -1582,46 +1334,16 @@ export default function PersonnelFilesPage() {
   const [personnel, setPersonnel] = useState<Personnel201[]>([])
   const [loading, setLoading]     = useState(true)
 
-  useRealtimeTable('personnel_201_docs', {
-  channelSuffix: 'page',
-  onInsert: row => {
-    const newDoc: Doc201Item = {
-      id:          row.id,
-      category:    row.category,
-      label:       row.label,
-      sublabel:    row.sublabel    ?? undefined,
-      status:      row.status,
-      dateUpdated: row.date_updated ?? '',
-      filedBy:     row.filed_by    ?? undefined,
-      fileSize:    row.file_size   ?? undefined,
-      fileUrl:     row.file_url    ?? undefined,
-      remarks:     row.remarks     ?? undefined,
-    }
-
-    setPersonnel(prev => prev.map(p => {
-      if (p.id !== row.personnel_id) return p
-      if (p.documents.some(d => d.id === row.id)) return p  // no duplicates
-      return { ...p, documents: [...p.documents, newDoc] }
-    }))
-  },
-  onUpdate: row => {
-    setPersonnel(prev => prev.map(p => {
-      if (p.id !== row.personnel_id) return p
-      return {
-        ...p,
-        documents: p.documents.map(d => d.id !== row.id ? d : {
-          ...d,
-          status:      row.status,
-          dateUpdated: row.date_updated ?? '',
-          filedBy:     row.filed_by    ?? undefined,
-          fileSize:    row.file_size   ?? undefined,
-          fileUrl:     row.file_url    ?? undefined,
-          remarks:     row.remarks     ?? undefined,
-        }),
-      }
-    }))
-  },
-})
+  useRealtimeTable('personnel_201', {
+    channelSuffix: 'page',
+    onUpdate: row => {
+      setPersonnel(prev => prev.map(p =>
+        p.id === row.id
+          ? { ...p, name: row.name, rank: row.rank, unit: row.unit, status: row.status }
+          : p
+      ))
+    },
+  })
 
   const viewDisc = useDisclosure<Personnel201>()
   const addModal = useModal()
@@ -1690,10 +1412,7 @@ export default function PersonnelFilesPage() {
             }
 
             const dateOfSeparation = p.date_of_separation ?? undefined
-            const effectiveStatus =
-              expiredArchivedIds.has(p.id)
-                ? 'Archived'
-                : p.status
+            const effectiveStatus  = expiredArchivedIds.has(p.id) ? 'Archived' : p.status
 
             return {
               id:               p.id,
@@ -1710,7 +1429,6 @@ export default function PersonnelFilesPage() {
               contactNo:        p.contact_no            ?? undefined,
               dateOfRetirement: p.date_of_retirement    ?? undefined,
               status:           effectiveStatus         ?? 'In Service',
-              // New fields
               inactiveReason:   p.inactive_reason       ?? undefined,
               separatedReason:  p.separated_reason      ?? undefined,
               dateOfSeparation,
@@ -1736,40 +1454,13 @@ export default function PersonnelFilesPage() {
     loadPersonnel()
   }, [])
 
-  async function handleAdd(p: Personnel201) {
-  if (!isSuperAdmin) {
-    toast.error('Only P1 can create 201 files.')
-    return
+  function handleAdd(p: Personnel201) {
+    if (!isSuperAdmin) { toast.error('Only P1 can create 201 files.'); return }
+    setPersonnel(prev => [p, ...prev])
   }
 
-  // Generate the blank 24-item checklist and insert it right away
-  // so it exists in the DB before the user can open the modal
-  const blank = makeBlankChecklist(p.id)
-  const docsToInsert = blank.map(d => ({
-    id:           d.id,
-    personnel_id: p.id,
-    category:     d.category,
-    label:        d.label,
-    sublabel:     d.sublabel ?? null,
-    status:       d.status,
-    date_updated: null,
-    filed_by:     null,
-    file_size:    null,
-    file_url:     null,
-    remarks:      null,
-  }))
-
-  await supabase.from('personnel_201_docs').insert(docsToInsert)
-
-  // Push to state with documents already populated — no refresh needed
-  setPersonnel(prev => [{ ...p, documents: blank }, ...prev])
-}
-
   function handleDocUpdate(personId: string, docId: string, status: Doc201Status, fileUrl?: string, fileSize?: string) {
-    if (!isSuperAdmin) {
-      toast.error('Only P1 can upload or update 201 documents.')
-      return
-    }
+    if (!isSuperAdmin) { toast.error('Only P1 can upload or update 201 documents.'); return }
 
     const today = new Date().toISOString().split('T')[0]
 
@@ -1800,19 +1491,25 @@ export default function PersonnelFilesPage() {
       })
     }
 
-    supabase
-      .from('personnel_201')
-      .update({ last_updated: today })
-      .eq('id', personId)
-      .then(({ error }) => {
-        if (error) console.warn('last_updated update warning:', error.message)
-      })
+    supabase.from('personnel_201').update({ last_updated: today }).eq('id', personId)
+      .then(({ error }) => { if (error) console.warn('last_updated update warning:', error.message) })
 
-    // Log upload events when a file URL is provided and status is COMPLETE
     if (fileUrl && status === 'COMPLETE') {
       const personObj = personnel.find(p => p.id === personId)
-      const docItem = personObj?.documents.find(d => d.id === docId)
+      const docItem   = personObj?.documents.find(d => d.id === docId)
       void logUploadDocument(`${docItem?.label ?? docId} (${personObj?.name ?? personId})`)
+    }
+
+    // If resetting to MISSING (delete), also clear from DB
+    if (status === 'MISSING') {
+      supabase.from('personnel_201_docs').update({
+        status:       'MISSING',
+        file_url:     null,
+        file_size:    null,
+        filed_by:     null,
+        date_updated: null,
+      }).eq('id', docId)
+        .then(({ error }) => { if (error) console.warn('Doc reset warning:', error.message) })
     }
   }
 
@@ -1822,10 +1519,7 @@ export default function PersonnelFilesPage() {
     separatedReason?: string
     dateOfSeparation?: string
   }) {
-    if (!isSuperAdmin) {
-      toast.error('Only P1 can update personnel profiles.')
-      return
-    }
+    if (!isSuperAdmin) { toast.error('Only P1 can update personnel profiles.'); return }
 
     setPersonnel(prev => prev.map(p => p.id !== personId ? p : { ...p, ...updates }))
     logUpdatePersonnel(updates.name ?? 'personnel record')
@@ -1846,7 +1540,6 @@ export default function PersonnelFilesPage() {
       pag_ibig_no:        updates.pagIbigNo         ?? null,
       phil_health_no:     updates.philHealthNo      ?? null,
       firearm_serial_no:  updates.firearmSerialNo   ?? null,
-      // New columns — add these to your Supabase schema:
       inactive_reason:    updates.inactiveReason    ?? null,
       separated_reason:   updates.separatedReason   ?? null,
       date_of_separation: updates.dateOfSeparation  ?? null,
@@ -1855,15 +1548,14 @@ export default function PersonnelFilesPage() {
     })
   }
 
-  const allDocs   = personnel.flatMap(p => p.documents)
-  // Exclude auto-archived records from "active" stat counts
+  const allDocs        = personnel.flatMap(p => p.documents)
   const activePersonnel = personnel.filter(p => p.status !== 'Archived')
 
   const statCards = [
-    { icon: '👥', value: activePersonnel.length,                                                          label: 'Active Records',     bg: 'bg-blue-50',    num: 'text-blue-700'    },
-    { icon: '✅', value: allDocs.filter(d => d.status === 'COMPLETE').length,                             label: 'Documents Complete', bg: 'bg-emerald-50', num: 'text-emerald-700' },
-    { icon: '❌', value: allDocs.filter(d => d.status === 'MISSING').length,                              label: 'Documents Missing',  bg: 'bg-red-50',     num: 'text-red-700'     },
-    { icon: '🗄', value: personnel.filter(p => p.status === 'Archived').length,                           label: 'Auto-Archived',      bg: 'bg-slate-50',   num: 'text-slate-600'   },
+    { icon: '👥', value: activePersonnel.length,                                     label: 'Active Records',     bg: 'bg-blue-50',    num: 'text-blue-700'    },
+    { icon: '✅', value: allDocs.filter(d => d.status === 'COMPLETE').length,         label: 'Documents Complete', bg: 'bg-emerald-50', num: 'text-emerald-700' },
+    { icon: '❌', value: allDocs.filter(d => d.status === 'MISSING').length,          label: 'Documents Missing',  bg: 'bg-red-50',     num: 'text-red-700'     },
+    { icon: '🗄', value: personnel.filter(p => p.status === 'Archived').length,       label: 'Auto-Archived',      bg: 'bg-slate-50',   num: 'text-slate-600'   },
   ]
 
   return (
