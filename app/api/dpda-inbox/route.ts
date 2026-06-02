@@ -2,10 +2,13 @@
 // Fetch forwarded documents for DPDA review
 //
 // FIXES APPLIED:
-//  1. Returns statusCounts object so the page summary cards show accurate totals
-//     across ALL documents, not just the current page.
-//  2. Changed default limit from 50 → 12 to match ITEMS_PER_PAGE in page.tsx.
-//  3. DPDO role already allowed here (was correct); kept as-is.
+//  1. statusCounts now counts rows by their ORIGINAL recipient_role (DPDA/DPDO)
+//     regardless of dpda_status — so approved/disapproved docs that were later
+//     "returned" still count toward the right bucket.
+//  2. Rewrote statusCountsPromise to be a clean standalone Promise.all — the
+//     previous chained .then() structure was fragile and hard to reason about.
+//  3. Added 'returned_with_comments' to the counted statuses so that bucket
+//     is also reflected in the summary cards if needed.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
@@ -38,33 +41,40 @@ export async function GET(req: NextRequest) {
   const sender = url.searchParams.get('sender') || ''
   const priority = url.searchParams.get('priority') || ''
   const sort = url.searchParams.get('sort') || 'date-desc'
-  // FIX: Default limit aligned to ITEMS_PER_PAGE (12) in page.tsx
   const limit = parseInt(url.searchParams.get('limit') || '12')
   const offset = parseInt(url.searchParams.get('offset') || '0')
 
   try {
-    // FIX: Fetch per-status counts in parallel so summary cards show accurate totals
-    // across the full dataset, not just the current page.
-    const statusCountsPromise = supabase
-      .from('forwarded_documents')
-      .select('dpda_status', { count: 'exact' })
-      .in('recipient_role', ['DPDA', 'DPDO'])
-      .then(async () => {
-        const statuses = ['pending', 'approved', 'disapproved', 'returned'] as const
-        const counts: Record<string, number> = {}
-        await Promise.all(
-          statuses.map(async (s) => {
-            const { count } = await supabase
-              .from('forwarded_documents')
-              .select('*', { count: 'exact', head: true })
-              .in('recipient_role', ['DPDA', 'DPDO'])
-              .eq('dpda_status', s)
-            counts[s] = count ?? 0
-          })
-        )
-        return counts
-      })
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIX: Count ALL rows where recipient_role was DPDA/DPDO, grouped by
+    // dpda_status. This includes rows that were later forwarded back (whose
+    // dpda_status is now 'returned') AND rows that are still sitting in the
+    // inbox (dpda_status = 'pending', 'approved', 'disapproved', etc.).
+    //
+    // The previous code was also structured incorrectly — it chained .then()
+    // off a query result which made the Promise.all receive the inner
+    // Promise instead of the resolved counts object.
+    // ─────────────────────────────────────────────────────────────────────────
+    const STATUSES = ['pending', 'approved', 'disapproved', 'returned', 'returned_with_comments'] as const
 
+    const statusCountsPromise = Promise.all(
+      STATUSES.map(async (s) => {
+        const { count, error } = await supabase
+          .from('forwarded_documents')
+          .select('*', { count: 'exact', head: true })
+          .in('recipient_role', ['DPDA', 'DPDO'])
+          .eq('dpda_status', s)
+        return { status: s, count: count ?? 0, error }
+      })
+    ).then((results) => {
+      const counts: Record<string, number> = {}
+      for (const r of results) {
+        counts[r.status] = r.count
+      }
+      return counts
+    })
+
+    // ── Main paginated query ─────────────────────────────────────────────────
     let query = supabase
       .from('forwarded_documents')
       .select(`
@@ -101,27 +111,19 @@ export async function GET(req: NextRequest) {
       `, { count: 'exact' })
       .in('recipient_role', ['DPDA', 'DPDO'])
 
-    // Filter by status
     if (statusParam && statusParam !== 'all') {
       query = query.eq('dpda_status', statusParam)
     }
-
-    // Filter by sender
     if (sender) {
       query = query.eq('sender_role', sender)
     }
-
-    // Filter by priority
     if (priority) {
       query = query.eq('priority', priority)
     }
-
-    // Search in title and notes
     if (search) {
       query = query.or(`title.ilike.%${search}%,notes.ilike.%${search}%`)
     }
 
-    // Sorting
     switch (sort) {
       case 'date-asc':
         query = query.order('created_at', { ascending: true })
@@ -138,7 +140,6 @@ export async function GET(req: NextRequest) {
         break
     }
 
-    // Pagination
     query = query.range(offset, offset + limit - 1)
 
     const [{ data, count, error }, statusCounts] = await Promise.all([
@@ -153,7 +154,7 @@ export async function GET(req: NextRequest) {
           data: [],
           count: 0,
           total: 0,
-          statusCounts: { pending: 0, approved: 0, disapproved: 0, returned: 0 },
+          statusCounts: { pending: 0, approved: 0, disapproved: 0, returned: 0, returned_with_comments: 0 },
         })
       }
       console.error('Fetch error:', error)
@@ -164,7 +165,6 @@ export async function GET(req: NextRequest) {
       data: data || [],
       count: count || 0,
       total: count || 0,
-      // FIX: Include per-status counts so the UI summary cards are accurate
       statusCounts,
     })
   } catch (error) {

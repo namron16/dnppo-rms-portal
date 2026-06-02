@@ -6,6 +6,16 @@
 //  2. Status count cards now use per-status totals from API (not filtered local page data)
 //  3. Removed unused getStatusCount() function (dead code)
 //  4. Wired up the attachment download button in desktop table
+//  5. NEW: fetchStatusCounts is its own function — the realtime subscription
+//     calls it directly instead of re-running the full fetchDocuments, so the
+//     summary cards update instantly without reloading the whole table.
+//  6. NEW: Second Supabase realtime channel ('dpda_status_counts_realtime')
+//     watches ALL changes to forwarded_documents for DPDA/DPDO recipients and
+//     refreshes only the status counts — this means approving/rejecting a doc
+//     in the modal immediately updates the cards even without a full page reload.
+//  7. totalCount now always reflects the UNFILTERED total (a separate state
+//     variable) so the "Total Documents" card is always accurate regardless of
+//     which status filter is active.
 
 'use client'
 
@@ -34,15 +44,12 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { supabase } from '@/lib/supabase'
 
-// Use the shared `ForwardedDocument` type exported by `FileDetailsModal` to
-// avoid duplicate incompatible definitions across modules.
-
-// FIX: Added statusCounts to track per-status totals from the API
 interface StatusCounts {
   pending: number
   approved: number
   disapproved: number
   returned: number
+  returned_with_comments: number
 }
 
 const ITEMS_PER_PAGE = 12
@@ -54,13 +61,16 @@ export default function DPDAInboxPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
 
-  // FIX: Separate state for per-status counts (from API) vs local page data
   const [statusCounts, setStatusCounts] = useState<StatusCounts>({
     pending: 0,
     approved: 0,
     disapproved: 0,
     returned: 0,
+    returned_with_comments: 0,
   })
+
+  // FIX 7: Separate unfiltered total so "Total Documents" card is always right
+  const [unfilteredTotal, setUnfilteredTotal] = useState(0)
 
   // Filters and pagination
   const [searchQuery, setSearchQuery] = useState('')
@@ -74,6 +84,34 @@ export default function DPDAInboxPage() {
   // Modal state
   const [selectedDocument, setSelectedDocument] = useState<ForwardedDocument | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // ── FIX 5: Dedicated status-counts fetcher ────────────────────────────────
+  // Fetches only the summary card counts — does NOT reload the document table.
+  // Called by both the initial load and the realtime subscription.
+  const fetchStatusCounts = useCallback(async () => {
+    try {
+      // Fetch unfiltered total + all status counts in one API call
+      const res = await fetch(`/api/dpda-inbox?limit=1&offset=0&status=all`)
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.statusCounts) {
+        setStatusCounts(data.statusCounts)
+      }
+      // Unfiltered total = sum of all status counts
+      if (data.statusCounts) {
+        const counts = data.statusCounts as StatusCounts
+        const total =
+          (counts.pending ?? 0) +
+          (counts.approved ?? 0) +
+          (counts.disapproved ?? 0) +
+          (counts.returned ?? 0) +
+          (counts.returned_with_comments ?? 0)
+        setUnfilteredTotal(total)
+      }
+    } catch {
+      // Non-fatal — counts just won't update
+    }
+  }, [])
 
   const fetchDocuments = useCallback(async () => {
     setLoading(true)
@@ -100,9 +138,17 @@ export default function DPDAInboxPage() {
       setDocuments(data.data || [])
       setTotalCount(data.total || 0)
 
-      // FIX: Read per-status counts returned by the API instead of filtering local page
       if (data.statusCounts) {
         setStatusCounts(data.statusCounts)
+        // Also sync unfiltered total from status counts sum
+        const counts = data.statusCounts as StatusCounts
+        const total =
+          (counts.pending ?? 0) +
+          (counts.approved ?? 0) +
+          (counts.disapproved ?? 0) +
+          (counts.returned ?? 0) +
+          (counts.returned_with_comments ?? 0)
+        setUnfilteredTotal(total)
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'An error occurred'
@@ -124,24 +170,66 @@ export default function DPDAInboxPage() {
     fetchDocuments()
   }, [fetchDocuments])
 
-// user.role is available
+  // ── FIX 6: Two separate realtime subscriptions ────────────────────────────
+  //
+  // Channel 1 — 'dpda_inbox_realtime':
+  //   Watches only the logged-in user's recipient_role. When a new document
+  //   arrives for THEM, reload the full document table.
+  //
+  // Channel 2 — 'dpda_status_counts_realtime':
+  //   Watches ALL changes to forwarded_documents for DPDA OR DPDO recipients.
+  //   When any dpda_status changes (e.g. after approve/disapprove/forward-back),
+  //   refresh ONLY the summary counts — not the whole table.
+  //   This is what fixes the "Approved/Rejected cards stuck at 0" bug.
+  //
+  useEffect(() => {
+    if (!user?.role) return
 
-    useEffect(() => {
-      if (!user?.role) return
-      const channel = supabase
-        .channel('dpda_inbox_realtime')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'forwarded_documents',
-          filter: `recipient_role=eq.${user.role}`,
-        }, () => fetchDocuments())
-        .subscribe()
-      return () => { supabase.removeChannel(channel) }
-    }, [user?.role, fetchDocuments])
+    // Channel 1: new inbox items for this specific user
+    const inboxChannel = supabase
+      .channel('dpda_inbox_realtime')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'forwarded_documents',
+        filter: `recipient_role=eq.${user.role}`,
+      }, () => {
+        fetchDocuments()
+        fetchStatusCounts()
+      })
+      .subscribe()
 
-  // FIX: Role guard moved here — AFTER all hook declarations — to satisfy React rules of hooks.
-  // Previously this guard appeared between hook declarations, which is a rules violation.
+    // Channel 2: any dpda_status update on DPDA/DPDO rows
+    // We can't filter by two values with a single eq filter, so we subscribe
+    // to all changes and let the server-side count query handle the scoping.
+    const countsChannel = supabase
+      .channel('dpda_status_counts_realtime')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'forwarded_documents',
+      }, (payload) => {
+        // Only react if the changed row belongs to DPDA/DPDO
+        const newRow = payload.new as { recipient_role?: string; dpda_status?: string }
+        if (
+          newRow?.recipient_role === 'DPDA' ||
+          newRow?.recipient_role === 'DPDO'
+        ) {
+          fetchStatusCounts()
+          // Also refresh the table if we're currently viewing a filtered status
+          // so the row moves in/out of the filtered list correctly
+          fetchDocuments()
+        }
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(inboxChannel)
+      supabase.removeChannel(countsChannel)
+    }
+  }, [user?.role, fetchDocuments, fetchStatusCounts])
+
+  // Role guard — AFTER all hooks
   if (user && !['DPDA', 'DPDO'].includes(user.role)) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -157,7 +245,7 @@ export default function DPDAInboxPage() {
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
-      await fetchDocuments()
+      await Promise.all([fetchDocuments(), fetchStatusCounts()])
     } finally {
       setRefreshing(false)
     }
@@ -184,8 +272,6 @@ export default function DPDAInboxPage() {
     setSelectedDocument(doc)
     setIsModalOpen(true)
   }
-
-  // FIX: Removed unused getStatusCount() function
 
   return (
     <div className="w-full min-h-screen bg-slate-50 py-8">
@@ -215,53 +301,48 @@ export default function DPDAInboxPage() {
           </div>
 
           {/* Status Summary Cards */}
-          {/* FIX: Values now come from statusCounts (API totals), not filtered local page data */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
             {[
               {
                 label: 'Total Documents',
-                value: totalCount,
-                badge: 'GROWTH +4%',
-                color: 'from-slate-500 to-slate-600',
+                // FIX 7: Always show unfiltered total, not the filtered page count
+                value: unfilteredTotal,
+                badge: 'ALL RECORDS',
                 textColor: 'text-slate-700',
                 bgColor: 'bg-slate-50',
-                icon: TrendingUp
+                icon: TrendingUp,
               },
               {
                 label: 'Pending Review',
                 value: statusCounts.pending,
                 badge: 'ACTION REQUIRED',
-                color: 'from-amber-500 to-amber-600',
                 textColor: 'text-amber-700',
                 bgColor: 'bg-amber-50',
-                icon: Clock
+                icon: Clock,
               },
               {
                 label: 'Approved',
                 value: statusCounts.approved,
                 badge: 'VERIFIED',
-                color: 'from-green-500 to-green-600',
                 textColor: 'text-green-700',
                 bgColor: 'bg-green-50',
-                icon: CheckCircle2
+                icon: CheckCircle2,
               },
               {
                 label: 'Disapproved',
                 value: statusCounts.disapproved,
                 badge: 'REJECTED',
-                color: 'from-red-500 to-red-600',
                 textColor: 'text-red-700',
                 bgColor: 'bg-red-50',
-                icon: XCircle
+                icon: XCircle,
               },
               {
                 label: 'Returned',
                 value: statusCounts.returned,
                 badge: 'RE-EVALUATION',
-                color: 'from-purple-500 to-purple-600',
                 textColor: 'text-purple-700',
                 bgColor: 'bg-purple-50',
-                icon: RotateCcw
+                icon: RotateCcw,
               },
             ].map((stat) => {
               const IconComponent = stat.icon
@@ -407,7 +488,7 @@ export default function DPDAInboxPage() {
                             {doc.dpda_status === 'returned_with_comments' && (
                               <span className="inline-flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold border border-blue-200 uppercase tracking-wide">
                                 <MessageCircle className="w-4 h-4 flex-shrink-0" />
-                                With Comments
+                                WITH COMMENTS
                               </span>
                             )}
                             {doc.dpda_status === 'returned' && (
@@ -418,8 +499,6 @@ export default function DPDAInboxPage() {
                             )}
                           </div>
                         </div>
-
-                        
                       </div>
                     </div>
                   ))}
@@ -474,10 +553,6 @@ export default function DPDAInboxPage() {
                       if (Math.abs(page - currentPage) <= 1) return page
                       return null
                     }).map((page, idx, arr) => {
-                      // When `page` is null we want to render an ellipsis, but only
-                      // if there's a gap between the previous and next numeric pages.
-                      // Use the neighboring entries to compute the gap instead of
-                      // attempting to coerce the null `page` value to a number.
                       if (page === null) {
                         const nextPage = arr[idx + 1] as number | null
                         const prevPage = arr[idx - 1] as number | null
@@ -525,7 +600,10 @@ export default function DPDAInboxPage() {
           document={selectedDocument}
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
-          onRefresh={fetchDocuments}
+          onRefresh={() => {
+            fetchDocuments()
+            fetchStatusCounts()
+          }}
         />
       </div>
     </div>
