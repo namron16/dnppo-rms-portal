@@ -429,10 +429,10 @@ export default function LibraryPage() {
         const res = await fetch('/api/gdrive/archive', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
+          body: JSON.stringify({
             gdriveFileId,
             poolAccountId,
-            category: 'library',
+            category: 'library_items',
           }),
         })
 
