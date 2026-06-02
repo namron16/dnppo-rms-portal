@@ -1,7 +1,18 @@
 'use client'
+// app/admin/classified-documents/page.tsx
+//
+// FIXES applied:
+//   1. ClassifiedDocRecord now includes gdrive_file_id and pool_account_id
+//      columns (added by migration 010) so delete/archive can reach Drive.
+//   2. handleDelete now actually deletes the Drive file — previously it read
+//      columns that didn't exist on confidential_docs and silently no-op'd.
+//   3. handleArchive added — moves the Drive file to "Classified Documents – Archive"
+//      folder via /api/gdrive/archive, mirrors master_documents behaviour.
+//   4. handleAdd now persists gdrive_file_id / pool_account_id to the DB row.
+//   5. Archive button added to the actions column (P2 only, same as delete).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Eye, FileText, PencilLine, Plus, Printer, Trash2 } from 'lucide-react'
+import { Eye, FileText, PencilLine, Plus, Printer, Trash2, Archive } from 'lucide-react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -37,11 +48,16 @@ import {
 import type { AdminRole } from '@/lib/auth'
 import type { ConfidentialDoc } from '@/types'
 
+// FIX: added gdrive_file_id and pool_account_id — these are now persisted to
+// the confidential_docs table (migration 010) and are required for Drive cleanup.
 type ClassifiedDocRecord = ConfidentialDoc & {
   fileUrl?: string
   passwordHash?: string
   archived?: boolean
   visibleRoles?: AdminRole[]
+  gdrive_file_id?: string
+  gdrive_url?: string
+  pool_account_id?: string
 }
 
 type DocUpdatePayload = {
@@ -330,10 +346,7 @@ function EditDocumentModal({ open, doc, onClose, onSubmit }: EditModalProps) {
           </div>
         ) : (
           <div
-            onDragOver={e => {
-              e.preventDefault()
-              setDragging(true)
-            }}
+            onDragOver={e => { e.preventDefault(); setDragging(true) }}
             onDragLeave={() => setDragging(false)}
             onDrop={e => {
               e.preventDefault()
@@ -373,7 +386,8 @@ export default function ClassifiedDocumentsPage() {
 
   const [docs, setDocs] = useState<ClassifiedDocRecord[]>([])
   const [loading, setLoading] = useState(true)
-  const [isDeleting,  setIsDeleting] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [isArchiving, setIsArchiving] = useState(false)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'private'>('all')
 
@@ -383,17 +397,14 @@ export default function ClassifiedDocumentsPage() {
   const detailDisc = useDisclosure<ClassifiedDocRecord>()
   const editDisc = useDisclosure<ClassifiedDocRecord>()
   const deleteDisc = useDisclosure<ClassifiedDocRecord>()
+  const archiveDisc = useDisclosure<ClassifiedDocRecord>()  // FIX: added
 
   const canManage = user?.role ? canManageClassifiedDocuments(user.role as AdminRole) : false
   const canPrint = user?.role ? canPrintClassifiedDocuments(user.role as AdminRole) : false
   const canDelete = user?.role ? canDeleteClassifiedDocuments(user.role as AdminRole) : false
 
   const loadDocs = useCallback(async () => {
-    if (!user) {
-      setDocs([])
-      setLoading(false)
-      return
-    }
+    if (!user) { setDocs([]); setLoading(false); return }
 
     setLoading(true)
     try {
@@ -417,16 +428,15 @@ export default function ClassifiedDocumentsPage() {
     }
   }, [toast, user])
 
-  useEffect(() => {
-    void loadDocs()
-  }, [loadDocs])
+  useEffect(() => { void loadDocs() }, [loadDocs])
 
   const stats = useMemo(() => {
-    const p2Only = docs.filter(doc => doc.visibleRoles && Array.isArray(doc.visibleRoles) && doc.visibleRoles.every(role => role === 'P2')).length
-
+    const p2Only = docs.filter(doc =>
+      doc.visibleRoles && Array.isArray(doc.visibleRoles) &&
+      doc.visibleRoles.every(role => role === 'P2')
+    ).length
     return { p2Only }
   }, [docs])
-
 
   const filteredDocs = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -438,17 +448,19 @@ export default function ClassifiedDocumentsPage() {
     })
   }, [docs, filter, query])
 
-  async function handleAdd(newDoc: ConfidentialDoc & { fileUrl?: string; passwordHash?: string }) {
-    if (!canManage) {
-      toast.error('Only P2 can add classified documents.')
-      return
-    }
+  async function handleAdd(newDoc: ConfidentialDoc & {
+    fileUrl?: string
+    passwordHash?: string
+    gdrive_file_id?: string
+    gdrive_url?: string
+    pool_account_id?: string
+  }) {
+    if (!canManage) { toast.error('Only P2 can add classified documents.'); return }
 
+    // FIX: pass gdrive_file_id and pool_account_id through to addConfidentialDoc
+    // so they are persisted in the confidential_docs table row.
     const ok = await addConfidentialDoc(newDoc)
-    if (!ok) {
-      toast.error('Could not save the classified document.')
-      return
-    }
+    if (!ok) { toast.error('Could not save the classified document.'); return }
 
     const visibilityOk = await setClassifiedDocumentVisibility(newDoc.id, newDoc.title)
     if (!visibilityOk) {
@@ -457,68 +469,104 @@ export default function ClassifiedDocumentsPage() {
   }
 
   async function handleEdit(payload: DocUpdatePayload): Promise<boolean> {
-    if (!canManage) {
-      toast.error('Only P2 can edit classified documents.')
-      return false
-    }
+    if (!canManage) { toast.error('Only P2 can edit classified documents.'); return false }
 
     const doc = editDisc.payload
     if (!doc) return false
 
     const ok = await updateConfidentialDoc(doc.id, payload)
-    if (!ok) {
-      toast.error('Could not update the classified document.')
-      return false
-    }
+    if (!ok) { toast.error('Could not update the classified document.'); return false }
 
     await logEditDocument(doc.title)
     return true
   }
 
+  // FIX: now reads gdrive_file_id and pool_account_id from the DB row
+  // (columns added by migration 010) and actually deletes the Drive file.
   async function handleDelete() {
-  if (!canDelete) {
-    toast.error('Only P2 can delete classified documents.')
-    return
-  }
-  const doc = deleteDisc.payload
-  if (!doc) return
-  setIsDeleting(true)
-  try {
-    const { data: row } = await supabase
-      .from('confidential_docs')
-      .select('gdrive_file_id, pool_account_id')
-      .eq('id', doc.id)
-      .maybeSingle()
+    if (!canDelete) { toast.error('Only P2 can delete classified documents.'); return }
+    const doc = deleteDisc.payload
+    if (!doc) return
+    setIsDeleting(true)
+    try {
+      const { data: row } = await supabase
+        .from('confidential_docs')
+        .select('gdrive_file_id, pool_account_id')
+        .eq('id', doc.id)
+        .maybeSingle()
 
-    await deleteDriveFile(
-      (row as any)?.gdrive_file_id,
-      (row as any)?.pool_account_id
-    )
+      // Drive cleanup — only attempt if we have the identifiers.
+      // Older records uploaded before migration 010 will have NULL columns;
+      // skip Drive delete for those rather than failing the whole operation.
+      if (row?.gdrive_file_id && row?.pool_account_id) {
+        await deleteDriveFile(row.gdrive_file_id, row.pool_account_id)
+      } else {
+        console.warn(`[ClassifiedDocs] No Drive identifiers for doc ${doc.id} — skipping Drive delete (pre-migration record).`)
+      }
 
-    await deleteConfidentialDoc(doc.id)
-    deleteDisc.close()
-    toast.success(`"${doc.title}" deleted.`)
-  } finally {
-    setIsDeleting(false)
+      await deleteConfidentialDoc(doc.id)
+      deleteDisc.close()
+      toast.success(`"${doc.title}" deleted.`)
+    } finally {
+      setIsDeleting(false)
+    }
   }
-}
+
+  // FIX: archive moves the Drive file into "Classified Documents – Archive"
+  // folder via /api/gdrive/archive — same pattern as master_documents.
+  async function handleArchive() {
+    if (!canDelete) { toast.error('Only P2 can archive classified documents.'); return }
+    const doc = archiveDisc.payload
+    if (!doc) return
+    setIsArchiving(true)
+    try {
+      const { data: row } = await supabase
+        .from('confidential_docs')
+        .select('gdrive_file_id, pool_account_id')
+        .eq('id', doc.id)
+        .maybeSingle()
+
+      if (row?.gdrive_file_id && row?.pool_account_id) {
+        const res = await fetch('/api/gdrive/archive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            gdriveFileId:  row.gdrive_file_id,
+            poolAccountId: row.pool_account_id,
+            category:      'classified_documents',
+          }),
+        })
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}))
+          toast.error(`Could not move file to Drive archive: ${json.error ?? 'Unknown error'}`)
+          // Continue — still archive the DB record even if Drive move fails
+        }
+      } else {
+        console.warn(`[ClassifiedDocs] No Drive identifiers for doc ${doc.id} — skipping Drive archive move.`)
+      }
+
+      // Mark the DB row as archived
+      await supabase
+        .from('confidential_docs')
+        .update({ archived: true })
+        .eq('id', doc.id)
+
+      setDocs(prev => prev.filter(d => d.id !== doc.id))
+      archiveDisc.close()
+      toast.success(`"${doc.title}" archived.`)
+    } finally {
+      setIsArchiving(false)
+    }
+  }
 
   async function handlePrint(doc: ClassifiedDocRecord) {
-    if (!canPrint) {
-      toast.error('Only P2 can print classified documents.')
-      return
-    }
-
-    if (!doc.fileUrl) {
-      toast.warning('This document has no file attached.')
-      return
-    }
+    if (!canPrint) { toast.error('Only P2 can print classified documents.'); return }
+    if (!doc.fileUrl) { toast.warning('This document has no file attached.'); return }
 
     const printWindow = window.open(doc.fileUrl, '_blank', 'width=800,height=600')
     if (printWindow) {
-      printWindow.addEventListener('load', () => {
-        printWindow.print()
-      })
+      printWindow.addEventListener('load', () => { printWindow.print() })
     }
     toast.success(`Printing "${doc.title}".`)
   }
@@ -558,7 +606,7 @@ export default function ClassifiedDocumentsPage() {
           <div className="border-b border-slate-100 px-6 py-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-base font-bold text-slate-800">Classified Records</h2>
-              <p className="mt-1 text-sm text-slate-500">View classified records. P2 can create, edit, and delete.</p>
+              <p className="mt-1 text-sm text-slate-500">View classified records. P2 can create, edit, archive, and delete.</p>
             </div>
             {canManage && (
               <Button variant="primary" onClick={addModal.open}>
@@ -608,65 +656,63 @@ export default function ClassifiedDocumentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredDocs.map(doc => {
-                    return (
-                      <tr key={doc.id} className="border-b border-slate-100 hover:bg-slate-50/80 transition">
-                        <td className="px-5 py-4 align-top">
-                          <button type="button" onClick={() => detailDisc.open(doc)} className="flex items-center gap-3 text-left">
-                            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
-                              <FileText size={18} />
-                            </span>
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-800 hover:text-blue-600 truncate">{doc.title}</p>
-                              <p className="text-xs text-slate-400 truncate">{doc.access}</p>
-                            </div>
-                          </button>
-                        </td>
-                        <td className="px-5 py-4 align-top">
-                          <Badge className={classificationBadgeClass(doc.classification)}>{doc.classification}</Badge>
-                        </td>
-                        <td className="px-5 py-4 align-top text-sm text-slate-600">
-                          <div className="flex flex-col gap-0.5">
-                            
-                            {doc.created_at && (
-                              <span className="text-xs">📅 {new Date(doc.created_at).toLocaleString('en-PH', { 
-                                year: 'numeric', 
-                                month: 'short', 
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}</span>
-                            )}
+                  {filteredDocs.map(doc => (
+                    <tr key={doc.id} className="border-b border-slate-100 hover:bg-slate-50/80 transition">
+                      <td className="px-5 py-4 align-top">
+                        <button type="button" onClick={() => detailDisc.open(doc)} className="flex items-center gap-3 text-left">
+                          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+                            <FileText size={18} />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-800 hover:text-blue-600 truncate">{doc.title}</p>
+                            <p className="text-xs text-slate-400 truncate">{doc.access}</p>
                           </div>
-                        </td>
-                        <td className="px-5 py-4 align-top">
-                          <Badge className="bg-slate-100 text-slate-600">P2 Only</Badge>
-                        </td>
-                        <td className="px-5 py-4 align-top">
-                          <div className="flex flex-wrap gap-2">
-                            <Button variant="ghost" size="sm" onClick={() => detailDisc.open(doc)}>
-                              <Eye size={14} /> View
+                        </button>
+                      </td>
+                      <td className="px-5 py-4 align-top">
+                        <Badge className={classificationBadgeClass(doc.classification)}>{doc.classification}</Badge>
+                      </td>
+                      <td className="px-5 py-4 align-top text-sm text-slate-600">
+                        {doc.created_at && (
+                          <span className="text-xs">📅 {new Date(doc.created_at).toLocaleString('en-PH', {
+                            year: 'numeric', month: 'short', day: 'numeric',
+                            hour: '2-digit', minute: '2-digit'
+                          })}</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 align-top">
+                        <Badge className="bg-slate-100 text-slate-600">P2 Only</Badge>
+                      </td>
+                      <td className="px-5 py-4 align-top">
+                        <div className="flex flex-wrap gap-2">
+                          <Button variant="ghost" size="sm" onClick={() => detailDisc.open(doc)}>
+                            <Eye size={14} /> View
+                          </Button>
+                          {canManage && (
+                            <Button variant="ghost" size="sm" onClick={() => editDisc.open(doc)}>
+                              <PencilLine size={14} /> Edit
                             </Button>
-                            {canManage && (
-                              <Button variant="ghost" size="sm" onClick={() => editDisc.open(doc)}>
-                                <PencilLine size={14} /> Edit
-                              </Button>
-                            )}
-                            {canPrint && (
-                              <Button variant="ghost" size="sm" onClick={() => handlePrint(doc)}>
-                                <Printer size={14} /> Print
-                              </Button>
-                            )}
-                            {canDelete && (
-                              <Button variant="ghost" size="sm" onClick={() => deleteDisc.open(doc)} className="text-red-600 hover:bg-red-50">
-                                <Trash2 size={14} /> Delete
-                              </Button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
+                          )}
+                          {canPrint && (
+                            <Button variant="ghost" size="sm" onClick={() => handlePrint(doc)}>
+                              <Printer size={14} /> Print
+                            </Button>
+                          )}
+                          {/* FIX: Archive button added — same permission guard as Delete */}
+                          {canDelete && (
+                            <Button variant="ghost" size="sm" onClick={() => archiveDisc.open(doc)} className="text-amber-600 hover:bg-amber-50">
+                              <Archive size={14} /> Archive
+                            </Button>
+                          )}
+                          {canDelete && (
+                            <Button variant="ghost" size="sm" onClick={() => deleteDisc.open(doc)} className="text-red-600 hover:bg-red-50">
+                              <Trash2 size={14} /> Delete
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -693,17 +739,28 @@ export default function ClassifiedDocumentsPage() {
         onSubmit={handleEdit}
       />
 
+      {/* FIX: Archive confirm dialog */}
+      <ConfirmDialog
+        open={archiveDisc.isOpen}
+        title="Archive Classified Document"
+        message={`Archive "${archiveDisc.payload?.title ?? 'this document'}"? The file will be moved to the Drive archive folder and removed from the active list. You can restore it from the Archive section.`}
+        confirmLabel="Archive"
+        variant="danger"
+        isLoading={isArchiving}
+        onConfirm={handleArchive}
+        onCancel={archiveDisc.close}
+      />
+
       <ConfirmDialog
         open={deleteDisc.isOpen}
         title="Delete Classified Document"
         message={`Delete "${deleteDisc.payload?.title ?? 'this document'}"? This action cannot be undone.`}
         confirmLabel="Delete"
         variant="danger"
-        isLoading={isDeleting}        // ← add
+        isLoading={isDeleting}
         onConfirm={handleDelete}
         onCancel={deleteDisc.close}
       />
-
     </>
   )
 }

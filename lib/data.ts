@@ -487,23 +487,23 @@ export async function getConfidentialDocs(): Promise<(ConfidentialDoc & { fileUr
   }))
 }
 
-export async function addConfidentialDoc(
-  doc: ConfidentialDoc & { fileUrl?: string; passwordHash?: string }
-): Promise<boolean> {
-  const { error } = await supabase.from('confidential_docs').insert({
-    id:             doc.id,
-    title:          doc.title,
-    classification: doc.classification,
-    date:           doc.date,
-    access:         doc.access,
-    file_url:       doc.fileUrl      ?? null,
-    password_hash:  doc.passwordHash ?? null,
-  })
-  if (error) {
-    console.warn('Supabase unavailable (add confidential_doc):', error.message)
-    return false
-  }
-
+export async function addConfidentialDoc(doc: any): Promise<boolean> {
+  const { error } = await supabase
+    .from('confidential_docs')
+    .insert({
+      id:              doc.id,
+      title:           doc.title,
+      classification:  doc.classification,
+      date:            doc.date,
+      access:          doc.access,
+      file_url:        doc.fileUrl        ?? null,
+      password_hash:   doc.passwordHash   ?? null,
+      // FIX: persist Drive identifiers — required for delete and archive
+      gdrive_file_id:  doc.gdrive_file_id  ?? null,
+      gdrive_url:      doc.gdrive_url      ?? null,
+      pool_account_id: doc.pool_account_id ?? null,
+    })
+  if (error) { console.error('addConfidentialDoc error:', error.message); return false }
   return true
 }
 

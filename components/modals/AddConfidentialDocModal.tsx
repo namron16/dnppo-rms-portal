@@ -1,5 +1,8 @@
 'use client'
-// components/modals/AddConfidentialDocModal.tsx (v2 — Drive Pool upload)
+// components/modals/AddConfidentialDocModal.tsx
+//
+// FIX: uploadResult now persists gdrive_file_id and pool_account_id to the doc
+// so that delete and archive operations can actually reach the Drive file.
 
 import { useState, useRef } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -13,7 +16,13 @@ import type { ConfidentialDoc } from '@/types'
 interface Props {
   open: boolean
   onClose: () => void
-  onAdd?: (doc: ConfidentialDoc & { fileUrl?: string; passwordHash?: string }) => void
+  onAdd?: (doc: ConfidentialDoc & {
+    fileUrl?: string
+    passwordHash?: string
+    gdrive_file_id?: string
+    gdrive_url?: string
+    pool_account_id?: string
+  }) => void
 }
 
 async function hashPassword(password: string): Promise<string> {
@@ -30,7 +39,6 @@ export function AddConfidentialDocModal({ open, onClose, onAdd }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const today = new Date().toISOString().split('T')[0]
 
-  // ── Drive Pool hook ──────────────────────────────────────────────────────
   const { uploadToDrive, uploading, error: uploadError } = useDriveUpload()
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -81,7 +89,6 @@ export function AddConfidentialDocModal({ open, onClose, onAdd }: Props) {
       const passwordHash = await hashPassword(result.data.password)
       const docId = `cd-${Date.now()}`
 
-      // ── Drive Pool upload (replaces supabase.storage) ─────────────────
       const uploadResult = await uploadToDrive(selectedFile, 'classified_documents', {
         uploadedBy: user?.role ?? 'unknown',
         entityId:   docId,
@@ -93,10 +100,14 @@ export function AddConfidentialDocModal({ open, onClose, onAdd }: Props) {
         return
       }
 
-      // Extract the URL from the result (handle both string and object returns)
-      const fileUrl = typeof uploadResult === 'string' ? uploadResult : uploadResult.fileUrl || uploadResult.fileUrl
+      // FIX: persist all three Drive identifiers so delete/archive can use them.
+      // Previously only fileUrl was carried forward; gdrive_file_id and
+      // pool_account_id were silently dropped, breaking Drive cleanup.
+      const fileUrl       = typeof uploadResult === 'string' ? uploadResult : uploadResult.fileUrl
+      const gdriveFileId  = typeof uploadResult === 'object' ? uploadResult.gdriveFileId  : undefined
+      const poolAccountId = typeof uploadResult === 'object' ? uploadResult.poolAccountId : undefined
 
-      const newDoc: ConfidentialDoc & { fileUrl?: string; passwordHash: string } = {
+      const newDoc = {
         id:             docId,
         title:          result.data.title,
         classification: result.data.classification as 'RESTRICTED' | 'CONFIDENTIAL',
@@ -104,6 +115,10 @@ export function AddConfidentialDocModal({ open, onClose, onAdd }: Props) {
         access:         result.data.access,
         fileUrl,
         passwordHash,
+        // FIX: these two were missing before
+        gdrive_file_id:  gdriveFileId,
+        gdrive_url:      fileUrl,
+        pool_account_id: poolAccountId,
       }
 
       toast.success(`Confidential document "${result.data.title}" added.`)
