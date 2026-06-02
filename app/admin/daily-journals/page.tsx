@@ -304,7 +304,6 @@ export default function DailyJournalsPage() {
   const addModal           = useModal()
   const editDisc           = useDisclosure<JournalRecord>()
   const viewDisc           = useDisclosure<JournalRecord>()
-  const viewAttachmentDisc = useDisclosure<{ fileUrl: string; fileName: string }>()
   const archiveDisc        = useDisclosure<JournalRecord>()
   const deleteDisc         = useDisclosure<JournalRecord>()
   const forwardDisc        = useDisclosure<JournalRecord>()
@@ -725,14 +724,9 @@ export default function DailyJournalsPage() {
         entry={viewDisc.payload ?? null}
         open={viewDisc.isOpen}
         onClose={viewDisc.close}
-        onViewAttachment={(fileUrl, fileName) => viewAttachmentDisc.open({ fileUrl, fileName })}
+        onViewAttachment={(fileUrl, _fileName) => window.open(fileUrl, '_blank')}
       />
-      <ViewJournalAttachmentModal
-        fileUrl={viewAttachmentDisc.payload?.fileUrl ?? ''}
-        fileName={viewAttachmentDisc.payload?.fileName ?? 'Attachment'}
-        open={viewAttachmentDisc.isOpen}
-        onClose={viewAttachmentDisc.close}
-      />
+      
 
       {/* Forward Modal */}
       {canForward && forwardPayload && user && (

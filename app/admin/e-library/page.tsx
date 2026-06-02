@@ -189,30 +189,20 @@ function ViewItemModal({
                 </button>
                 <a href={item.fileUrl} target="_blank" rel="noopener noreferrer"
                   className="text-xs px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md font-medium transition">
-                  {item.size === 'Link' ? '🔗 Open link' : '⬇ Download'}
+                    🔗 Open File
                 </a>
               </div>
             </div>
-            {isPDF ? (
-              <iframe src={item.fileUrl} title={item.title} className="w-full border-0" style={{ height: '500px' }} />
-            ) : isImage ? (
-              <img src={item.fileUrl} alt={item.title} className="w-full max-h-[500px] object-contain p-4" />
-            ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <span className="text-4xl mb-3">📗</span>
-                <p className="text-sm text-slate-500 mb-3">Preview not available for this file type.</p>
-                <a href={item.fileUrl} download
-                  className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-blue-700 transition">
-                  ⬇ Download to view
-                </a>
-              </div>
-            )}
+            <div className="flex flex-col items-center justify-center py-10 text-center bg-slate-50">
+            <span className="text-4xl mb-3">📄</span>
+            <p className="text-sm text-slate-500 mb-3">Click "Open file" to view in a new tab.</p>
+          </div>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-10 bg-slate-50 border border-slate-200 rounded-xl text-center">
-            <span className="text-3xl mb-2">📗</span>
-            <p className="text-sm text-slate-400">No file attached to this library item.</p>
-          </div>
+          <span className="text-3xl mb-2">📗</span>
+          <p className="text-sm text-slate-400">No file attached to this library item.</p>
+        </div>
         )}
 
         <div className="flex justify-end">

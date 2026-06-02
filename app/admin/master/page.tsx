@@ -492,7 +492,6 @@ export default function MasterPage() {
   const [attachmentsMap, setAttachmentsMap] = useState<Map<string, DocAttachment[]>>(new Map())
   const [selection,      setSelection]      = useState<DocEnriched | null>(null)
   const [uploadingId,    setUploadingId]    = useState<string | null>(null)
-  const [viewerFile,     setViewerFile]     = useState<{ url: string; name: string; sourceDocumentId?: string } | null>(null)
   const [activeApproval, setActiveApproval] = useState<DocumentApproval | null>(null)
   const [forwardModalOpen, setForwardModalOpen] = useState(false)
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null)
@@ -1055,7 +1054,7 @@ export default function MasterPage() {
                             <Printer size={13} /> Print
                           </button>
                           <button
-                            onClick={() => setViewerFile({ url: selection.fileUrl!, name: selection.title, sourceDocumentId: selection.id })}
+                            onClick={() => window.open(selection.fileUrl!, '_blank')}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
                             <Eye size={13} /> View
                           </button>
@@ -1239,7 +1238,7 @@ export default function MasterPage() {
                                     <td className="px-4 py-3">
                                       <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button
-                                          onClick={() => setViewerFile({ url: att.gdrive_url, name: label, sourceDocumentId: att.master_document_id })}
+                                          onClick={() => window.open(att.gdrive_url, '_blank')}
                                           className="inline-flex items-center justify-center px-1.5 py-1.5 text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
                                           title="View file">
                                           <Eye size={14} strokeWidth={2} />
@@ -1299,18 +1298,7 @@ export default function MasterPage() {
       <AddDocumentModal open={uploadModal.isOpen} onClose={uploadModal.close} onAdd={handleAdd} />
       <EditModal doc={selection} open={editModal.isOpen} onClose={editModal.close} onSave={handleSave} />
 
-      {viewerFile && (
-        <InlineFileViewerModal
-          fileUrl={viewerFile.url}
-          fileName={viewerFile.name}
-          open={!!viewerFile}
-          onDownload={(fileUrl, fileName) =>
-            handleDownloadFile(fileUrl, getSuggestedFileName(fileName, fileUrl), `viewer-${viewerFile.sourceDocumentId ?? fileName}`, viewerFile.sourceDocumentId)
-          }
-          onPrint={(fileUrl, fileName) => handlePrintFile(fileUrl, fileName, viewerFile.sourceDocumentId)}
-          onClose={() => setViewerFile(null)}
-        />
-      )}
+      
 
       {selection && (
         <ForwardDocumentModal

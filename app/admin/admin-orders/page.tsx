@@ -898,7 +898,6 @@ export default function AdminOrdersPage() {
   useRealtimeSpecialOrders({ setOrders, setAttachmentsMap, user })
 
   const [navStack,   setNavStack]   = useState<NavEntry[]>([])
-  const [viewerFile, setViewerFile] = useState<{ url: string; name: string } | null>(null)
 
   const deleteAttDisc  = useDisclosure<SOAttachment>()
   const newSOModal     = useModal()
@@ -1213,9 +1212,9 @@ export default function AdminOrdersPage() {
     resetDeps: [query, statusFilter],
   })
 
-  function handleViewFile(fileUrl: string, fileName: string) {
-    setViewerFile({ url: fileUrl, name: fileName })
-  }
+  function handleViewFile(fileUrl: string, _fileName: string) {
+  window.open(fileUrl, '_blank')
+}
 
   return (
     <>
@@ -1382,15 +1381,7 @@ export default function AdminOrdersPage() {
         />
       )}
 
-      {viewerFile && (
-        <InlineFileViewerModal
-          fileUrl={viewerFile.url}
-          fileName={viewerFile.name}
-          open={!!viewerFile}
-          onClose={() => setViewerFile(null)}
-        />
-      )}
-
+      
       <ConfirmDialog
         open={archiveDisc.isOpen}
         title="Archive Special Order"
