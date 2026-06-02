@@ -55,24 +55,55 @@ export async function GET(req: NextRequest) {
     // off a query result which made the Promise.all receive the inner
     // Promise instead of the resolved counts object.
     // ─────────────────────────────────────────────────────────────────────────
-    const STATUSES = ['pending', 'approved', 'disapproved', 'returned', 'returned_with_comments'] as const
+    // app/api/dpda-inbox/route.ts
+// Replace the statusCountsPromise block with this:
 
-    const statusCountsPromise = Promise.all(
-      STATUSES.map(async (s) => {
-        const { count, error } = await supabase
-          .from('forwarded_documents')
-          .select('*', { count: 'exact', head: true })
-          .in('recipient_role', ['DPDA', 'DPDO'])
-          .eq('dpda_status', s)
-        return { status: s, count: count ?? 0, error }
-      })
-    ).then((results) => {
-      const counts: Record<string, number> = {}
-      for (const r of results) {
-        counts[r.status] = r.count
-      }
-      return counts
-    })
+const STATUSES = ['pending', 'approved', 'disapproved', 'returned', 'returned_with_comments'] as const
+
+const statusCountsPromise = Promise.all(
+  STATUSES.map(async (s) => {
+    if (s === 'returned') {
+      // "Returned" = DPDA rows that were forwarded back
+      // These are rows where recipient_role was DPDA/DPDO AND dpda_status = 'returned'
+      const { count, error } = await supabase
+        .from('forwarded_documents')
+        .select('*', { count: 'exact', head: true })
+        .in('recipient_role', ['DPDA', 'DPDO'])
+        .eq('dpda_status', 'returned')
+      return { status: s, count: count ?? 0, error }
+    }
+
+    // For approved/disapproved/pending/returned_with_comments:
+    // Count BOTH rows still sitting with DPDA *AND* rows already forwarded back to sender
+    // The forward-back route copies dpda_status into the new P2 row, so we count those too.
+    const [dpdaRows, returnedRows] = await Promise.all([
+      // Still in DPDA's inbox
+      supabase
+        .from('forwarded_documents')
+        .select('*', { count: 'exact', head: true })
+        .in('recipient_role', ['DPDA', 'DPDO'])
+        .eq('dpda_status', s),
+      // Already forwarded back — sender_role is DPDA/DPDO, carrying the verdict
+      supabase
+        .from('forwarded_documents')
+        .select('*', { count: 'exact', head: true })
+        .in('sender_role', ['DPDA', 'DPDO'])  // DPDA is now the sender (forwarded back)
+        .eq('dpda_status', s),                 // verdict is preserved here
+    ])
+
+    return {
+      status: s,
+      count: (dpdaRows.count ?? 0) + (returnedRows.count ?? 0),
+      error: dpdaRows.error || returnedRows.error,
+    }
+  })
+).then((results) => {
+  const counts: Record<string, number> = {}
+  for (const r of results) {
+    counts[r.status] = r.count
+  }
+  return counts
+})
 
     // ── Main paginated query ─────────────────────────────────────────────────
     let query = supabase
