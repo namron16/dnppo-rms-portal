@@ -662,7 +662,7 @@ function EditProfileModal({ person, open, onClose, onSave }: {
   const cls = 'w-full px-3 py-2.5 border-[1.5px] border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition'
 
   return (
-    <Modal open={open} onClose={saving ? () => {} : onClose} title="Edit Profile" width="max-w-md">
+    <Modal open={open} onClose={saving ? () => {} : onClose} title="Edit Profile" width="max-w-md" height="h-[80vh]">
       <div className="p-6 space-y-4">
         <div className="flex flex-col items-center gap-2">
           <div onClick={() => !saving && fileInputRef.current?.click()}

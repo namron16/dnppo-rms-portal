@@ -12,10 +12,11 @@ interface ModalProps {
   title: string
   children: React.ReactNode
   width?: string   // Tailwind max-w class, e.g. 'max-w-2xl'
+  height?: string  // Tailwind max-h class, e.g. 'max-h-[80vh]'
   zIndex?: number
 }
 
-export function Modal({ open, onClose, title, children, width = 'max-w-2xl', zIndex = 1000 }: ModalProps) {
+export function Modal({ open, onClose, title, children, width = 'max-w-2xl', height = 'max-h-[90vh]', zIndex = 1000 }: ModalProps) {
   const [mounted, setMounted] = useState(open)
   const [closing, setClosing] = useState(false)
   const CLOSE_ANIMATION_MS = 180
@@ -69,7 +70,8 @@ export function Modal({ open, onClose, title, children, width = 'max-w-2xl', zIn
           className={cn(
             'bg-white rounded-2xl shadow-2xl w-[95vw] max-h-[90vh] overflow-auto',
             closing ? 'animate-modal-pop-out' : 'animate-modal-pop',
-            width
+            width, height
+            
           )}
           onClick={e => e.stopPropagation()}
         >
