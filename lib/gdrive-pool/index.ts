@@ -90,10 +90,21 @@ export {
   uploadFile,
   deleteFile,
   moveFileToArchiveFolder,
-  moveFileFromArchiveFolder,   // ← NEW: used by /api/gdrive/restore
+  moveFileFromArchiveFolder,
   buildDirectDownloadUrl,
   buildPreviewUrl,
 } from './gateway'
+
+// Personnel archive (server-side only)
+export {
+  archivePersonnelFilesToDrive,
+  archiveBatchPersonnelFiles,
+} from './archive-personnel'
+
+export type {
+  PersonnelArchiveInput,
+  PersonnelArchiveResult,
+} from './archive-personnel'
 
 // Health monitoring (server-side only)
 export {

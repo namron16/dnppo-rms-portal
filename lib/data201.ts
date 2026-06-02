@@ -1,7 +1,7 @@
 // lib/data201.ts
 // Personnel 201 file data helpers.
 // File uploads now route through /api/personnel/documents (Google Drive Pool).
-// All supabase.from() table operations are unchanged.
+// Archiving routes through /api/personnel/archive (Drive folder move).
 
 import { supabase } from '@/lib/supabase'
 import { logArchivePersonnel } from '@/lib/adminLogger'
@@ -28,9 +28,7 @@ export const CATEGORY_LABELS: Record<Doc201Category, string> = {
   IDENTIFICATION: 'Identification',
 }
 
-// At the top of data201.ts, add this tiny helper if not already present:
 function generateId(): string {
-  // Uses the same UUID v4 format as gen_random_uuid()
   return crypto.randomUUID()
 }
 
@@ -50,8 +48,6 @@ export async function createPersonnel201(
   const today = new Date().toISOString().split('T')[0]
   const now   = new Date().toISOString()
 
-  // Build row — only include optional columns when they have a real value.
-// Sending null for a column that doesn't exist yet causes a schema cache error.
   const row: Record<string, unknown> = {
     id:          generateId(),
     name:         input.name,
@@ -66,7 +62,6 @@ export async function createPersonnel201(
     created_at:   now,
   }
 
-  // Optional — only added when the caller provides them
   if (input.photoUrl         != null) row.photo_url          = input.photoUrl
   if (input.contactNo        != null) row.contact_no         = input.contactNo
   if (input.address          != null) row.address            = input.address
@@ -146,12 +141,7 @@ export async function updateDoc201Status(
   return true
 }
 
-// ── MIGRATED: Upload a 201 document file ───────────────────────────────────
-// Previously used supabase.storage.from('documents').upload(...)
-// Now routes through /api/personnel/documents which calls the Drive Pool gateway.
-//
-// Returns the Google Drive webViewLink (public HTTPS URL) on success, null on failure.
-// The returned URL is stored in personnel_201_docs.file_url — no schema change needed.
+// ── Upload a 201 document file ─────────────────────────────────────────────
 export async function uploadDoc201File(
   docId: string,
   file: File,
@@ -175,7 +165,6 @@ export async function uploadDoc201File(
       return null
     }
 
-    // API returns { data: { fileUrl, downloadUrl, gdriveFileId, poolAccountId, recordId, sizeBytes } }
     return json.data.fileUrl ?? null
   } catch (err) {
     console.error('uploadDoc201File exception:', err)
@@ -184,10 +173,27 @@ export async function uploadDoc201File(
 }
 
 // ── Auto-archive expired separated personnel records ───────────────────────
-// Called on page load to mark records as Archived if the 15-year retention
-// period has elapsed. Returns a Set of IDs that were newly archived.
+//
+// WHAT THIS DOES:
+//   1. Finds all "Separated from Service" records past the 15-year threshold
+//   2. Updates their DB status to 'Archived'
+//   3. Calls /api/personnel/archive to move their Drive files into:
+//        DDNPPO RMS → Personnel Files → {Name} - Archived
+//
+// The Drive move is fire-and-forget from the client side — it happens via
+// an API route so it doesn't block the page load. If it fails, the DB is
+// already marked Archived and the files stay in place (harmless — they're
+// just not in the archive folder yet). The route can be retried.
+//
+// Returns a Set of IDs that were newly archived (for the UI to filter them out).
 export async function archiveExpiredPersonnel201Records(
-  records: Array<{ id: string; status: string; date_of_separation?: string | null }>
+  records: Array<{
+    id: string
+    name?: string
+    rank?: string
+    status: string
+    date_of_separation?: string | null
+  }>
 ): Promise<Set<string>> {
   const ARCHIVE_AFTER_YEARS = 15
   const archivedIds = new Set<string>()
@@ -206,6 +212,7 @@ export async function archiveExpiredPersonnel201Records(
   const today = new Date().toISOString().split('T')[0]
   const ids   = expired.map(r => r.id)
 
+  // ── Step 1: Update DB status ───────────────────────────────────────────────
   const { error } = await supabase
     .from('personnel_201')
     .update({ status: 'Archived', last_updated: today })
@@ -217,16 +224,50 @@ export async function archiveExpiredPersonnel201Records(
   }
 
   ids.forEach(id => archivedIds.add(id))
-  // Write audit logs for newly archived personnel records (if name available)
+
+  // ── Step 2: Write audit logs ───────────────────────────────────────────────
   try {
     expired.forEach(rec => {
-      const name = (rec as any).name ?? rec.id
+      const name = rec.name ?? rec.id
       void logArchivePersonnel(name)
     })
   } catch (err) {
-    // logging should not break the archive flow
     console.warn('archiveExpiredPersonnel201Records: logging error', err)
   }
+
+  // ── Step 3: Trigger Drive file archiving (non-blocking) ────────────────────
+  // We fire this off without awaiting so it doesn't block the page load.
+  // The API route handles the actual Google Drive folder moves server-side.
+  try {
+    const payload = expired.map(r => ({
+      personnelId: r.id,
+      name:        r.name  ?? 'Unknown',
+      rank:        r.rank  ?? '',
+    }))
+
+    void fetch('/api/personnel/archive', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ records: payload }),
+    }).then(res => {
+      if (!res.ok) {
+        res.json().then(j =>
+          console.warn('[data201] archive API warning:', j.error ?? res.status)
+        ).catch(() => {})
+      } else {
+        res.json().then(j =>
+          console.log(`[data201] archive API: moved ${j.totalFilesMoved ?? 0} file(s)`)
+        ).catch(() => {})
+      }
+    }).catch(err => {
+      console.warn('[data201] archive API fetch error (non-fatal):', err.message)
+    })
+  } catch (err) {
+    // Logging only — Drive archive is best-effort from the client trigger.
+    // The server-side API route can always be called manually to retry.
+    console.warn('[data201] Could not trigger archive API (non-fatal):', err)
+  }
+
   return archivedIds
 }
 
@@ -313,7 +354,6 @@ export async function getPersonnel201ById(id: string): Promise<Personnel201 | nu
 
 // ── Delete a personnel 201 record ──────────────────────────────────────────
 export async function deletePersonnel201(id: string): Promise<boolean> {
-  // Delete associated docs first
   await supabase
     .from('personnel_201_docs')
     .delete()
