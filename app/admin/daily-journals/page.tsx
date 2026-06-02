@@ -35,6 +35,7 @@ import {
   addDailyJournal,
   archiveDailyJournal,
   deleteDailyJournal,
+  deleteDriveFile,
   getDailyJournals,
   updateDailyJournal,
   type DailyJournalRecord,
@@ -312,6 +313,7 @@ export default function DailyJournalsPage() {
   const [entries, setEntries]   = useState<JournalRecord[]>([])
   const [activeType, setActiveType] = useState<'ALL' | JournalEntry['type']>('ALL')
   const [isArchiving, setIsArchiving] = useState(false)
+  const [isDeleting,  setIsDeleting]  = useState(false) 
 
   useRealtimeDailyJournals(setEntries)
 
@@ -510,9 +512,15 @@ export default function DailyJournalsPage() {
 
   // ── Delete ─────────────────────────────────────────────────────────────────
   async function handleDelete() {
-    const item = deleteDisc.payload
-    if (!item) return
-    if (!canDelete) { toast.error('You do not have permission to delete journal entries.'); return }
+  const item = deleteDisc.payload
+  if (!item) return
+  if (!canDelete) { toast.error('You do not have permission to delete journal entries.'); return }
+  setIsDeleting(true)
+  try {
+    await deleteDriveFile(
+      (item as any).gdrive_file_id,
+      (item as any).pool_account_id
+    )
     await deleteDailyJournal(item.id)
     await logDeleteDocument(item.title, 'daily journal')
     setEntries(prev => prev.filter(e => e.id !== item.id))
@@ -520,7 +528,10 @@ export default function DailyJournalsPage() {
     if (editDisc.payload?.id  === item.id) editDisc.close()
     deleteDisc.close()
     toast.success(`"${item.title}" deleted permanently.`)
+  } finally {
+    setIsDeleting(false)
   }
+}
 
   // Build forward payload
   const forwardEntry = forwardDisc.payload
@@ -750,7 +761,9 @@ export default function DailyJournalsPage() {
         open={deleteDisc.isOpen}
         title="Delete Journal Entry"
         message={`Delete "${deleteDisc.payload?.title}" permanently? This cannot be undone.`}
-        confirmLabel="Delete" variant="danger"
+        confirmLabel="Delete"
+        variant="danger"
+        isLoading={isDeleting}        // ← add
         onConfirm={handleDelete}
         onCancel={deleteDisc.close}
       />

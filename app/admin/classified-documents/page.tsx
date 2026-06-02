@@ -21,6 +21,7 @@ import {
   getConfidentialDocs,
   updateConfidentialDoc,
   deleteConfidentialDoc,
+  deleteDriveFile,
 } from '@/lib/data'
 import { logEditDocument } from '@/lib/adminLogger'
 import { classificationBadgeClass } from '@/lib/utils'
@@ -372,6 +373,7 @@ export default function ClassifiedDocumentsPage() {
 
   const [docs, setDocs] = useState<ClassifiedDocRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [isDeleting,  setIsDeleting] = useState(false)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'private'>('all')
 
@@ -474,18 +476,32 @@ export default function ClassifiedDocumentsPage() {
   }
 
   async function handleDelete() {
-    if (!canDelete) {
-      toast.error('Only P2 can delete classified documents.')
-      return
-    }
+  if (!canDelete) {
+    toast.error('Only P2 can delete classified documents.')
+    return
+  }
+  const doc = deleteDisc.payload
+  if (!doc) return
+  setIsDeleting(true)
+  try {
+    const { data: row } = await supabase
+      .from('confidential_docs')
+      .select('gdrive_file_id, pool_account_id')
+      .eq('id', doc.id)
+      .maybeSingle()
 
-    const doc = deleteDisc.payload
-    if (!doc) return
+    await deleteDriveFile(
+      (row as any)?.gdrive_file_id,
+      (row as any)?.pool_account_id
+    )
 
     await deleteConfidentialDoc(doc.id)
     deleteDisc.close()
     toast.success(`"${doc.title}" deleted.`)
+  } finally {
+    setIsDeleting(false)
   }
+}
 
   async function handlePrint(doc: ClassifiedDocRecord) {
     if (!canPrint) {
@@ -683,6 +699,7 @@ export default function ClassifiedDocumentsPage() {
         message={`Delete "${deleteDisc.payload?.title ?? 'this document'}"? This action cannot be undone.`}
         confirmLabel="Delete"
         variant="danger"
+        isLoading={isDeleting}        // ← add
         onConfirm={handleDelete}
         onCancel={deleteDisc.close}
       />

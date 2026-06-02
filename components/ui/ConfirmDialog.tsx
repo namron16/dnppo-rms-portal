@@ -72,7 +72,8 @@ export function ConfirmDialog({
           'fixed inset-0 bg-slate-950/45 backdrop-blur-[2px] z-[1100]',
           closing ? 'animate-overlay-fade-out' : 'animate-overlay-fade',
         ].join(' ')}
-        onClick={onCancel}
+        // In ConfirmDialog.tsx, change the overlay onClick:
+        onClick={isLoading ? undefined : onCancel}
       />
 
       {/* Dialog */}

@@ -33,6 +33,7 @@ import {
   archiveSpecialOrder,
   addArchivedDoc,
   getArchivedDocs,
+  deleteDriveFile,
 } from '@/lib/data'
 import { supabase }             from '@/lib/supabase'
 import { statusBadgeClass }     from '@/lib/utils'
@@ -891,6 +892,8 @@ export default function AdminOrdersPage() {
   const [selectedOrder,  setSelectedOrder]  = useState<SOWithUrl | null>(null)
   const [uploadingId,    setUploadingId]    = useState<string | null>(null)
   const [isArchiving,    setIsArchiving]    = useState(false)
+  const [isDeleting,   setIsDeleting]   = useState(false)  // ← add this
+  const [isDeletingAtt, setIsDeletingAtt] = useState(false)
 
   useRealtimeSpecialOrders({ setOrders, setAttachmentsMap, user })
 
@@ -1100,16 +1103,25 @@ export default function AdminOrdersPage() {
     }
   }
 
-  async function handleDeleteOrder() {
-    const so = deleteDisc.payload
-    if (!so) return
-    await deleteSpecialOrder(so.id)
-    await logDeleteDocument(`${so.reference} - ${so.subject}`, 'special order')
-    setOrders(prev => prev.filter(o => o.id !== so.id))
-    if (selectedOrder?.id === so.id) { setSelectedOrder(null); setNavStack([]) }
-    toast.success(`"${so.reference}" deleted permanently.`)
-    deleteDisc.close()
-  }
+    async function handleDeleteOrder() {
+      const so = deleteDisc.payload
+      if (!so) return
+      setIsDeleting(true)
+      try {
+        await deleteDriveFile(
+          (so as any).gdrive_file_id,
+          (so as any).pool_account_id
+        )
+        await deleteSpecialOrder(so.id)
+        await logDeleteDocument(`${so.reference} - ${so.subject}`, 'special order')
+        setOrders(prev => prev.filter(o => o.id !== so.id))
+        if (selectedOrder?.id === so.id) { setSelectedOrder(null); setNavStack([]) }
+        toast.success(`"${so.reference}" deleted permanently.`)
+        deleteDisc.close()
+      } finally {
+        setIsDeleting(false)
+      }
+    }
 
   async function handleSaveOrder(updatedOrder: SOWithUrl) {
     await updateSpecialOrder(updatedOrder)
@@ -1126,8 +1138,11 @@ export default function AdminOrdersPage() {
   }
 
   async function handleDeleteAttachment() {
-    const att = deleteAttDisc.payload
-    if (!att) return
+  const att = deleteAttDisc.payload
+  if (!att) return
+  setIsDeletingAtt(true)
+  try {
+    await deleteDriveFile(att.gdrive_file_id, att.pool_account_id)
     const ok = await dbDeleteAttachment(att.id)
     if (!ok) { toast.error('Could not delete attachment.'); return }
     const mapKey = att.parent_id ?? att.special_order_id
@@ -1141,7 +1156,10 @@ export default function AdminOrdersPage() {
     if (currentEntry?.kind === 'attachment' && currentEntry.att.id === att.id) {
       setNavStack(prev => prev.slice(0, -1))
     }
+  } finally {
+    setIsDeletingAtt(false)
   }
+}
 
   async function handleRenameAttachment(att: SOAttachment, newTitle: string): Promise<boolean> {
     const trimmed = newTitle.trim()
@@ -1383,23 +1401,27 @@ export default function AdminOrdersPage() {
         onCancel={archiveDisc.close}
       />
 
-      <ConfirmDialog
-        open={deleteAttDisc.isOpen}
-        title="Delete Attachment"
-        message={`Delete "${deleteAttDisc.payload ? displayName(deleteAttDisc.payload) : ''}" permanently? This cannot be undone.`}
-        confirmLabel="Delete" variant="danger"
-        onConfirm={handleDeleteAttachment}
-        onCancel={deleteAttDisc.close}
-      />
+          <ConfirmDialog
+            open={deleteAttDisc.isOpen}
+            title="Delete Attachment"
+            message={`Delete "${deleteAttDisc.payload ? displayName(deleteAttDisc.payload) : ''}" permanently? This cannot be undone.`}
+            confirmLabel="Delete"
+            variant="danger"
+            isLoading={isDeletingAtt}     // ← add
+            onConfirm={handleDeleteAttachment}
+            onCancel={deleteAttDisc.close}
+          />
 
-      <ConfirmDialog
-        open={deleteDisc.isOpen}
-        title="Delete Special Order"
-        message={`Delete "${deleteDisc.payload?.reference}" permanently? This cannot be undone.`}
-        confirmLabel="Delete" variant="danger"
-        onConfirm={handleDeleteOrder}
-        onCancel={deleteDisc.close}
-      />
+          <ConfirmDialog
+            open={deleteDisc.isOpen}
+            title="Delete Special Order"
+            message={`Delete "${deleteDisc.payload?.reference}" permanently? This cannot be undone.`}
+            confirmLabel="Delete"
+            variant="danger"
+            isLoading={isDeleting}        // ← add
+            onConfirm={handleDeleteOrder}
+            onCancel={deleteDisc.close}
+          />
     </>
   )
 }

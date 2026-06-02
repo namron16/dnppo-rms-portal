@@ -24,26 +24,7 @@ import { useAuth } from '@/lib/auth'
 import type { AdminRole } from '@/lib/auth'
 import { addLibraryItem } from '@/lib/data'
 import { logAddLibraryItem } from '@/lib/adminLogger'
-import type { LibraryCategory } from '@/types'
-
-type LibraryItemWithUrl = {
-  id:              string
-  title:           string
-  category:        LibraryCategory
-  size:            string
-  dateAdded:       string
-  fileUrl?:        string
-  description?:    string
-  created_at?:     string
-  uploaded_by?:    string
-  // FIX: Drive pool fields
-  gdrive_file_id?:  string
-  gdrive_url?:      string
-  pool_account_id?: string
-  file_name?:       string
-  file_size_bytes?: number
-  mime_type?:       string
-}
+import type { LibraryCategory, LibraryItemWithUrl } from '@/types'
 
 interface Props {
   open: boolean
@@ -149,6 +130,7 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
         description: form.description.trim() || undefined,
         created_at:  now,
         uploaded_by: user.role,
+        archived:    false,
         // FIX: Drive pool fields
         gdrive_file_id:  uploadResult.gdriveFileId,
         gdrive_url:      uploadResult.fileUrl,

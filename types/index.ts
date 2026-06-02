@@ -74,6 +74,19 @@ export interface LibraryItem {
   created_at?: string
 }
 
+export interface LibraryItemWithUrl extends LibraryItem {
+  fileUrl?: string
+  description?: string
+  uploaded_by?: string
+  gdrive_file_id?: string
+  gdrive_url?: string
+  pool_account_id?: string
+  file_name?: string
+  file_size_bytes?: number
+  mime_type?: string
+  archived: boolean
+}
+
 export interface ActivityLog {
   id: string
   user: string

@@ -35,6 +35,7 @@ import {
   addArchivedDoc,
   archiveLibraryItem,
   getArchivedDocs,
+  deleteDriveFile,
 } from '@/lib/data'
 import { libraryBadgeClass }     from '@/lib/utils'
 import { useAuth }               from '@/lib/auth'
@@ -43,22 +44,12 @@ import {
   canUploadDocuments, canEditDocuments, canDeleteDocuments, canArchiveDocuments,
 } from '@/lib/permissions'
 import { isDocumentUnrestricted } from '@/lib/rbac'
-import type { LibraryItem, LibraryCategory } from '@/types'
+import type { LibraryItem, LibraryCategory, LibraryItemWithUrl } from '@/types'
 
 // ── Privileged roles that see ALL items regardless of uploader ────────────────
 const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
 function canSeeAllDocuments(role: string): boolean {
   return PRIVILEGED_ROLES.includes(role)
-}
-
-type LibraryItemWithUrl = LibraryItem & {
-  fileUrl?:         string
-  description?:     string
-  uploaded_by?:     string
-  gdrive_file_id?:  string
-  pool_account_id?: string
-  mime_type?:       string
-  file_size_bytes?: number
 }
 
 // ── Action Menu ───────────────────────────────────────────────────────────────
@@ -368,6 +359,7 @@ export default function LibraryPage() {
   const [loading, setLoading] = useState(true)
   const [catFilter, setCat]   = useState<LibraryCategory | 'ALL'>('ALL')
   const [isArchiving, setIsArchiving] = useState(false)
+  const [isDeleting,  setIsDeleting]  = useState(false)
 
   useRealtimeLibraryItems(setItems as any)
 
@@ -484,9 +476,12 @@ export default function LibraryPage() {
   }
 
   async function handleDelete() {
-    const item = deleteDisc.payload
-    if (!item) return
-    if (!canDelete) { toast.error('You do not have permission to delete e-Library items.'); return }
+  const item = deleteDisc.payload
+  if (!item) return
+  if (!canDelete) { toast.error('You do not have permission to delete e-Library items.'); return }
+  setIsDeleting(true)
+  try {
+    await deleteDriveFile(item.gdrive_file_id, item.pool_account_id)
     await deleteLibraryItem(item.id)
     await logDeleteDocument(item.title, 'library item')
     setItems(prev => prev.filter(i => i.id !== item.id))
@@ -494,7 +489,10 @@ export default function LibraryPage() {
     if (editDisc.payload?.id === item.id) editDisc.close()
     toast.success(`"${item.title}" deleted permanently.`)
     deleteDisc.close()
+  } finally {
+    setIsDeleting(false)
   }
+}
 
   const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, sourceDocumentId?: string) => {
     try {
@@ -705,7 +703,9 @@ export default function LibraryPage() {
           open={deleteDisc.isOpen}
           title="Delete Library Item"
           message={`Permanently delete "${deleteDisc.payload?.title}"? This action cannot be undone.`}
-          confirmLabel="Delete" variant="danger"
+          confirmLabel="Delete"
+          variant="danger"
+          isLoading={isDeleting}        // ← add
           onConfirm={handleDelete}
           onCancel={deleteDisc.close}
         />

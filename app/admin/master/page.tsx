@@ -39,6 +39,7 @@ import { FileText, Paperclip, Eye, Download, FolderOpen, Pencil, Trash2, Printer
 import {
   getMasterDocuments, addMasterDocument, updateMasterDocument,
   archiveMasterDocument, deleteMasterDocument, addArchivedDoc, getArchivedDocs,
+  deleteDriveFile,
 } from '@/lib/data'
 import {
   getApproval,
@@ -500,6 +501,7 @@ export default function MasterPage() {
   const [editingAttachmentName, setEditingAttachmentName] = useState('')
   const [renamingAttachmentId,  setRenamingAttachmentId]  = useState<string | null>(null)
   const [isArchiving,           setIsArchiving]           = useState(false)
+  const [isDeleting,            setIsDeleting]            = useState(false)
 
   const deleteAttDisc  = useDisclosure<DocAttachment>()
   const uploadModal    = useModal()
@@ -669,16 +671,25 @@ export default function MasterPage() {
     }
   }
 
-  async function handleDeleteDoc() {
-    if (!selection) return
-    const doc = selection
-    await deleteMasterDocument(doc.id)
-    await logDeleteDocument(doc.title, 'master document')
-    setDocuments(prev => prev.filter(d => d.id !== doc.id))
-    setSelection(null)
-    toast.success('Document deleted permanently.')
-    deleteDisc.close()
-  }
+    async function handleDeleteDoc() {
+      if (!selection) return
+      const doc = selection
+      setIsDeleting(true)
+      try {
+        await deleteDriveFile(
+          (doc as any).gdrive_file_id,
+          (doc as any).pool_account_id
+        )
+        await deleteMasterDocument(doc.id)
+        await logDeleteDocument(doc.title, 'master document')
+        setDocuments(prev => prev.filter(d => d.id !== doc.id))
+        setSelection(null)
+        toast.success('Document deleted permanently.')
+        deleteDisc.close()
+      } finally {
+        setIsDeleting(false)
+      }
+    }
 
   // FIX: Attachment upload now routes through the Drive pool gateway.
   // Previously used supabase.storage.from('documents').upload() which stored
@@ -746,8 +757,11 @@ export default function MasterPage() {
   }
 
   async function handleDeleteAttachment() {
-    const att = deleteAttDisc.payload
-    if (!att) return
+  const att = deleteAttDisc.payload
+  if (!att) return
+  setIsDeleting(true)
+  try {
+    await deleteDriveFile(att.gdrive_file_id, att.pool_account_id)
     const ok = await dbDeleteAttachment(att.id)
     if (!ok) { toast.error('Could not delete attachment.'); return }
     const mapKey = att.parent_id ?? att.master_document_id
@@ -762,7 +776,10 @@ export default function MasterPage() {
     })
     toast.success(`"${displayName(att)}" deleted.`)
     deleteAttDisc.close()
+  } finally {
+    setIsDeleting(false)
   }
+}
 
   async function handleRenameAttachment(att: DocAttachment, newTitle: string): Promise<boolean> {
     const trimmed = newTitle.trim()
@@ -1344,23 +1361,28 @@ export default function MasterPage() {
         onCancel={archiveDisc.close}
       />
 
-      <ConfirmDialog
-        open={deleteAttDisc.isOpen}
-        title="Delete Attachment"
-        message={`Delete "${deleteAttDisc.payload ? displayName(deleteAttDisc.payload) : ''}" permanently? This cannot be undone.`}
-        confirmLabel="Delete" variant="danger"
-        onConfirm={handleDeleteAttachment}
-        onCancel={deleteAttDisc.close}
-      />
+      // Update both ConfirmDialogs at the bottom
+        <ConfirmDialog
+          open={deleteAttDisc.isOpen}
+          title="Delete Attachment"
+          message={`Delete "${deleteAttDisc.payload ? displayName(deleteAttDisc.payload) : ''}" permanently? This cannot be undone.`}
+          confirmLabel="Delete"
+          variant="danger"
+          isLoading={isDeleting}        // ← add
+          onConfirm={handleDeleteAttachment}
+          onCancel={deleteAttDisc.close}
+        />
 
-      <ConfirmDialog
-        open={deleteDisc.isOpen}
-        title="Delete Document"
-        message={`Delete "${deleteDisc.payload}" permanently? This cannot be undone.`}
-        confirmLabel="Delete" variant="danger"
-        onConfirm={handleDeleteDoc}
-        onCancel={deleteDisc.close}
-      />
+        <ConfirmDialog
+          open={deleteDisc.isOpen}
+          title="Delete Document"
+          message={`Delete "${deleteDisc.payload}" permanently? This cannot be undone.`}
+          confirmLabel="Delete"
+          variant="danger"
+          isLoading={isDeleting}        // ← add
+          onConfirm={handleDeleteDoc}
+          onCancel={deleteDisc.close}
+        />
     </>
   )
 }

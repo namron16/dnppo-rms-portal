@@ -886,6 +886,35 @@ export async function restoreArchivedDoc(id: string): Promise<void> {
   if (error) console.warn('Supabase unavailable (delete archived_doc on restore):', error.message)
 }
 
+
+/**
+ * Deletes a file from Google Drive via the pool gateway.
+ * Non-throwing — a Drive failure never blocks Supabase metadata cleanup.
+ * Safe to call when gdrive_file_id or pool_account_id may be undefined
+ * (pre-migration documents simply skip the Drive call).
+ */
+export async function deleteDriveFile(
+  gdriveFileId: string | undefined | null,
+  poolAccountId: string | undefined | null
+): Promise<void> {
+  if (!gdriveFileId || !poolAccountId) return
+
+  try {
+    const res = await fetch('/api/gdrive/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gdriveFileId, poolAccountId }),
+    })
+
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      console.warn('[deleteDriveFile] API returned error:', json.error ?? res.status)
+    }
+  } catch (err: any) {
+    console.warn('[deleteDriveFile] Non-fatal network error:', err.message)
+  }
+}
+
 /* ════════════════════════════════════════════
    ORG CHART — placeholder
 ════════════════════════════════════════════ */
