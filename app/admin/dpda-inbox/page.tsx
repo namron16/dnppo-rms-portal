@@ -16,6 +16,9 @@
 //  7. totalCount now always reflects the UNFILTERED total (a separate state
 //     variable) so the "Total Documents" card is always accurate regardless of
 //     which status filter is active.
+//  8. FIX PAGINATION: Pagination is now always shown when there are documents,
+//     even on page 1. Previously hidden when totalPages <= 1, which caused it
+//     to disappear when all results fit on one page.
 
 'use client'
 
@@ -86,18 +89,14 @@ export default function DPDAInboxPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
 
   // ── FIX 5: Dedicated status-counts fetcher ────────────────────────────────
-  // Fetches only the summary card counts — does NOT reload the document table.
-  // Called by both the initial load and the realtime subscription.
   const fetchStatusCounts = useCallback(async () => {
     try {
-      // Fetch unfiltered total + all status counts in one API call
       const res = await fetch(`/api/dpda-inbox?limit=1&offset=0&status=all`)
       if (!res.ok) return
       const data = await res.json()
       if (data.statusCounts) {
         setStatusCounts(data.statusCounts)
       }
-      // Unfiltered total = sum of all status counts
       if (data.statusCounts) {
         const counts = data.statusCounts as StatusCounts
         const total =
@@ -109,7 +108,7 @@ export default function DPDAInboxPage() {
         setUnfilteredTotal(total)
       }
     } catch {
-      // Non-fatal — counts just won't update
+      // Non-fatal
     }
   }, [])
 
@@ -140,7 +139,6 @@ export default function DPDAInboxPage() {
 
       if (data.statusCounts) {
         setStatusCounts(data.statusCounts)
-        // Also sync unfiltered total from status counts sum
         const counts = data.statusCounts as StatusCounts
         const total =
           (counts.pending ?? 0) +
@@ -170,22 +168,9 @@ export default function DPDAInboxPage() {
     fetchDocuments()
   }, [fetchDocuments])
 
-  // ── FIX 6: Two separate realtime subscriptions ────────────────────────────
-  //
-  // Channel 1 — 'dpda_inbox_realtime':
-  //   Watches only the logged-in user's recipient_role. When a new document
-  //   arrives for THEM, reload the full document table.
-  //
-  // Channel 2 — 'dpda_status_counts_realtime':
-  //   Watches ALL changes to forwarded_documents for DPDA OR DPDO recipients.
-  //   When any dpda_status changes (e.g. after approve/disapprove/forward-back),
-  //   refresh ONLY the summary counts — not the whole table.
-  //   This is what fixes the "Approved/Rejected cards stuck at 0" bug.
-  //
   useEffect(() => {
     if (!user?.role) return
 
-    // Channel 1: new inbox items for this specific user
     const inboxChannel = supabase
       .channel('dpda_inbox_realtime')
       .on('postgres_changes', {
@@ -199,9 +184,6 @@ export default function DPDAInboxPage() {
       })
       .subscribe()
 
-    // Channel 2: any dpda_status update on DPDA/DPDO rows
-    // We can't filter by two values with a single eq filter, so we subscribe
-    // to all changes and let the server-side count query handle the scoping.
     const countsChannel = supabase
       .channel('dpda_status_counts_realtime')
       .on('postgres_changes', {
@@ -209,15 +191,12 @@ export default function DPDAInboxPage() {
         schema: 'public',
         table: 'forwarded_documents',
       }, (payload) => {
-        // Only react if the changed row belongs to DPDA/DPDO
         const newRow = payload.new as { recipient_role?: string; dpda_status?: string }
         if (
           newRow?.recipient_role === 'DPDA' ||
           newRow?.recipient_role === 'DPDO'
         ) {
           fetchStatusCounts()
-          // Also refresh the table if we're currently viewing a filtered status
-          // so the row moves in/out of the filtered list correctly
           fetchDocuments()
         }
       })
@@ -266,7 +245,7 @@ export default function DPDAInboxPage() {
     setCurrentPage(1)
   }
 
-  const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE)
+  const totalPages = Math.max(1, Math.ceil(totalCount / ITEMS_PER_PAGE))
 
   const handleViewDocument = (doc: ForwardedDocument) => {
     setSelectedDocument(doc)
@@ -305,7 +284,6 @@ export default function DPDAInboxPage() {
             {[
               {
                 label: 'Total Documents',
-                // FIX 7: Always show unfiltered total, not the filtered page count
                 value: unfilteredTotal,
                 badge: 'ALL RECORDS',
                 textColor: 'text-slate-700',
@@ -526,72 +504,96 @@ export default function DPDAInboxPage() {
               </div>
             </div>
 
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="mt-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 border-t border-slate-200">
-                <p className="text-sm text-slate-600 font-medium">
-                  Showing <span className="font-semibold text-slate-900">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span> to{' '}
-                  <span className="font-semibold text-slate-900">{Math.min(currentPage * ITEMS_PER_PAGE, totalCount)}</span> of{' '}
-                  <span className="font-semibold text-slate-900">{totalCount}</span> documents
-                </p>
-                <div className="flex items-center gap-2 justify-start sm:justify-end">
-                  <button
-                    onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-                    disabled={currentPage === 1}
-                    className="inline-flex items-center gap-1 px-3 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                    <span className="hidden sm:inline">Previous</span>
-                  </button>
+            {/* ── FIX 8: PAGINATION ──────────────────────────────────────────────────
+                Previously used `totalPages > 1` which hid the bar when all results
+                fit on one page. Now always shown when there are documents, so users
+                can always see "Showing X to Y of Z" and know where they are.
+            ──────────────────────────────────────────────────────────────────────── */}
+            <div className="mt-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 border-t border-slate-200">
+              <p className="text-sm text-slate-600 font-medium">
+                Showing{' '}
+                <span className="font-semibold text-slate-900">
+                  {totalCount === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1}
+                </span>{' '}
+                to{' '}
+                <span className="font-semibold text-slate-900">
+                  {Math.min(currentPage * ITEMS_PER_PAGE, totalCount)}
+                </span>{' '}
+                of{' '}
+                <span className="font-semibold text-slate-900">{totalCount}</span> documents
+              </p>
 
-                  {/* Page Numbers */}
-                  <div className="hidden sm:flex gap-1">
-                    {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
-                      const page = i + 1
-                      if (totalPages <= 5) return page
-                      if (page === 1 || page === totalPages) return page
-                      if (Math.abs(page - currentPage) <= 1) return page
-                      return null
-                    }).map((page, idx, arr) => {
+              <div className="flex items-center gap-2 justify-start sm:justify-end">
+                {/* Previous */}
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="inline-flex items-center gap-1 px-3 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span className="hidden sm:inline">Previous</span>
+                </button>
+
+                {/* Page Numbers */}
+                <div className="hidden sm:flex gap-1">
+                  {(() => {
+                    // Build a list of page numbers to display (with ellipsis gaps)
+                    const pages: (number | null)[] = []
+                    if (totalPages <= 7) {
+                      // Show all pages
+                      for (let i = 1; i <= totalPages; i++) pages.push(i)
+                    } else {
+                      // Always show first, last, and a window around currentPage
+                      pages.push(1)
+                      if (currentPage > 3) pages.push(null) // left ellipsis
+                      for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
+                        pages.push(i)
+                      }
+                      if (currentPage < totalPages - 2) pages.push(null) // right ellipsis
+                      pages.push(totalPages)
+                    }
+
+                    return pages.map((page, idx) => {
                       if (page === null) {
-                        const nextPage = arr[idx + 1] as number | null
-                        const prevPage = arr[idx - 1] as number | null
-                        if (nextPage && prevPage && nextPage - prevPage > 1) {
-                          return (
-                            <span key={`ellipsis-${idx}`} className="px-2 py-2 text-slate-500">
-                              ...
-                            </span>
-                          )
-                        }
-                        return null
+                        return (
+                          <span key={`ellipsis-${idx}`} className="px-2 py-2 text-slate-500 select-none">
+                            …
+                          </span>
+                        )
                       }
                       return (
                         <button
                           key={page}
                           onClick={() => setCurrentPage(page)}
-                          className={`px-3 py-2 rounded-lg font-medium transition-colors ${
+                          className={`px-3 py-2 rounded-lg font-medium transition-colors text-sm ${
                             page === currentPage
-                              ? 'bg-blue-600 text-white'
+                              ? 'bg-blue-600 text-white shadow-sm'
                               : 'border border-slate-300 text-slate-700 hover:bg-slate-50'
                           }`}
                         >
                           {page}
                         </button>
                       )
-                    })}
-                  </div>
-
-                  <button
-                    onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-                    disabled={currentPage === totalPages}
-                    className="inline-flex items-center gap-1 px-3 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm"
-                  >
-                    <span className="hidden sm:inline">Next</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
+                    })
+                  })()}
                 </div>
+
+                {/* Mobile: current / total */}
+                <span className="sm:hidden text-sm font-medium text-slate-600 px-2">
+                  {currentPage} / {totalPages}
+                </span>
+
+                {/* Next */}
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                  className="inline-flex items-center gap-1 px-3 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm"
+                >
+                  <span className="hidden sm:inline">Next</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
               </div>
-            )}
+            </div>
           </>
         )}
 

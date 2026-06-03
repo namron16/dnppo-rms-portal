@@ -10,9 +10,13 @@
 //     so users cannot double-submit.
 //  3. DPDA comments are now displayed when a returned document is expanded,
 //     so P2 can read the feedback that was left before the file was sent back.
+//  4. FIX PAGINATION: Pagination is now always shown when there are documents,
+//     even when they all fit on one page. Previously `documents.length > pageSize`
+//     hid the bar entirely when the list was short — now users always see the
+//     "Showing X to Y of Z" count and can navigate freely.
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { Pagination }  from '@/components/ui/Pagination'
+import { Pagination } from '@/components/ui/Pagination'
 import { usePagination } from '@/hooks'
 import { buildAttachmentTree } from '@/lib/forwarding'
 import {
@@ -50,8 +54,6 @@ type ForwardedDocument = {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Safely parse dpda_comments regardless of whether Supabase returned it as a
-// parsed array or a raw JSON string. Returns an empty array on any failure.
 function parseComments(raw: any): Array<{ text: string; author: string; timestamp: string; action: string; reason?: string }> {
   if (!raw) return []
   if (Array.isArray(raw)) return raw
@@ -117,7 +119,7 @@ function fmtSize(bytes?: number): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// View button — opens GDrive file in a new tab
+// View button
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ViewButton({ url }: { url: string }) {
@@ -140,7 +142,7 @@ function ViewButton({ url }: { url: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Error banner — shown inline under a row when a save fails
+// Error banner
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SaveErrorBanner({
@@ -169,8 +171,7 @@ function SaveErrorBanner({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FIX 3: DPDA Comments accordion section
-// Shown inside the expanded row when the document was returned with comments.
+// DPDA Comments section
 // ─────────────────────────────────────────────────────────────────────────────
 
 function DpdaComments({ raw }: { raw: any }) {
@@ -198,13 +199,13 @@ function DpdaComments({ raw }: { raw: any }) {
             </div>
             <p className="text-xs text-slate-700">{c.text}</p>
             {c.reason && (
-                <div className="mt-1.5 flex items-start gap-1.5 px-2 py-1.5 bg-red-50 border border-red-100 rounded-md">
-                  <span className="text-[10px] font-bold text-red-600 uppercase tracking-wide shrink-0">
-                    Reason:
-                  </span>
-                  <span className="text-xs text-red-700">{c.reason}</span>
-                </div>
-              )}
+              <div className="mt-1.5 flex items-start gap-1.5 px-2 py-1.5 bg-red-50 border border-red-100 rounded-md">
+                <span className="text-[10px] font-bold text-red-600 uppercase tracking-wide shrink-0">
+                  Reason:
+                </span>
+                <span className="text-xs text-red-700">{c.reason}</span>
+              </div>
+            )}
             {c.action && c.action !== 'comment' && (
               <span className={`inline-block mt-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
                 c.action === 'approved'    ? 'bg-green-100 text-green-700' :
@@ -256,11 +257,9 @@ function DocRow({
   const isSaving     = saving === doc.id
   const isDismissing = dismissing === doc.id
 
-  // FIX 3: check if this document has comments to show in expanded panel
   const comments     = parseComments(doc.dpda_comments)
   const hasComments  = comments.length > 0
 
-  // Whether there's anything to show in the accordion (attachments or comments)
   const hasExpandable = (doc.forwarded_attachments?.length ?? 0) > 0 || hasComments
 
   const date = new Date(doc.received_at).toLocaleDateString('en-PH', {
@@ -287,7 +286,6 @@ function DocRow({
             <p className="text-xs text-slate-400 uppercase tracking-wide">
               {ext}{size ? ` • ${size}` : ''}
             </p>
-            {/* FIX 3: badge to flag returned files that carry comments */}
             {hasComments && doc.dpda_status === 'returned_with_comments' && (
               <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-200">
                 <MessageCircle className="w-2.5 h-2.5" />
@@ -321,7 +319,6 @@ function DocRow({
         {/* Actions */}
         <div className="flex items-center gap-2 flex-shrink-0">
 
-          {/* Accordion toggle — shown when there are attachments or comments */}
           {hasExpandable && (
             <button
               onClick={() => onToggleExpand(doc.id)}
@@ -334,10 +331,8 @@ function DocRow({
             </button>
           )}
 
-          {/* View — always visible */}
           <ViewButton url={doc.gdrive_url} />
 
-          {/* Save (pending only) */}
           {activeTab === 'pending' && (
             <button
               onClick={() => onSave(doc)}
@@ -359,7 +354,6 @@ function DocRow({
             </button>
           )}
 
-          {/* Saved badge (saved tab) */}
           {activeTab === 'saved' && (
             <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
               <CheckCircle className="w-3.5 h-3.5" />
@@ -367,7 +361,6 @@ function DocRow({
             </span>
           )}
 
-          {/* Dismiss (pending only) */}
           {activeTab === 'pending' && (
             <button
               onClick={() => onDismiss(doc)}
@@ -399,10 +392,8 @@ function DocRow({
       {/* ── Expanded accordion ───────────────────────────────── */}
       {isExpanded && (
         <>
-          {/* FIX 3: DPDA comments shown first so they are immediately visible */}
           {hasComments && <DpdaComments raw={doc.dpda_comments} />}
 
-          {/* Attachments (unchanged) */}
           {tree.length > 0 && (
             <div className="border-t bg-slate-50 px-4 py-2.5">
               <p className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">
@@ -433,10 +424,7 @@ function AttachmentTree({ nodes, depth }: { nodes: any[]; depth: number }) {
               href={node.gdrive_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="
-                flex items-center gap-1 text-xs text-blue-600
-                hover:underline flex-shrink-0
-              "
+              className="flex items-center gap-1 text-xs text-blue-600 hover:underline flex-shrink-0"
             >
               <ExternalLink className="w-3 h-3" />
               View
@@ -462,10 +450,9 @@ export default function ForwardedInboxPage() {
   const [saving, setSaving]         = useState<string | null>(null)
   const [dismissing, setDismissing] = useState<string | null>(null)
   const [expanded, setExpanded]     = useState<string | null>(null)
-  const [userRole, setUserRole] = useState<string | null>(null)
+  const [userRole, setUserRole]     = useState<string | null>(null)
 
-  // Per-row save error state (id + human-readable message)
-  const [saveError, setSaveError]   = useState<{ id: string; message: string } | null>(null)
+  const [saveError, setSaveError] = useState<{ id: string; message: string } | null>(null)
 
   const fetchInbox = useCallback(async () => {
     setLoading(true)
@@ -480,30 +467,28 @@ export default function ForwardedInboxPage() {
 
   useEffect(() => { fetchInbox() }, [fetchInbox])
 
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) {
+        supabase.from('profiles').select('role').eq('id', data.user.id).single()
+          .then(({ data: p }) => { if (p) setUserRole(p.role) })
+      }
+    })
+  }, [])
 
-  
-
-      useEffect(() => {
-        supabase.auth.getUser().then(({ data }) => {
-          if (data.user) {
-            supabase.from('profiles').select('role').eq('id', data.user.id).single()
-              .then(({ data: p }) => { if (p) setUserRole(p.role) })
-          }
-        })
-      }, [])
-        useEffect(() => {
-        if (!userRole) return
-        const channel = supabase
-          .channel('forwarded_inbox_realtime')
-          .on('postgres_changes', {
-            event: '*',
-            schema: 'public',
-            table: 'forwarded_documents',
-            filter: `recipient_role=eq.${userRole}`,
-          }, () => fetchInbox())
-          .subscribe()
-        return () => { supabase.removeChannel(channel) }
-      }, [userRole, fetchInbox])
+  useEffect(() => {
+    if (!userRole) return
+    const channel = supabase
+      .channel('forwarded_inbox_realtime')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'forwarded_documents',
+        filter: `recipient_role=eq.${userRole}`,
+      }, () => fetchInbox())
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [userRole, fetchInbox])
 
   const handleSave = async (doc: ForwardedDocument) => {
     setSaving(doc.id)
@@ -523,8 +508,8 @@ export default function ForwardedInboxPage() {
           })
         }
       } else {
-        const code    = json.code as string | undefined
-        const rawMsg  = json.error as string | undefined
+        const code   = json.code as string | undefined
+        const rawMsg = json.error as string | undefined
 
         let userMessage: string
 
@@ -581,6 +566,10 @@ export default function ForwardedInboxPage() {
     defaultPageSize: 15,
     resetDeps: [activeTab],
   })
+
+  // How many items are on the current page
+  const startItem = documents.length === 0 ? 0 : (currentPage - 1) * pageSize + 1
+  const endItem   = Math.min(currentPage * pageSize, documents.length)
 
   return (
     <div className="space-y-4 px-6 py-6">
@@ -657,17 +646,27 @@ export default function ForwardedInboxPage() {
             </div>
           )}
 
-          {/* Pagination */}
-          {!loading && documents.length > pageSize && (
-            <Pagination
-              currentPage={currentPage}
-              totalPages={totalPages}
-              totalItems={documents.length}
-              pageSize={pageSize}
-              onPageChange={setCurrentPage}
-              onPageSizeChange={setPageSize}
-              pageSizeOptions={[10, 15, 25, 50]}
-            />
+          {/* ── FIX 4: PAGINATION ────────────────────────────────────────────────
+              Old condition: documents.length > pageSize
+              Problem: hides pagination entirely when all results fit on one page,
+              so users had no idea how many items they were looking at.
+
+              New behavior: always show when there are documents, so the
+              "Showing X to Y of Z" count is always visible and navigation
+              buttons appear (greyed out) even on a single page.
+          ─────────────────────────────────────────────────────────────────────── */}
+          {!loading && documents.length > 0 && (
+            <div className="pt-2">
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                totalItems={documents.length}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+                pageSizeOptions={[10, 15, 25, 50]}
+              />
+            </div>
           )}
         </div>
       )}
