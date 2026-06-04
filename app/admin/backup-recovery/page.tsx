@@ -1,19 +1,29 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
 import {
   Shield, Database, Clock, CheckCircle2, XCircle,
   AlertTriangle, RefreshCw, Play, RotateCcw, Bell,
   HardDrive, Zap, Calendar, ChevronRight, Download,
-  Settings, Archive, FileText, Activity,
+  Settings, Archive, FileText, Activity, FolderOpen,
 } from 'lucide-react'
 
-import { TriggerBackupModal } from '@/components/modals/TriggerBackupModal'
-import { RecoverModal }       from '@/components/modals/RecoverModal'
-import { ScheduleModal }      from '@/components/modals/ScheduleModal'
+import { TriggerBackupModal }    from '@/components/modals/TriggerBackupModal'
+import { RecoverModal }          from '@/components/modals/RecoverModal'
+import { ScheduleModal }         from '@/components/modals/ScheduleModal'
 import { NotificationsModal, JobDetailModal } from '@/components/modals/NotificationsModal'
+import { LocalStorageSetupModal } from '@/components/modals/LocalStorageSetupModal'
+
+import {
+  getLocalBackupConfig,
+  processPendingLocalSaves,
+  saveBackupFromUrl,
+  markJobLocalSaved,
+  type LocalStorageConfig,
+  type SaveResult,
+} from '@/lib/backup/local-storage'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -38,12 +48,9 @@ interface BackupJob {
   completed_at:     string | null
   total_size_bytes: number | null
   error_message:    string | null
-  // FIX: added download_url — engine.ts now stores this after every successful backup
   download_url:     string | null
 }
 
-// FIX: extended to match the full ScheduleModal.ModuleStatus interface so the
-// pre-fill useEffect in ScheduleModal can restore all saved config fields.
 interface ModuleStatus {
   module_name:         string
   is_enabled:          boolean
@@ -62,6 +69,16 @@ interface HealthData {
   recentJobs:          BackupJob[]
   moduleStatus:        ModuleStatus[]
   unreadNotifications: number
+}
+
+// local-save toast entry
+interface LocalSaveToast {
+  id:          string
+  module_name: string
+  fileName:    string
+  success:     boolean
+  fallback?:   boolean
+  error?:      string
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -112,7 +129,6 @@ function formatRelative(iso: string | null): string {
   return `${days}d ago`
 }
 
-// FIX: helper to summarise configured backup hours across all enabled modules
 function summariseCronSchedule(moduleStatus: ModuleStatus[]): string {
   const enabled = moduleStatus.filter(m => m.is_enabled)
   if (enabled.length === 0) return 'No modules active'
@@ -120,7 +136,6 @@ function summariseCronSchedule(moduleStatus: ModuleStatus[]): string {
   const hours = [...new Set(enabled.map(m => m.backup_hour ?? 2))].sort((a, b) => a - b)
 
   const fmt = (h: number) => {
-    const period  = h >= 12 ? 'PM' : 'AM'
     const display = h % 12 === 0 ? 12 : h % 12
     return `${display}:00 ${h >= 12 ? 'PM' : 'AM'}`
   }
@@ -165,13 +180,24 @@ export default function BackupRecoveryPage() {
   const [recoverOpen,              setRecoverOpen]              = useState(false)
   const [scheduleOpen,             setScheduleOpen]             = useState(false)
   const [notifOpen,                setNotifOpen]                = useState(false)
+  const [localStorageOpen,         setLocalStorageOpen]         = useState(false)
   const [selectedJob,              setSelectedJob]              = useState<BackupJob | null>(null)
   const [selectedModuleForRecover, setSelectedModuleForRecover] = useState<string>('')
+
+  // Local storage state
+  const [localConfig,    setLocalConfig]    = useState<LocalStorageConfig | null>(null)
+  const [localSaveToasts, setLocalSaveToasts] = useState<LocalSaveToast[]>([])
+  const pendingProcessed = useRef(false)
 
   // Guard: admin only
   useEffect(() => {
     if (user && user.role !== 'admin') router.replace('/admin')
   }, [user, router])
+
+  // ── Load local storage config ──────────────────────────────────────────────
+  useEffect(() => {
+    getLocalBackupConfig().then(setLocalConfig).catch(() => {})
+  }, [])
 
   const fetchHealth = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -191,6 +217,78 @@ export default function BackupRecoveryPage() {
   }, [])
 
   useEffect(() => { fetchHealth() }, [fetchHealth])
+
+  // ── Process pending local saves on page load ───────────────────────────────
+  // Runs once after the first health fetch completes and local config is known.
+  // This catches any cron/scheduled backups that completed while the browser
+  // was closed.
+  useEffect(() => {
+    if (!localConfig || !health || pendingProcessed.current) return
+    pendingProcessed.current = true
+
+    processPendingLocalSaves((result) => {
+      const toast: LocalSaveToast = {
+        id:          result.jobId,
+        module_name: result.module_name,
+        fileName:    result.fileName ?? `${result.module_name}.zip`,
+        success:     result.success,
+        fallback:    result.usedFallback,
+        error:       result.error,
+      }
+      setLocalSaveToasts(prev => [...prev, toast])
+      // Auto-dismiss after 6 s
+      setTimeout(() => {
+        setLocalSaveToasts(prev => prev.filter(t => t.id !== toast.id))
+      }, 6000)
+    })
+  }, [localConfig, health])
+
+  // ── Save a single job to local device ─────────────────────────────────────
+  const saveJobToLocal = useCallback(async (job: BackupJob) => {
+    if (!job.download_url) return
+    const fileName = `${job.module_name}_${job.id.slice(0, 8)}.zip`
+
+    const result: SaveResult = await saveBackupFromUrl(job.download_url, fileName)
+
+    if (result.success) {
+      await markJobLocalSaved(job.id)
+    }
+
+    const toast: LocalSaveToast = {
+      id:          job.id,
+      module_name: job.module_name,
+      fileName:    result.fileName ?? fileName,
+      success:     result.success,
+      fallback:    result.usedFallback,
+      error:       result.error,
+    }
+    setLocalSaveToasts(prev => [...prev, toast])
+    setTimeout(() => {
+      setLocalSaveToasts(prev => prev.filter(t => t.id !== toast.id))
+    }, 6000)
+  }, [])
+
+  // ── Called by TriggerBackupModal after a job completes ────────────────────
+  const handleBackupSuccess = useCallback(async (jobId?: string) => {
+    setTriggerOpen(false)
+    await fetchHealth(true)
+
+    // If local storage is configured, immediately save the just-completed job
+    if (localConfig && jobId) {
+      // Re-fetch the specific job to get its download_url
+      try {
+        const res  = await fetch('/api/backup/health')
+        const json = await res.json()
+        const jobs: BackupJob[] = json.data?.recentJobs ?? []
+        const job = jobs.find(j => j.id === jobId)
+        if (job && job.status === 'completed' && job.download_url) {
+          await saveJobToLocal(job)
+        }
+      } catch (e) {
+        console.warn('[Page] Could not auto-save completed job to local:', e)
+      }
+    }
+  }, [fetchHealth, localConfig, saveJobToLocal])
 
   const handleQuickRestore = (module_name: string) => {
     setSelectedModuleForRecover(module_name)
@@ -239,6 +337,20 @@ export default function BackupRecoveryPage() {
                 </span>
               )}
             </button>
+
+            {/* Local Storage button — shows folder name or "Set up local storage" */}
+            <button
+              onClick={() => setLocalStorageOpen(true)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded-lg transition ${
+                localConfig
+                  ? 'text-emerald-700 bg-emerald-50 border-emerald-200 hover:bg-emerald-100'
+                  : 'text-slate-600 bg-white border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <HardDrive size={13} className={localConfig ? 'text-emerald-600' : 'text-slate-400'} />
+              {localConfig ? localConfig.folderName : 'Local Storage'}
+            </button>
+
             <button
               onClick={() => setScheduleOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition"
@@ -263,6 +375,26 @@ export default function BackupRecoveryPage() {
           <div className="flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
             <AlertTriangle size={16} />
             {error}
+          </div>
+        )}
+
+        {/* ── Local Storage Status Banner ── */}
+        {!loading && !localConfig && (
+          <div className="flex items-center justify-between px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl">
+            <div className="flex items-center gap-2.5 text-sm text-amber-800">
+              <AlertTriangle size={15} className="text-amber-500 shrink-0" />
+              <span>
+                <span className="font-semibold">Local backup storage not configured.</span>
+                {' '}Backups are stored in Supabase cloud only.
+              </span>
+            </div>
+            <button
+              onClick={() => setLocalStorageOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg font-semibold transition shrink-0"
+            >
+              <FolderOpen size={12} />
+              Set Up
+            </button>
           </div>
         )}
 
@@ -336,7 +468,6 @@ export default function BackupRecoveryPage() {
                   sub={`of ${health.moduleStatus.length} configured`}
                   color="purple"
                 />
-                {/* FIX: was hardcoded "2:00 AM". Now reads actual configured hours. */}
                 <StatCard
                   icon={<Clock size={18} className="text-sky-400" />}
                   label="Cron Schedule"
@@ -346,6 +477,12 @@ export default function BackupRecoveryPage() {
                 />
               </div>
             </div>
+
+            {/* ── Local Storage Card ── */}
+            <LocalStorageStatusCard
+              config={localConfig}
+              onConfigure={() => setLocalStorageOpen(true)}
+            />
 
             {/* ── Module Status Grid ── */}
             <section>
@@ -381,13 +518,14 @@ export default function BackupRecoveryPage() {
                       <th className="text-left px-4 py-3 text-slate-500 font-medium">Status</th>
                       <th className="text-left px-4 py-3 text-slate-500 font-medium">Started</th>
                       <th className="text-left px-4 py-3 text-slate-500 font-medium">Size</th>
+                      <th className="text-left px-4 py-3 text-slate-500 font-medium">Local</th>
                       <th className="px-4 py-3" />
                     </tr>
                   </thead>
                   <tbody>
                     {health.recentJobs.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="text-center py-10 text-slate-500">No backup jobs yet</td>
+                        <td colSpan={7} className="text-center py-10 text-slate-500">No backup jobs yet</td>
                       </tr>
                     ) : health.recentJobs.map(job => (
                       <tr
@@ -410,6 +548,21 @@ export default function BackupRecoveryPage() {
                         </td>
                         <td className="px-4 py-3 text-slate-400">{formatRelative(job.started_at)}</td>
                         <td className="px-4 py-3 text-slate-400">{formatBytes(job.total_size_bytes)}</td>
+                        <td className="px-4 py-3">
+                          {/* Download to local button — only shown for completed jobs with a URL */}
+                          {job.status === 'completed' && job.download_url ? (
+                            <button
+                              onClick={e => { e.stopPropagation(); saveJobToLocal(job) }}
+                              title="Save to local device"
+                              className="flex items-center gap-1 px-2 py-1 text-[10px] text-slate-600 hover:text-slate-900 border border-slate-200 hover:border-slate-300 rounded-lg bg-white transition"
+                            >
+                              <Download size={11} />
+                              Save
+                            </button>
+                          ) : (
+                            <span className="text-slate-300 text-[11px]">—</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-slate-300">
                           <ChevronRight size={14} />
                         </td>
@@ -423,11 +576,14 @@ export default function BackupRecoveryPage() {
         )}
       </div>
 
+      {/* ── Local Save Toasts ── */}
+      <LocalSaveToastStack toasts={localSaveToasts} />
+
       {/* ── Modals ── */}
       <TriggerBackupModal
         open={triggerOpen}
         onClose={() => setTriggerOpen(false)}
-        onSuccess={() => { setTriggerOpen(false); fetchHealth(true) }}
+        onSuccess={handleBackupSuccess}
       />
       <RecoverModal
         open={recoverOpen}
@@ -446,7 +602,11 @@ export default function BackupRecoveryPage() {
         open={notifOpen}
         onClose={() => { setNotifOpen(false); fetchHealth(true) }}
       />
-      {/* FIX: capture module_name before clearing selectedJob to avoid closure staleness */}
+      <LocalStorageSetupModal
+        open={localStorageOpen}
+        onClose={() => setLocalStorageOpen(false)}
+        onChange={setLocalConfig}
+      />
       {selectedJob && (
         <JobDetailModal
           job={selectedJob}
@@ -459,6 +619,110 @@ export default function BackupRecoveryPage() {
           }}
         />
       )}
+    </div>
+  )
+}
+
+// ── LocalStorageStatusCard ────────────────────────────────────────────────────
+
+function LocalStorageStatusCard({
+  config,
+  onConfigure,
+}: {
+  config:      LocalStorageConfig | null
+  onConfigure: () => void
+}) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+            config ? 'bg-emerald-50 border border-emerald-200' : 'bg-slate-100 border border-slate-200'
+          }`}>
+            <HardDrive size={16} className={config ? 'text-emerald-600' : 'text-slate-400'} />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-900">Local Device Storage</p>
+            {config ? (
+              <p className="text-[11px] text-slate-500">
+                Saving to <span className="font-medium text-slate-700">{config.folderName}</span>
+                {config.lastTestedAt && (
+                  <> · Last tested {formatRelative(config.lastTestedAt)}</>
+                )}
+                {!config.fsa_supported && (
+                  <span className="ml-1 text-amber-600">(browser download mode)</span>
+                )}
+              </p>
+            ) : (
+              <p className="text-[11px] text-slate-400">Not configured — backups saved to cloud only</p>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={onConfigure}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg transition"
+        >
+          <FolderOpen size={12} />
+          {config ? 'Change' : 'Configure'}
+        </button>
+      </div>
+
+      {config && (
+        <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-3 gap-3 text-[11px]">
+          <div>
+            <p className="text-slate-400">Folder</p>
+            <p className="font-medium text-slate-700 truncate">{config.folderName}</p>
+          </div>
+          <div>
+            <p className="text-slate-400">Mode</p>
+            <p className="font-medium text-slate-700">
+              {config.fsa_supported ? 'Direct write (FSA)' : 'Browser download'}
+            </p>
+          </div>
+          <div>
+            <p className="text-slate-400">Status</p>
+            <p className={`font-medium ${config.isValidated ? 'text-emerald-600' : 'text-amber-600'}`}>
+              {config.isValidated ? 'Verified writable' : 'Not yet verified'}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── LocalSaveToastStack ───────────────────────────────────────────────────────
+
+function LocalSaveToastStack({ toasts }: { toasts: LocalSaveToast[] }) {
+  if (toasts.length === 0) return null
+  return (
+    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 items-end">
+      {toasts.map(t => (
+        <div
+          key={t.id}
+          className={`flex items-start gap-2.5 px-4 py-3 rounded-xl shadow-lg border text-xs max-w-xs animate-in slide-in-from-right-4 duration-300 ${
+            t.success
+              ? 'bg-white border-emerald-200 text-slate-800'
+              : 'bg-white border-red-200 text-slate-800'
+          }`}
+        >
+          {t.success
+            ? <CheckCircle2 size={14} className="text-emerald-500 mt-0.5 shrink-0" />
+            : <XCircle     size={14} className="text-red-500 mt-0.5 shrink-0" />
+          }
+          <div>
+            <p className="font-semibold">
+              {t.success ? 'Saved to device' : 'Local save failed'}
+            </p>
+            <p className="text-slate-500 text-[11px] truncate max-w-[200px]">
+              {t.success
+                ? (t.fallback ? `Downloaded: ${t.fileName}` : t.fileName)
+                : t.error
+              }
+            </p>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
