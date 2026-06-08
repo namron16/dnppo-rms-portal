@@ -1,2 +1,2 @@
 ALTER DATABASE postgres
-  SET app.backup_webhook_url = 'https://your-rms-domain.vercel.app/api/backup/cron';
+  SET app.backup_webhook_url = 'https://11dnppo-rms.com/api/backup/cron';
