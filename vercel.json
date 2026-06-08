@@ -3,6 +3,10 @@
     {
       "path": "/api/backup/cron",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/ping",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
