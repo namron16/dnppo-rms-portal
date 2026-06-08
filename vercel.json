@@ -2,11 +2,11 @@
   "crons": [
     {
       "path": "/api/backup/cron",
-      "schedule": "0 * * * *"
+      "schedule": "0 0 * * *"
     },
     {
       "path": "/api/ping",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 12 * * *"
     }
   ]
 }
