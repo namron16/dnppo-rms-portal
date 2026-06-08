@@ -5,7 +5,7 @@ SELECT cron.schedule(
   'rms-daily-backup',
   '0 2 * * *',
   $$SELECT net.http_post(
-    url := current_setting('app.backup_webhook_url'),
+    url := (SELECT value FROM public.app_config WHERE key = 'backup_webhook_url'),
     body := '{"frequency":"daily","triggered_by":"scheduler"}'::jsonb
   )$$
 );
@@ -15,7 +15,7 @@ SELECT cron.schedule(
   'rms-weekly-backup',
   '0 2 * * 1',
   $$SELECT net.http_post(
-    url := current_setting('app.backup_webhook_url'),
+    url := (SELECT value FROM public.app_config WHERE key = 'backup_webhook_url'),
     body := '{"frequency":"weekly","triggered_by":"scheduler"}'::jsonb
   )$$
 );
@@ -25,7 +25,7 @@ SELECT cron.schedule(
   'rms-monthly-backup',
   '0 2 1 * *',
   $$SELECT net.http_post(
-    url := current_setting('app.backup_webhook_url'),
+    url := (SELECT value FROM public.app_config WHERE key = 'backup_webhook_url'),
     body := '{"frequency":"monthly","triggered_by":"scheduler"}'::jsonb
   )$$
 );
@@ -35,12 +35,12 @@ SELECT cron.schedule(
   'rms-yearly-backup',
   '0 2 1 1 *',
   $$SELECT net.http_post(
-    url := current_setting('app.backup_webhook_url'),
+    url := (SELECT value FROM public.app_config WHERE key = 'backup_webhook_url'),
     body := '{"frequency":"yearly","triggered_by":"scheduler"}'::jsonb
   )$$
 );
 
--- auto delete backup job records older than retention days
+-- Auto delete backup job records older than retention days
 SELECT cron.schedule(
   'rms-cleanup-old-backups',
   '0 3 * * *',  -- 3:00 AM daily

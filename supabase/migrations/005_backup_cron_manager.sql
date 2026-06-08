@@ -11,9 +11,19 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  webhook_url TEXT := current_setting('app.backup_webhook_url');
+  webhook_url TEXT;
   body_json   TEXT := format('{"frequency":"%s","triggered_by":"scheduler"}', frequency);
 BEGIN
+  -- Read webhook URL from config table
+  SELECT value INTO webhook_url
+  FROM public.app_config
+  WHERE key = 'backup_webhook_url';
+
+  -- Safety check: abort if URL is missing
+  IF webhook_url IS NULL THEN
+    RAISE EXCEPTION 'backup_webhook_url is not set in app_config table';
+  END IF;
+
   -- Remove existing job if it exists
   PERFORM cron.unschedule(job_name);
 
