@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: blob: https:",
-              "frame-src 'self' https://drive.google.com https://docs.google.com https://view.officeapps.live.com",
+              "frame-src 'self' blob: https://drive.google.com https://docs.google.com https://view.officeapps.live.com",
               "media-src 'self' blob: https://drive.google.com https://content.googleapis.com",
               
               [

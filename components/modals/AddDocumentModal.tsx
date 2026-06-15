@@ -220,14 +220,13 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">File Type</label>
             <select className={cls('type')} value={form.type} onChange={e => handleChange('type', e.target.value)} disabled={uploading}>
               <option value="PDF">PDF</option>
-              <option value="Image">Image</option>
             </select>
           </div>
         </div>
 
         {/* File upload */}
         <input ref={fileInputRef} type="file"
-          accept=".pdf,.jpg,.jpeg,.png"
+          accept=".pdf"
           className="hidden"
           onChange={e => handleFileChange(e.target.files?.[0] ?? null)} />
 
@@ -259,7 +258,7 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
             } ${uploading ? 'pointer-events-none opacity-50' : ''}`}>
             <div className="text-3xl mb-2">📁</div>
             <p className="text-sm font-medium text-slate-600 mb-1">Click to browse or drag &amp; drop</p>
-            <p className="text-xs text-slate-400">PDF, JPG — max 50 MB</p>
+            <p className="text-xs text-slate-400">PDF — max 50 MB</p>
           </div>
         )}
 

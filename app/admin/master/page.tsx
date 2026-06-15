@@ -443,9 +443,6 @@ function EditModal({ doc, open, onClose, onSave }: {
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">File Type</label>
             <select className={cls} value={type} onChange={e => setType(e.target.value)}>
               <option value="PDF">PDF</option>
-              <option value="DOCX">DOCX</option>
-              <option value="XLSX">XLSX</option>
-              <option value="Image">Image</option>
             </select>
           </div>
         </div>

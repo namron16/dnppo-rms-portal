@@ -189,7 +189,7 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.jpg,.jpeg,.png"
+          accept=".pdf"
           className="hidden"
           onChange={e => handleFileChange(e.target.files?.[0] ?? null)}
         />
@@ -229,7 +229,7 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
               <Paperclip size={30} strokeWidth={2.1} />
             </div>
             <p className="text-sm font-medium text-slate-600 mb-1">Click to browse or drag &amp; drop</p>
-            <p className="text-xs text-slate-400">PDF, JPG — max 50 MB</p>
+            <p className="text-xs text-slate-400">PDF — max 50 MB</p>
           </div>
         )}
 
