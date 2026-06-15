@@ -317,7 +317,7 @@ export function AddJournalEntryModal({
                 <Paperclip size={28} strokeWidth={2.1} />
               </div>
               <p className="text-sm font-medium text-slate-600 mb-0.5">Attach file</p>
-              <p className="text-xs text-slate-400">PDF, JPG — max 50 MB</p>
+              <p className="text-xs text-slate-400">PDF, JPG, PNG — max 50 MB</p>
             </div>
           )}
           {errors.file && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.file}</p>}

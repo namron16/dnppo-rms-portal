@@ -9,6 +9,14 @@
 //   loadAll filters daily journals by uploaded_by = user.role so each account
 //   only sees the entries they personally uploaded.
 //   Privileged roles (admin, DPDA, DPDO) still see all entries.
+//
+// FIX (duplicate React keys on create):
+//   handleCreate / handleEdit / handleArchive / handleDelete no longer call
+//   setEntries() directly to mutate local state. The realtime subscription
+//   (useRealtimeDailyJournals) is the single source of truth for INSERT/
+//   UPDATE/DELETE — it already merges-on-exists, so we don't get the same
+//   row added twice (once optimistically here, once via realtime), which
+//   was causing "Encountered two children with the same key" errors.
 
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { PageHeader }             from '@/components/ui/PageHeader'
@@ -380,6 +388,12 @@ export default function DailyJournalsPage() {
   // so addDailyJournal() can persist them to the DB.
   // Without this, gdrive_file_id and pool_account_id stayed null, making
   // the document impossible to forward successfully later.
+  //
+  // FIX (duplicate keys): no longer calls setEntries() to prepend the new
+  // entry locally. The Supabase INSERT will arrive via
+  // useRealtimeDailyJournals and add it to `entries` exactly once. Adding it
+  // both here AND via realtime was producing two rows sharing the same id
+  // ("jrnl-<timestamp>"), which React then complained about as duplicate keys.
   async function handleCreate(
     input: AddJournalEntryInput & {
       file?:          File
@@ -423,11 +437,17 @@ export default function DailyJournalsPage() {
 
     await addDailyJournal(nextEntry)
     await logCreateJournal(nextEntry.title)
-    setEntries(prev => [nextEntry, ...prev])
+    // FIX: removed setEntries(prev => [nextEntry, ...prev]) — the realtime
+    // INSERT subscription will add this row to state once it arrives.
     addModal.close()
   }
 
   // ── Edit ──────────────────────────────────────────────────────────────────
+  // FIX (duplicate keys / consistency): no longer calls setEntries() to patch
+  // the row locally. The realtime UPDATE handler will update `entries` once
+  // the change is persisted. We still update the view-modal payload directly
+  // (it's a separate piece of state from `entries`, so it can't cause a key
+  // collision) so the open "View" modal reflects the edit immediately.
   async function handleEdit(
     input: AddJournalEntryInput & { file?: File; driveFileUrl?: string; uploaded_by?: string }
   ) {
@@ -457,12 +477,16 @@ export default function DailyJournalsPage() {
 
     await updateDailyJournal(updatedEntry)
     await logEditJournal(updatedEntry.title)
-    setEntries(prev => prev.map(e => e.id === updatedEntry.id ? updatedEntry : e))
+    // FIX: removed setEntries(prev => prev.map(...)) — realtime UPDATE
+    // handler will patch `entries` once the change is persisted.
     if (viewDisc.payload?.id === updatedEntry.id) viewDisc.open(updatedEntry)
     editDisc.close()
   }
 
   // ── Archive ────────────────────────────────────────────────────────────────
+  // FIX (duplicate keys / consistency): no longer calls
+  // setEntries(prev => prev.filter(...)) — the realtime UPDATE handler will
+  // see archived=true and remove the row from `entries` once persisted.
   async function handleArchive() {
     if (!canArchive) { toast.error('You do not have permission to archive journal entries.'); return }
     const item = archiveDisc.payload
@@ -504,8 +528,8 @@ export default function DailyJournalsPage() {
       await archiveDailyJournal(item.id)
       await logArchiveJournal(item.title)
 
-      // Step 4: Remove from UI
-      setEntries(prev => prev.filter(e => e.id !== item.id))
+      // Step 4: Close modals (removal from `entries` is handled by the
+      // realtime UPDATE handler once `archived = true` is observed).
       if (viewDisc.payload?.id === item.id) viewDisc.close()
       archiveDisc.close()
       toast.success(`"${item.title}" has been archived.`)
@@ -515,6 +539,9 @@ export default function DailyJournalsPage() {
   }
 
   // ── Delete ─────────────────────────────────────────────────────────────────
+  // FIX (duplicate keys / consistency): no longer calls
+  // setEntries(prev => prev.filter(...)) — the realtime DELETE handler will
+  // remove the row from `entries` once the delete is persisted.
   async function handleDelete() {
   const item = deleteDisc.payload
   if (!item) return
@@ -527,7 +554,6 @@ export default function DailyJournalsPage() {
     )
     await deleteDailyJournal(item.id)
     await logDeleteDocument(item.title, 'daily journal')
-    setEntries(prev => prev.filter(e => e.id !== item.id))
     if (viewDisc.payload?.id  === item.id) viewDisc.close()
     if (editDisc.payload?.id  === item.id) editDisc.close()
     deleteDisc.close()

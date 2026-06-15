@@ -51,7 +51,14 @@ export function useRealtimeDailyJournals(
         if (row.archived) return
         const j = normaliseJournal(row)
         ref.current(prev => {
-          if (prev.some(e => e.id === j.id)) return prev
+          // Dedupe: if this row already exists (e.g. from an optimistic
+          // local insert elsewhere), merge instead of duplicating.
+          const idx = prev.findIndex(e => e.id === j.id)
+          if (idx !== -1) {
+            const next = [...prev]
+            next[idx] = { ...next[idx], ...j }
+            return next
+          }
           return [j, ...prev]
         })
       })
@@ -61,7 +68,17 @@ export function useRealtimeDailyJournals(
           ref.current(prev => prev.filter(e => e.id !== row.id))
           return
         }
-        ref.current(prev => prev.map(e => e.id === row.id ? normaliseJournal(row) : e))
+        ref.current(prev => {
+          const idx = prev.findIndex(e => e.id === row.id)
+          if (idx === -1) {
+            // Row updated but not present locally (e.g. filtered out
+            // before) — ignore rather than inserting out of context.
+            return prev
+          }
+          const next = [...prev]
+          next[idx] = { ...next[idx], ...normaliseJournal(row) }
+          return next
+        })
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'daily_journals' }, payload => {
         ref.current(prev => prev.filter(e => e.id !== (payload.old as any).id))
@@ -112,7 +129,12 @@ export function useRealtimeLibraryItems(
         if (row.archived) return
         const item = normaliseLibItem(row)
         ref.current(prev => {
-          if (prev.some(i => i.id === item.id)) return prev
+          const idx = prev.findIndex(i => i.id === item.id)
+          if (idx !== -1) {
+            const next = [...prev]
+            next[idx] = { ...next[idx], ...item }
+            return next
+          }
           return [item, ...prev]
         })
       })
@@ -167,7 +189,12 @@ export function useRealtimeArchivedDocs(
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'archived_docs' }, payload => {
         const item = normaliseArchived(payload.new)
         ref.current(prev => {
-          if (prev.some(i => i.id === item.id)) return prev
+          const idx = prev.findIndex(i => i.id === item.id)
+          if (idx !== -1) {
+            const next = [...prev]
+            next[idx] = { ...next[idx], ...item }
+            return next
+          }
           return [item, ...prev]
         })
       })
@@ -225,7 +252,12 @@ export function useRealtimeClassifiedDocs({ setDocs }: ClassifiedOptions) {
         const doc = normaliseClassified(row)
 
         ref.current(prev => {
-          if (prev.some(d => d.id === doc.id)) return prev
+          const idx = prev.findIndex(d => d.id === doc.id)
+          if (idx !== -1) {
+            const next = [...prev]
+            next[idx] = { ...next[idx], ...doc }
+            return next
+          }
           return [{ ...doc, visibleRoles: ['P2'] }, ...prev]
         })
       })
