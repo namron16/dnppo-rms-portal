@@ -428,7 +428,7 @@ export default function LibraryPage() {
 
         if (!res.ok) {
           const json = await res.json().catch(() => ({}))
-          toast.error(`Could not move file to Drive archive: ${json.error ?? 'Unknown error'}`)
+          toast.error(json.error ?? 'Could not move file to the archive. Please try again.')
         }
       }
 
@@ -479,7 +479,11 @@ export default function LibraryPage() {
     if (editDisc.payload?.id === item.id) editDisc.close()
     toast.success(`"${item.title}" deleted permanently.`)
     deleteDisc.close()
-  } finally {
+  } catch (err: any) {
+      toast.error(err?.message ?? 'Could not delete file from Google Drive. Please try again.')
+      return
+    }
+    finally {
     setIsDeleting(false)
   }
 }

@@ -13,6 +13,27 @@ export const runtime = 'nodejs'
  * Looks up the records table entry automatically.
  * If no record row exists (pre-migration document), deletes directly from Drive.
  */
+
+
+function classifyDeleteError(err: any): { message: string; status: number } {
+  const msg = String(err?.message ?? '')
+
+  if (msg.includes('invalid_grant') || msg.includes('Token has been expired') || msg.includes('Invalid Credentials'))
+    return { message: 'Google Drive session expired. Please reconnect your Drive account.', status: 401 }
+
+  if (msg.includes('insufficientPermissions') || msg.toLowerCase().includes('permission') || msg.includes('forbidden'))
+    return { message: 'Drive permission denied. Please reconnect your Google Drive.', status: 403 }
+
+  if (msg.includes('notFound') || msg.includes('File not found') || msg.includes('404'))
+    return { message: 'File no longer exists in Google Drive. It may have been deleted manually.', status: 404 }
+
+  if (msg.includes('Record not found') || msg.includes('records'))
+    return { message: 'File record not found in the system. It may have already been deleted.', status: 404 }
+
+  return { message: 'Delete failed. Please try again or contact your admin.', status: 500 }
+}
+
+
 export async function POST(request: Request) {
   try {
     const { gdriveFileId, poolAccountId } = await request.json()
@@ -57,7 +78,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ data: { success: true } })
   } catch (err: any) {
     console.error('[Delete API]', err.message)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  const { message, status } = classifyDeleteError(err)
+  return NextResponse.json({ error: message }, { status })
   }
 }
 
@@ -83,6 +105,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ data: { success: true } })
   } catch (err: any) {
     console.error('[Delete API DELETE]', err.message)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  const { message, status } = classifyDeleteError(err)
+  return NextResponse.json({ error: message }, { status })
   }
 }

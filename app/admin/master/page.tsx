@@ -640,7 +640,7 @@ export default function MasterPage() {
 
         if (!res.ok) {
           const json = await res.json().catch(() => ({}))
-          toast.error(`Could not move file to Drive archive: ${json.error ?? 'Unknown error'}`)
+          toast.error(json.error ?? 'Could not move file to the archive. Please try again.')
           // Don't block the rest — still archive the record
         }
       }
@@ -685,7 +685,12 @@ export default function MasterPage() {
         setSelection(null)
         toast.success('Document deleted permanently.')
         deleteDisc.close()
-      } finally {
+      } 
+      catch (err: any) {
+        toast.error(err?.message ?? 'Could not delete file from Google Drive. Please try again.')
+        return
+      }
+      finally {
         setIsDeleting(false)
       }
     }
