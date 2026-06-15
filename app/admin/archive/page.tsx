@@ -69,18 +69,20 @@ export default function ArchivePage() {
   }, [])
 
   async function handleRestore() {
-    const item = restoreDisc.payload
-    if (!item) return
-    setIsRestoring(true)
-    try {
-      await restoreArchivedDoc(item.id)
-      setItems(prev => prev.filter(i => i.id !== item.id))
-      toast.success(`"${item.title}" has been restored.`)
-      restoreDisc.close()
-    } finally {
-      setIsRestoring(false)
-    }
+  const item = restoreDisc.payload
+  if (!item) return
+  setIsRestoring(true)
+  try {
+    await restoreArchivedDoc(item.id)
+    setItems(prev => prev.filter(i => i.id !== item.id))
+    toast.success(`"${item.title}" has been restored.`)
+    restoreDisc.close()
+  } catch (err: any) {
+    toast.error(`Failed to restore "${item.title}": ${err?.message ?? 'Unknown error'}`)
+  } finally {
+    setIsRestoring(false)
   }
+}
 
   async function handleDelete() {
     const item = deleteDisc.payload
