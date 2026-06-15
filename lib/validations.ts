@@ -229,10 +229,10 @@ export const OrgMemberSchema = z.object({
   position: z.string().min(1, 'Position is required.').max(100, 'Position must be 100 characters or less.'),
   unit:     z.string().max(100, 'Unit must be 100 characters or less.').optional(),
   contactNo: z
-    .string()
-    .regex(/^[\d\s\+\-\(\)]{7,20}$/, 'Please enter a valid contact number.')
-    .or(z.literal(''))
-    .optional(),
+  .string()
+  .regex(/^\d{11}$/, 'Contact number must be exactly 11 digits.')
+  .or(z.literal(''))
+  .optional(),
   color:    z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Must be a valid hex colour.'),
   parentId: z.string().optional(),
   photoUrl: z.string().url('Invalid photo URL.').or(z.literal('')).optional(),

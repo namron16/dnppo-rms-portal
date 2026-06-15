@@ -734,10 +734,27 @@ function MemberModal({ open, onClose, onSave, existing, members, defaultParentId
         </div>
 
         {/* Contact Number */}
-        <div>
-          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Contact Number</label>
-          <input className={cls} placeholder="e.g. 09171234567" value={form.contactNo} onChange={e => setForm(f => ({ ...f, contactNo: e.target.value }))} />
-        </div>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Contact Number</label>
+            <input
+              className={cls}
+              placeholder="e.g. 09171234567"
+              inputMode="numeric"
+              maxLength={11}
+              value={form.contactNo}
+              onChange={e => {
+                // Strip everything except digits, then cap at 11
+                const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 11)
+                setForm(f => ({ ...f, contactNo: digitsOnly }))
+              }}
+              onKeyDown={e => {
+                // Block non-digit keys (allow control keys like Backspace, Tab, arrows)
+                if (e.key.length === 1 && !/\d/.test(e.key)) {
+                  e.preventDefault()
+                }
+              }}
+            />
+          </div>
 
         <div className="flex justify-end gap-2.5 pt-1">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
