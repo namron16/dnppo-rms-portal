@@ -152,8 +152,9 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
       toast.success(`"${result.data.title}" uploaded successfully.`)
       resetAndClose()
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
       console.error('[AddDocumentModal] handleSubmit error:', err)
-      toast.error('Something went wrong. Please try again.')
+      toast.error(message)
     }
   }
 

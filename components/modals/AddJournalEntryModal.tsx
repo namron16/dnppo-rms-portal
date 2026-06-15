@@ -193,8 +193,9 @@ export function AddJournalEntryModal({
 
       toast.success(`Journal entry "${result.data.title}" saved.`)
       resetAndClose()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save journal entry. Please try again.'
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
+      console.error('[AddJournalEntryModal] submit error:', err)
       toast.error(message)
     }
   }

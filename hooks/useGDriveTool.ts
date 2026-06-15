@@ -140,7 +140,7 @@ export function useGDrivePool() {
         })
 
         xhr.addEventListener('error', () => {
-          reject(new Error('Network error during upload.'))
+          reject(new Error('Upload failed: no network connection. Check your internet and try again.'))
         })
 
         xhr.addEventListener('abort', () => {

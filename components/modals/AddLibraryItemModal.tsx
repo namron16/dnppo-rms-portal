@@ -147,8 +147,9 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
       onAdd?.(newItem)
       resetAndClose()
     } catch (err) {
-      console.error(err)
-      toast.error('Something went wrong. Please try again.')
+      const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
+      console.error('[AddLibraryItemModal] handleSubmit error:', err)
+      toast.error(message)
     }
   }
 

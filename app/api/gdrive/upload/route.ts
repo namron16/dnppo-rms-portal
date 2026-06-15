@@ -10,33 +10,81 @@ export const maxDuration = 60
 function classifyUploadError(err: any): { message: string; status: number } {
   const msg = String(err?.message ?? '')
 
-  if (msg.includes('No active pool account') || msg.includes('no pool') || msg.includes('pool account'))
+  if (
+    msg.includes('No active pool account') ||
+    msg.includes('no pool') ||
+    msg.includes('pool account') ||
+    msg.includes('No active Google Drive account') ||
+    msg.includes('no connected')
+  )
     return {
-      message: 'No Google Drive account is connected for your role. Please reconnect your Google Drive in Settings → Google Drive.',
+      message: 'No Google Drive account connected. Ask your admin to connect one at Settings → Google Drive.',
       status: 503,
     }
-  if (msg.includes('invalid_grant') || msg.includes('Token has been expired') || msg.includes('Invalid Credentials'))
+
+  if (
+    msg.includes('invalid_grant') ||
+    msg.includes('Token has been expired') ||
+    msg.includes('Invalid Credentials') ||
+    msg.includes('reconnect')
+  )
     return {
-      message: 'Your Google Drive session has expired. Please reconnect your Google Drive in Settings → Google Drive.',
+      message: 'Google Drive session expired. Please reconnect your Drive account.',
       status: 401,
     }
-  if (msg.includes('storageQuota') || msg.includes('The user\'s Drive storage quota has been exceeded'))
+
+  if (
+    msg.includes('storageQuota') ||
+    msg.includes("user's Drive storage quota has been exceeded")
+  )
     return {
-      message: 'Your Google Drive is full. Free up space or connect a different account.',
+      message: 'Google Drive is full. Free up space or ask your admin to connect a different account.',
       status: 507,
     }
-  if (msg.includes('insufficientPermissions') || msg.includes('forbidden') || msg.toLowerCase().includes('permission'))
+
+  if (
+    msg.includes('insufficientPermissions') ||
+    msg.includes('forbidden') ||
+    msg.toLowerCase().includes('permission') ||
+    msg.includes('Drive auth error')
+  )
     return {
-      message: 'Drive permission denied. Reconnect your Google Drive and make sure all permissions are granted.',
+      message: 'Drive permission denied. Please reconnect your Google Drive and allow all permissions.',
       status: 403,
     }
+
+  if (msg.includes('ownership mismatch'))
+    return {
+      message: 'Storage account mismatch. Please contact your admin.',
+      status: 403,
+    }
+
+  if (msg.includes('no root folder') || msg.includes('root_folder_id'))
+    return {
+      message: 'Drive account not fully set up. Please reconnect your Google Drive.',
+      status: 422,
+    }
+
   if (msg.includes('File exceeds'))
-    return { message: msg, status: 413 }
-  if (msg.includes('File type not allowed'))
-    return { message: msg, status: 415 }
+    return { message: 'File is too large. Maximum allowed size is 50 MB.', status: 413 }
+
+  if (msg.includes('File type not allowed') || msg.includes('Unsupported MIME'))
+    return { message: 'File type not supported. Please upload a PDF, image, DOCX, or XLSX.', status: 415 }
+
+  if (msg.includes('Folder resolution failed'))
+    return {
+      message: 'Could not create Drive folder. Try reconnecting your Google Drive.',
+      status: 500,
+    }
+
+  if (msg.includes('Database record insert failed'))
+    return {
+      message: 'File uploaded but record save failed. Please contact your admin.',
+      status: 500,
+    }
 
   return {
-    message: `Upload failed: ${msg || 'Unknown server error. Please try again.'}`,
+    message: 'Upload failed. Please try again or contact your admin if the issue persists.',
     status: 500,
   }
 }

@@ -138,7 +138,8 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
       resetAndClose()
     } catch (err) {
       console.error('[AddSpecialOrderModal] submit error:', err)
-      toast.error('Something went wrong. Please try again.')
+      const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
+      toast.error(message)
     }
   }
 
