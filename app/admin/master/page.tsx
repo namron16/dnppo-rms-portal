@@ -157,7 +157,7 @@ async function uploadAttachmentToDrive(
   uploadedBy: string,
   parentDocId: string,
   parentAttId: string | null,
-): Promise<DriveAttachmentResult | null> {
+): Promise<DriveAttachmentResult> {
   const formData = new FormData()
   formData.append('file',        file)
   formData.append('category',    'master_documents')
@@ -165,21 +165,19 @@ async function uploadAttachmentToDrive(
   formData.append('entityType',  parentAttId ? 'master_document_attachment' : 'master_document')
   formData.append('entityId',    parentAttId ?? parentDocId)
 
-  try {
+  
     const res = await fetch('/api/gdrive/upload', { method: 'POST', body: formData })
 
     if (!res.ok) {
       const json = await res.json().catch(() => ({}))
-      console.error('[uploadAttachmentToDrive] API error:', json.error ?? res.status)
-      return null
+      throw new Error(json.error ?? `Upload failed (HTTP ${res.status}). Please try again.`)
     }
 
     const json = await res.json()
     const r    = json.data
 
     if (!r?.gdriveFileId && !r?.gdrive_file_id) {
-      console.error('[uploadAttachmentToDrive] Missing gdriveFileId in response', r)
-      return null
+      throw new Error('Upload succeeded but no file ID was returned. Please try again.')
     }
 
     return {
@@ -188,10 +186,7 @@ async function uploadAttachmentToDrive(
       poolAccountId: r.poolAccountId ?? r.pool_account_id,
       fileSizeBytes: r.sizeBytes     ?? file.size,
     }
-  } catch (err: any) {
-    console.error('[uploadAttachmentToDrive] Network error:', err.message)
-    return null
-  }
+ 
 }
 
 function fileInfoFromMime(mimeType: string | null, fileName: string | null) {
@@ -707,15 +702,11 @@ export default function MasterPage() {
 
     for (const file of Array.from(files)) {
       // Upload to Google Drive via the pool gateway
-      const driveResult = await uploadAttachmentToDrive(
-        file,
-        user.role,
-        parentDocId,
-        parentAttId,
-      )
-
-      if (!driveResult) {
-        toast.error(`Failed to upload "${file.name}" to Google Drive.`)
+     let driveResult: DriveAttachmentResult
+      try {
+        driveResult = await uploadAttachmentToDrive(file, user.role, parentDocId, parentAttId)
+      } catch (err: any) {
+        toast.error(err?.message ?? `Failed to upload "${file.name}" to Google Drive.`)
         continue
       }
 

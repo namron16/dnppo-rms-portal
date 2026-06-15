@@ -157,10 +157,10 @@ async function uploadAttachmentToDrive(
   uploadedBy: string,
   entityId: string,
   parentAttId: string | null
-): Promise<DriveAttachmentResult | null> {
+): Promise<DriveAttachmentResult> {
   const formData = new FormData()
   formData.append('file',        file)
-  formData.append('category',    'special_orders')
+  formData.append('category',    'special_orders')   // or 'master_documents' in master/page.tsx
   formData.append('uploadedBy',  uploadedBy)
   formData.append('entityType',  parentAttId ? 'special_order_attachment' : 'special_order')
   formData.append('entityId',    entityId)
@@ -169,15 +169,14 @@ async function uploadAttachmentToDrive(
 
   if (!res.ok) {
     const json = await res.json().catch(() => ({}))
-    console.error('[uploadAttachmentToDrive] API error:', json.error ?? res.status)
-    return null
+    throw new Error(json.error ?? `Upload failed (HTTP ${res.status}). Please try again.`)
   }
 
   const json = await res.json()
   const r    = json.data
+
   if (!r?.gdriveFileId && !r?.gdrive_file_id) {
-    console.error('[uploadAttachmentToDrive] Missing gdriveFileId in response', r)
-    return null
+    throw new Error('Upload succeeded but no file ID was returned. Please try again.')
   }
 
   return {
@@ -996,12 +995,13 @@ export default function AdminOrdersPage() {
     let count = 0
 
     for (const file of Array.from(files)) {
-      const driveResult = await uploadAttachmentToDrive(file, user.role, parentOrderId, parentAttId)
-
-      if (!driveResult) {
-        toast.error(`Failed to upload "${file.name}" to Google Drive.`)
-        continue
-      }
+      let driveResult: DriveAttachmentResult
+  try {
+    driveResult = await uploadAttachmentToDrive(file, user.role, parentOrderId, parentAttId)
+  } catch (err: any) {
+    toast.error(err?.message ?? `Failed to upload "${file.name}" to Google Drive.`)
+    continue
+  }
 
       const parentDepth = parentAttId
         ? (() => {
