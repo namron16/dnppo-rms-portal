@@ -655,7 +655,7 @@ function AttachmentsTablePanel({
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webp"
+                accept=".pdf"
                 className="hidden"
                 onChange={e => {
                   if (e.target.files && e.target.files.length > 0)
