@@ -408,17 +408,7 @@ function EditSpecialOrderModal({
             onChange={e => setForm(prev => ({ ...prev, subject: e.target.value }))}
           />
         </div>
-        <div>
-          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Status</label>
-          <select
-            className="w-full px-3 py-2.5 border-[1.5px] border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition"
-            value={form.status}
-            onChange={e => setForm(prev => ({ ...prev, status: e.target.value as 'ACTIVE' | 'ARCHIVED' }))}
-          >
-            <option value="ACTIVE">ACTIVE</option>
-            <option value="ARCHIVED">ARCHIVED</option>
-          </select>
-        </div>
+       
         <div className="flex justify-end gap-2.5 pt-1">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
@@ -1232,14 +1222,7 @@ export default function AdminOrdersPage() {
           {/* Toolbar */}
           <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50 flex-shrink-0">
             <SearchInput value={query} onChange={setQuery} placeholder="Search orders…" className="max-w-xs flex-1" />
-            <ToolbarSelect
-              defaultValue="ALL"
-              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setStatusFilter(e.target.value)}
-            >
-              <option value="ALL">All Status</option>
-              <option value="ACTIVE">Active</option>
-              <option value="PENDING">Pending</option>
-            </ToolbarSelect>
+            
             {/* FIX: Show "+ New SO" for all allowed roles (P1–P10, WCPD, PPSMU) */}
             {canUpload && (
               <Button variant="primary" size="sm" className="ml-auto" onClick={newSOModal.open}>
@@ -1297,7 +1280,6 @@ export default function AdminOrdersPage() {
               <div className="px-4 py-3 border-t border-slate-100 space-y-1.5 flex-shrink-0">
                 {[
                   { color: '#3b63b8', label: 'Active' },
-                  { color: '#f59e0b', label: 'Archived' },
                   { color: '#94a3b8', label: 'Other' },
                 ].map(l => (
                   <div key={l.label} className="flex items-center gap-2">
