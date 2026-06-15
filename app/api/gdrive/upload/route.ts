@@ -6,6 +6,41 @@ import type { DocumentCategory } from '@/lib/gdrive-pool/types'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
+// Add this helper above the POST handler
+function classifyUploadError(err: any): { message: string; status: number } {
+  const msg = String(err?.message ?? '')
+
+  if (msg.includes('No active pool account') || msg.includes('no pool') || msg.includes('pool account'))
+    return {
+      message: 'No Google Drive account is connected for your role. Please reconnect your Google Drive in Settings → Google Drive.',
+      status: 503,
+    }
+  if (msg.includes('invalid_grant') || msg.includes('Token has been expired') || msg.includes('Invalid Credentials'))
+    return {
+      message: 'Your Google Drive session has expired. Please reconnect your Google Drive in Settings → Google Drive.',
+      status: 401,
+    }
+  if (msg.includes('storageQuota') || msg.includes('The user\'s Drive storage quota has been exceeded'))
+    return {
+      message: 'Your Google Drive is full. Free up space or connect a different account.',
+      status: 507,
+    }
+  if (msg.includes('insufficientPermissions') || msg.includes('forbidden') || msg.toLowerCase().includes('permission'))
+    return {
+      message: 'Drive permission denied. Reconnect your Google Drive and make sure all permissions are granted.',
+      status: 403,
+    }
+  if (msg.includes('File exceeds'))
+    return { message: msg, status: 413 }
+  if (msg.includes('File type not allowed'))
+    return { message: msg, status: 415 }
+
+  return {
+    message: `Upload failed: ${msg || 'Unknown server error. Please try again.'}`,
+    status: 500,
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const formData       = await request.formData()
@@ -70,9 +105,7 @@ export async function POST(request: Request) {
     // Log the FULL error so it appears in your server logs / Vercel function logs
     console.error('[Upload API] FAILED:', err?.message ?? err)
     console.error('[Upload API] Stack:', err?.stack)
-    return NextResponse.json(
-      { error: err?.message ?? 'Internal server error' },
-      { status: 500 }
-    )
+    const { message, status } = classifyUploadError(err)
+    return NextResponse.json({ error: message }, { status })
   }
 }
