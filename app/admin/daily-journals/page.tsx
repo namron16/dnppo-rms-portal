@@ -43,7 +43,7 @@ import {
 import {
   canUploadDocuments, canEditDocuments, canDeleteDocuments, canArchiveDocuments,
 } from '@/lib/permissions'
-import { Archive, Copy, Eye, PencilLine, Share2, Trash2, MoreHorizontal } from 'lucide-react'
+import { Archive, Copy, Download, Eye, PencilLine, Share2, Trash2, MoreHorizontal } from 'lucide-react'
 
 // ── Privileged roles that see ALL entries regardless of uploader ──────────────
 const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
@@ -157,6 +157,11 @@ function ActionMenu({
       {open && (
         <div className="absolute right-0 top-9 z-50 w-44 rounded-xl border border-slate-200 bg-white shadow-lg py-1.5 px-1">
           {item('View', <Eye size={14} />, onView)}
+          {entry.fileUrl && item(
+            'Download',
+            <Download size={14} />,
+            () => window.open(entry.fileUrl!, '_blank')
+)}
           {item('Copy Title', <Copy size={14} />, onCopyTitle)}
           {canForward && item('Forward', <Share2 size={14} />, onForward)}
           {canEdit && item('Edit', <PencilLine size={14} />, onEdit)}
