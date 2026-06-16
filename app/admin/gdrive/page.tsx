@@ -54,7 +54,7 @@ interface StatusResponse {
 
 // All users who can have Drive accounts connected
 // DPDA is listed first as a special admin-level pool
-const ALL_USERS = ['DPDA', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10'] as const
+const ALL_USERS = ['DPDA', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'WCPD', 'PPSMU'] as const
 type PoolUsername = typeof ALL_USERS[number]
 
 // =============================================================================
@@ -569,7 +569,7 @@ export default function GDriveAdminPage() {
         {/* ── P1–P10 Sections ── */}
         <div>
           <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
-            User Drive Pools (P1–P10)
+            User Drive Pools (P1–P10, WCPD, PPSMU)
           </h2>
           <div className="space-y-4">
             {ALL_USERS.filter(u => u !== 'DPDA').map(username => (
