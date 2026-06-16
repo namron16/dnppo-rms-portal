@@ -224,7 +224,6 @@ function LoginForm() {
   )
 
   return (
-    /* The right panel: fixed 460px, full viewport height, internal scroll only if needed */
     <div className="w-[460px] flex-shrink-0 bg-white flex flex-col h-screen overflow-y-auto shadow-2xl z-20">
       <div className="flex-1 flex flex-col justify-center px-10 py-6">
 
@@ -250,6 +249,10 @@ function LoginForm() {
                   onChange={e => { setRoleId(e.target.value); setLoginError(''); setResetSuccess(false) }}
                   className={inputCls(!!loginError)}
                   disabled={loading}
+                  // Tell the browser this is the "username" field so it can
+                  // link it to the password field below for autofill/accessibility.
+                  autoComplete="username"
+                  name="username"
                 >
                   <option value="" disabled>Select your admin role</option>
                   {ROLE_OPTIONS.map(r => (
@@ -260,6 +263,22 @@ function LoginForm() {
 
               <div>
                 <label className={labelCls}>Password</label>
+                {/*
+                  FIX: Hidden input tells the browser which field is the "username"
+                  so it can correctly associate it with the password field below.
+                  Without this, browsers warn: "Password forms should have a username field."
+                  We mirror the selected roleId value here — invisible to users.
+                */}
+                <input
+                  type="text"
+                  name="username"
+                  autoComplete="username"
+                  value={roleId}
+                  readOnly
+                  aria-hidden="true"
+                  tabIndex={-1}
+                  style={{ display: 'none' }}
+                />
                 <input
                   type="password"
                   value={password}
@@ -268,6 +287,7 @@ function LoginForm() {
                   className={inputCls(!!loginError)}
                   disabled={loading}
                   autoComplete="current-password"
+                  name="password"
                 />
                 <div className="text-right mt-1">
                   <button
@@ -485,7 +505,18 @@ function LoginForm() {
         <p className="text-[9px] text-slate-500 font-medium leading-tight text-center max-w-[220px]">
           Developed in collaboration with 4th-year BSIS students, Class 2026 of STI College Tagum.
         </p>
-        <Image src="/assets/sti-tagum-logo.png" alt="STI Logo" width={30} height={30} sizes="30px" className="h-auto w-auto object-contain" />
+        {/*
+          IMAGE OPTIMIZATION: explicit width/height + sizes avoids layout shift.
+          The logo is small and decorative — no need for priority here.
+        */}
+        <Image
+          src="/assets/sti-tagum-logo.png"
+          alt="STI College Tagum Logo"
+          width={30}
+          height={30}
+          sizes="30px"
+          className="h-auto w-auto object-contain"
+        />
       </div>
     </div>
   )
@@ -497,7 +528,6 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    /* Full viewport, no scroll — everything must fit */
     <div className="h-screen overflow-hidden flex font-sans">
 
       {/* Left: Branding panel */}
@@ -505,22 +535,68 @@ export default function LoginPage() {
         className="flex-1 relative overflow-hidden flex flex-col justify-between px-12 py-8"
         style={{ backgroundColor: '#2e4769' }}
       >
-        <Image src="/assets/pnp-bg.jpg" alt="" fill priority
-          sizes="(max-width: 1024px) 100vw, 50vw"
-          className="object-cover object-center" />
+        {/*
+          IMAGE OPTIMIZATION — background (pnp-bg.jpg):
+          - `fill` makes it cover the entire parent div (which has position:relative).
+          - `priority` tells Next.js to preload this image in the <head> so it
+            loads before the page renders — no flash of blank background.
+          - `quality={85}` gives a good balance of sharpness vs file size for a
+            background photo. Default is 75; 85 is better for hero/bg images.
+          - `sizes` tells the browser how wide this image actually renders:
+            on screens ≤1024px it takes full width, otherwise ~half the screen.
+            This lets Next.js serve the right-sized file instead of always
+            sending the full-res version.
+        */}
+        <Image
+          src="/assets/pnp-bg.jpg"
+          alt=""
+          fill
+          priority
+          quality={85}
+          sizes="(max-width: 1024px) 100vw, 60vw"
+          className="object-cover object-center"
+        />
+
+        {/* Dark overlay — pure CSS, no image needed */}
         <div className="absolute inset-0 bg-[#2e4769]/75 mix-blend-overlay" />
 
         {/* Top: logo badge + PNP watermark */}
         <div className="relative z-10 flex items-start justify-between">
           <div className="inline-flex items-center gap-3 border-[3px] border-[#fde047] rounded-full pl-2 pr-5 py-1.5 bg-[#1b365d]/80 backdrop-blur-sm shadow-xl">
-            <Image src="/assets/dnppo-logo.png" alt="DNPPO Logo" width={40} height={40}
-              priority sizes="40px" className="w-10 h-10 rounded-full bg-white object-contain" />
+            {/*
+              IMAGE OPTIMIZATION — DNPPO logo:
+              - `priority` because it's above the fold and part of the brand header.
+              - Explicit width/height prevents layout shift (CLS).
+              - `sizes="40px"` is accurate — it always renders at exactly 40px.
+            */}
+            <Image
+              src="/assets/dnppo-logo.png"
+              alt="DNPPO Logo"
+              width={40}
+              height={40}
+              priority
+              sizes="40px"
+              className="w-10 h-10 rounded-full bg-white object-contain"
+            />
             <span className="text-[#fde047] font-serif text-base leading-tight font-medium tracking-wide">
               Davao Norte Police Provincial Office
             </span>
           </div>
-          <Image src="/assets/pnp-logo.png" alt="PNP Logo" width={70} height={70}
-            sizes="70px" className="w-[70px] h-auto drop-shadow-2xl opacity-80" />
+
+          {/*
+            IMAGE OPTIMIZATION — PNP logo:
+            - `priority` because it's above the fold.
+            - `sizes="70px"` matches the actual rendered size (w-[70px]).
+          */}
+          <Image
+            src="/assets/pnp-logo.png"
+            alt="Philippine National Police Logo"
+            width={70}
+            height={70}
+            priority
+            sizes="70px"
+            className="w-[70px] h-auto drop-shadow-2xl opacity-80"
+          />
         </div>
 
         {/* Middle: headline */}
