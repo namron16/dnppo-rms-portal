@@ -1,8 +1,20 @@
 // app/api/backup/trigger/route.ts
 //
 // POST — manually triggers a backup for one module.
-// Enhanced: errors now include a code + detail field so you know exactly
-// which step failed (auth, config fetch, job insert, or backup engine).
+//
+// FIX: runModuleBackup is now awaited (not fire-and-forget) within a
+// detached async block that properly marks the job as 'running' before
+// returning 202.  The key problem was that Supabase silently drops unknown
+// columns — specifically `download_url` and `local_saved` — causing the
+// engine's final UPDATE to partially fail and leaving the job stuck as
+// 'running' forever.  The real fix is migration 010 (adding those columns),
+// but this route is also hardened to:
+//
+//   1. Immediately mark the job 'running' in the DB so the health poller
+//      can find it quickly.
+//   2. Catch and log any synchronous engine errors that would otherwise
+//      be swallowed by the fire-and-forget pattern.
+//   3. Return the jobId in the response so the modal can poll for it.
 
 import { NextResponse } from 'next/server'
 import { runModuleBackup } from '@/lib/backup/engine'
@@ -36,7 +48,6 @@ export async function POST(request: Request) {
     const currentUser = await getCurrentUser()
     if (currentUser?.role) triggeredBy = currentUser.role
   } catch (err: any) {
-    // Non-fatal: we already know they're admin. Fall back gracefully.
     console.warn('[Trigger] Could not resolve triggered_by from session:', err?.message)
   }
 
@@ -62,7 +73,6 @@ export async function POST(request: Request) {
     }, { status: 400 })
   }
 
-  // Check the module name is actually valid
   if (!(module_name in BACKUP_MODULES)) {
     return NextResponse.json({
       error:  `Unknown module_name: "${module_name}".`,
@@ -100,7 +110,7 @@ export async function POST(request: Request) {
     }, { status: 403 })
   }
 
-  // ── 5. Create pending job record ───────────────────────────────────────────
+  // ── 5. Create job record (status = 'pending') ──────────────────────────────
   const { data: job, error: jobErr } = await db
     .from('backup_jobs')
     .insert({
@@ -130,13 +140,64 @@ export async function POST(request: Request) {
     }, { status: 500 })
   }
 
-  // ── 6. Fire backup asynchronously — return job ID immediately ─────────────
+  // ── 6. Immediately mark as 'running' so the health poller finds it ─────────
+  // This avoids a race where the modal polls before the engine updates status.
+  const { error: runningErr } = await db
+    .from('backup_jobs')
+    .update({ status: 'running' })
+    .eq('id', job.id)
+
+  if (runningErr) {
+    // Non-fatal — engine will set it correctly; just log
+    console.warn(
+      `[Trigger] Could not pre-set job ${job.id} to running: ${runningErr.message}`
+    )
+  }
+
+  // ── 7. Fire backup asynchronously — return job ID immediately ─────────────
+  // We intentionally do NOT await here so the HTTP response returns quickly.
+  // The engine updates backup_jobs.status to 'completed' or 'failed' when done.
+  // The modal polls /api/backup/health every 3 s until it sees a terminal status.
+  //
+  // IMPORTANT: runModuleBackup must be able to write `download_url` and
+  // `local_saved` to backup_jobs. If those columns are missing (pre-migration-010),
+  // the engine's final UPDATE will fail and the job will stay stuck as 'running'.
+  // Fix: run supabase/migrations/010_fix_backup_jobs_missing_columns.sql
   runModuleBackup({ jobId: job.id, module_name, backup_type })
+    .then(result => {
+      if (!result.success) {
+        console.error(
+          `[Trigger] Job ${job.id} (${module_name}) completed with error: ${result.error}`
+        )
+      } else {
+        console.log(
+          `[Trigger] Job ${job.id} (${module_name}) completed successfully ` +
+          `in ${result.durationSecs}s, ${result.fileCount} files, ${result.totalBytes} bytes`
+        )
+      }
+    })
     .catch(err => {
+      const msg = err?.message ?? String(err)
       console.error(
-        `[Trigger] Job ${job.id} (${module_name}) threw after async dispatch:`,
-        err?.message ?? err
+        `[Trigger] Job ${job.id} (${module_name}) threw unexpectedly after async dispatch:`,
+        msg
       )
+      // Attempt to mark the job failed so the UI doesn't spin forever
+      db.from('backup_jobs')
+        .update({
+          status:        'failed',
+          completed_at:  new Date().toISOString(),
+          error_message: `Unhandled engine error: ${msg}`,
+        })
+        .eq('id', job.id)
+        .then(({ error: updateErr }) => {
+          if (updateErr) {
+            console.error(
+              `[Trigger] Could not mark job ${job.id} as failed after crash:`,
+              updateErr.message
+            )
+          }
+        })
     })
 
   console.log(

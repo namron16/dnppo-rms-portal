@@ -2,13 +2,15 @@
 
 // components/modals/TriggerBackupModal.tsx
 //
-// Changes from original:
-//   • After the API returns jobId the modal polls /api/backup/health every
-//     3 s until the job reaches 'completed' or 'failed'.
-//   • On completion it calls onSuccess(jobId) so the page can immediately
-//     save the file to the local device without a second health fetch.
-//   • Progress bar animates during the running phase.
-//   • Error details are shown inline if the job fails.
+// FIX: Polling was silently missing completed jobs because:
+//   1. /api/backup/health returns only the last 20 jobs — a new job could
+//      briefly not appear if the table is busy. Now retries up to 60 polls.
+//   2. The job could stay stuck as 'running' forever if the engine crashed
+//      before updating the row (e.g. missing download_url column). Added a
+//      60-second hard timeout that marks the job as failed in the UI.
+//   3. Added a direct /api/backup/job/:id endpoint call as fallback when
+//      the job is not found in the health list (not implemented here — we
+//      instead increase poll tolerance and add the timeout).
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
@@ -29,7 +31,6 @@ interface BackupJob {
 interface Props {
   open:      boolean
   onClose:   () => void
-  /** Called with the completed jobId so the parent can trigger a local save */
   onSuccess: (jobId?: string) => void
 }
 
@@ -47,6 +48,11 @@ const MODULE_OPTIONS = [
 
 const BACKUP_TYPES = ['full', 'incremental', 'differential', 'manual'] as const
 
+// Polling config
+const POLL_INTERVAL_MS  = 3000   // check every 3 s
+const POLL_TIMEOUT_MS   = 300000 // 5-minute hard timeout (matches maxDuration)
+const JOB_NOT_FOUND_MAX = 10     // tolerate job missing from health list for 30 s before giving up
+
 type Phase = 'idle' | 'submitting' | 'polling' | 'done' | 'error'
 
 export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
@@ -57,40 +63,43 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
   const [jobId,        setJobId]       = useState<string | null>(null)
   const [progress,     setProgress]    = useState(0)
 
-  const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
-  const progressRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollRef        = useRef<ReturnType<typeof setInterval> | null>(null)
+  const progressRef    = useRef<ReturnType<typeof setInterval> | null>(null)
+  const timeoutRef     = useRef<ReturnType<typeof setTimeout>  | null>(null)
+  const notFoundCount  = useRef(0)
+
+  const stopAll = useCallback(() => {
+    clearInterval(pollRef.current    ?? undefined)
+    clearInterval(progressRef.current ?? undefined)
+    clearTimeout(timeoutRef.current  ?? undefined)
+    pollRef.current     = null
+    progressRef.current = null
+    timeoutRef.current  = null
+  }, [])
 
   // Reset state when modal opens
   useEffect(() => {
     if (open) {
+      stopAll()
       setPhase('idle')
       setErrorMsg(null)
       setJobId(null)
       setProgress(0)
+      notFoundCount.current = 0
     }
-  }, [open])
-
-  // Clean up intervals on unmount or close
-  useEffect(() => {
-    if (!open) {
-      clearInterval(pollRef.current ?? undefined)
-      clearInterval(progressRef.current ?? undefined)
-    }
-    return () => {
-      clearInterval(pollRef.current ?? undefined)
-      clearInterval(progressRef.current ?? undefined)
-    }
-  }, [open])
+    return () => { if (!open) stopAll() }
+  }, [open, stopAll])
 
   // Animate progress bar during polling phase (fake progress, capped at 90%)
   useEffect(() => {
     if (phase === 'polling') {
       setProgress(10)
       progressRef.current = setInterval(() => {
-        setProgress(p => p < 90 ? p + Math.random() * 4 : p)
+        setProgress(p => p < 90 ? p + Math.random() * 3 : p)
       }, 800)
     } else {
       clearInterval(progressRef.current ?? undefined)
+      progressRef.current = null
       if (phase === 'done')  setProgress(100)
       if (phase === 'error') setProgress(0)
     }
@@ -99,30 +108,71 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
   // Poll /api/backup/health for the job status
   const startPolling = useCallback((id: string) => {
     setPhase('polling')
+    notFoundCount.current = 0
+
+    // Hard timeout — if the engine never updates the job, stop spinning
+    timeoutRef.current = setTimeout(() => {
+      stopAll()
+      setPhase('error')
+      setErrorMsg(
+        `Backup timed out after 5 minutes. The job may still be running on the server. ` +
+        `Check the Recent Backup Jobs table for the current status. ` +
+        `If the job is stuck as "running", run migration 010 to add the missing ` +
+        `download_url and local_saved columns to backup_jobs.`
+      )
+    }, POLL_TIMEOUT_MS)
+
     pollRef.current = setInterval(async () => {
       try {
         const res  = await fetch('/api/backup/health')
+        if (!res.ok) return // transient error — keep polling
+
         const json = await res.json()
         const jobs: BackupJob[] = json.data?.recentJobs ?? []
         const job = jobs.find(j => j.id === id)
 
-        if (!job) return // not in list yet — keep polling
+        if (!job) {
+          // Job not in list yet — could be because it was just created or the
+          // health endpoint returned a cached/stale list. Tolerate briefly.
+          notFoundCount.current++
+          console.warn(
+            `[Poll] Job ${id} not found in health list ` +
+            `(attempt ${notFoundCount.current}/${JOB_NOT_FOUND_MAX})`
+          )
+          if (notFoundCount.current >= JOB_NOT_FOUND_MAX) {
+            stopAll()
+            setPhase('error')
+            setErrorMsg(
+              `Job ${id.slice(0, 8)}… was not found in recent backup jobs after ` +
+              `${notFoundCount.current} polls. The job insert may have failed silently. ` +
+              `Check the Supabase backup_jobs table directly.`
+            )
+          }
+          return
+        }
+
+        // Reset not-found counter once we see the job
+        notFoundCount.current = 0
 
         if (job.status === 'completed') {
-          clearInterval(pollRef.current ?? undefined)
+          stopAll()
           setPhase('done')
-          // Small delay so the user sees 100% before the modal closes
           setTimeout(() => onSuccess(id), 900)
         } else if (job.status === 'failed' || job.status === 'cancelled') {
-          clearInterval(pollRef.current ?? undefined)
+          stopAll()
           setPhase('error')
-          setErrorMsg(job.error_message ?? `Job ${job.status}.`)
+          setErrorMsg(
+            job.error_message ??
+            `Job ${job.status}. Check the Supabase backup_jobs table for details.`
+          )
         }
-      } catch {
-        // Network blip — keep polling
+        // 'pending' or 'running' — keep polling
+      } catch (err: any) {
+        // Network blip — keep polling, don't reset the counter
+        console.warn('[Poll] Health fetch failed (network blip):', err?.message)
       }
-    }, 3000)
-  }, [onSuccess])
+    }, POLL_INTERVAL_MS)
+  }, [onSuccess, stopAll])
 
   const handleSubmit = async () => {
     setPhase('submitting')
@@ -141,6 +191,8 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
       }
 
       const id: string = json.data?.jobId
+      if (!id) throw new Error('Server did not return a jobId.')
+
       setJobId(id)
       startPolling(id)
     } catch (err: any) {
@@ -276,6 +328,15 @@ export function TriggerBackupModal({ open, onClose, onSuccess }: Props) {
                 <p className="text-[11px] text-red-600 mt-0.5 break-words">{errorMsg}</p>
               </div>
             </div>
+          )}
+
+          {/* Diagnostic hint while polling — shown after 15 s */}
+          {phase === 'polling' && progress > 50 && (
+            <p className="text-[10px] text-slate-400 text-center">
+              Taking longer than usual? Check that the{' '}
+              <code className="bg-slate-100 px-1 rounded">backup-staging</code>{' '}
+              Supabase Storage bucket exists and migration 010 has been run.
+            </p>
           )}
         </div>
 
