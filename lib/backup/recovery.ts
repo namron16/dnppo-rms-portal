@@ -4,6 +4,7 @@ import { getServiceClient } from '@/lib/gdrive-pool/db'
 import { decryptBackupData, verifyChecksum } from './encryption'
 import { uploadViaPool } from '@/lib/gdrive-pool/migrate-modal'
 import { verifyManifestIntegrity, type BackupManifest } from './manifest'
+import { createHash } from 'crypto'
 import type { BackupModuleName } from './modules'
 import { BACKUP_MODULES } from './modules'
 
@@ -67,23 +68,21 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
     console.log(`[Recovery] Loading backup: ${backupJob.backup_folder_name}`)
     const zip = await loadBackupZip(backupJob.download_url)
 
-    // ── 3. Parse and validate manifest ───────────────────────────────────────
-    const manifest = await extractManifest(zip, backupJob.backup_folder_name)
+    // ── 3. Parse and validate manifest ───────────────────────────────────────────
+      const manifestFile   = zip.file(`${backupJob.backup_folder_name}/MANIFEST.json`)
+      const manifestRaw    = await manifestFile.async('nodebuffer')          // raw bytes
+      const manifest       = JSON.parse(manifestRaw.toString('utf8')) as BackupManifest
 
-    if (!verifyManifestIntegrity(manifest)) {
-      throw new Error('Manifest integrity check failed — backup may be corrupted or tampered with.')
-    }
+      if (!verifyManifestIntegrity(manifest)) {
+        throw new Error('Manifest integrity check failed — backup may be corrupted or tampered with.')
+      }
 
-    // Cross-check manifest checksum against the value stored in backup_jobs
-    const manifestJson    = JSON.stringify(manifest)
-    const recomputedCheck = require('crypto')
-      .createHash('sha256')
-      .update(Buffer.from(manifestJson))
-      .digest('hex')
+      // FIX: hash the raw bytes (same as engine.ts does), not a re-serialized string
+      const recomputedCheck = createHash('sha256').update(manifestRaw).digest('hex')
 
-    if (recomputedCheck !== backupJob.manifest_checksum) {
-      throw new Error('Manifest checksum mismatch against backup_jobs record — aborting recovery.')
-    }
+      if (recomputedCheck !== backupJob.manifest_checksum) {
+        throw new Error('Manifest checksum mismatch against backup_jobs record — aborting recovery.')
+      }
 
     console.log(`[Recovery] Manifest validated. Module: ${manifest.module}`)
 
