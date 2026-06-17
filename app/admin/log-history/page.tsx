@@ -12,6 +12,7 @@ import { usePagination } from '@/hooks'
 import { createClient }  from '@/lib/supabase/client'
 import type { AdminRole } from '@/lib/auth'
 import type { LogActionType } from '@/lib/adminLogger'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 
 // ── Types ─────────────────────────────────────
 interface AdminLog {
@@ -235,6 +236,18 @@ export default function LogHistoryPage() {
       .map(a => ACTION_CONFIG[a].label)
       .filter(label => !hiddenLabels.has(label))
   )).sort()
+
+  // right after your existing hooks, before the main return
+    if (loading) {
+      return (
+        <>
+          <PageHeader title="Activity Log History" />
+          <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 56px)' }}>
+            <LoadingSpinner size="lg" />
+          </div>
+        </>
+      )
+    }
 
   return (
     <>

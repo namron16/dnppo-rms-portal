@@ -52,6 +52,7 @@ import {
   canUploadDocuments, canEditDocuments, canDeleteDocuments, canArchiveDocuments,
 } from '@/lib/permissions'
 import { Archive, Copy, Download, Eye, PencilLine, Share2, Trash2, MoreHorizontal } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 
 // ── Privileged roles that see ALL entries regardless of uploader ──────────────
 const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
@@ -585,6 +586,18 @@ export default function DailyJournalsPage() {
     : null
 
   const attachmentsMap = new Map<string, any[]>()
+
+  // right after your existing hooks, before the main return
+      if (loading) {
+        return (
+          <>
+            <PageHeader title="Daily Journals" />
+            <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 56px)' }}>
+              <LoadingSpinner size="lg" />
+            </div>
+          </>
+        )
+      }
 
   return (
     <>

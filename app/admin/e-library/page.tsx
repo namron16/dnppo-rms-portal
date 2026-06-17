@@ -45,6 +45,7 @@ import {
 } from '@/lib/permissions'
 import { isDocumentUnrestricted } from '@/lib/rbac'
 import type { LibraryItem, LibraryCategory, LibraryItemWithUrl } from '@/types'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 
 // ── Privileged roles that see ALL items regardless of uploader ────────────────
 const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
@@ -519,6 +520,18 @@ export default function LibraryPage() {
         mimeType:      forwardDisc.payload.mime_type,
       }
     : null
+
+      // right after your existing hooks, before the main return
+    if (loading) {
+      return (
+        <>
+          <PageHeader title="e-Library" />
+          <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 56px)' }}>
+            <LoadingSpinner size="lg" />
+          </div>
+        </>
+      )
+    }
 
   return (
     <>

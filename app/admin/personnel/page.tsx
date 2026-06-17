@@ -27,6 +27,7 @@ import { status201BadgeClass, status201Icon, formatDate } from '@/lib/utils'
 import type { Personnel201, Doc201Item, Doc201Status, Doc201Category } from '@/types'
 import { addPersonnelSchema, editPersonnelSchema } from '@/lib/validations/personnel201'
 import type { AddPersonnelFormData, EditPersonnelFormData } from '@/lib/validations/personnel201'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 
 // ── Status Constants ──────────────────────────
 
@@ -1557,6 +1558,18 @@ export default function PersonnelFilesPage() {
     { icon: '❌', value: allDocs.filter(d => d.status === 'MISSING').length,          label: 'Documents Missing',  bg: 'bg-red-50',     num: 'text-red-700'     },
     { icon: '🗄', value: personnel.filter(p => p.status === 'Archived').length,       label: 'Auto-Archived',      bg: 'bg-slate-50',   num: 'text-slate-600'   },
   ]
+
+  // right after your existing hooks, before the main return
+  if (loading) {
+    return (
+      <>
+        <PageHeader title="Personnel 201 Files" />
+        <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 56px)' }}>
+          <LoadingSpinner size="lg" />
+        </div>
+      </>
+    )
+  }
 
   return (
     <>

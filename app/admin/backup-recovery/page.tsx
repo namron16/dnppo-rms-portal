@@ -24,6 +24,8 @@ import {
   type LocalStorageConfig,
   type SaveResult,
 } from '@/lib/backup/local-storage'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -301,6 +303,18 @@ export default function BackupRecoveryPage() {
   const scoreColor  = score >= 90 ? '#34d399' : score >= 70 ? '#fbbf24' : '#f87171'
   const circumference = 2 * Math.PI * 40
 
+
+  // right after your existing hooks, before the main return
+if (loading) {
+  return (
+    <>
+      <PageHeader title="Backup & Recovery" />
+      <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 56px)' }}>
+        <LoadingSpinner size="lg" />
+      </div>
+    </>
+  )
+}
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
 

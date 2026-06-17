@@ -17,6 +17,7 @@ import {
 } from './actions'
 import { ResetPasswordModal } from './ResetPasswordModal'
 import { EditEmailModal }     from './EditEmailModal'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -284,6 +285,18 @@ export default function UserManagementPage() {
     roleLevelColor[role] ?? 'bg-slate-100 text-slate-500'
 
   // ── Render ────────────────────────────────────────────────────────────────
+
+  // right after your existing hooks, before the main return
+    if (loading) {
+      return (
+        <>
+          <PageHeader title="User Management" />
+          <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 56px)' }}>
+            <LoadingSpinner size="lg" />
+          </div>
+        </>
+      )
+    }
 
   return (
     <>
