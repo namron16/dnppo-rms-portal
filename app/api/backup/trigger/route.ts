@@ -2,21 +2,27 @@
 //
 // POST — manually triggers a backup for one module.
 //
-// FIX: runModuleBackup is now awaited (not fire-and-forget) within a
-// detached async block that properly marks the job as 'running' before
-// returning 202.  The key problem was that Supabase silently drops unknown
-// columns — specifically `download_url` and `local_saved` — causing the
-// engine's final UPDATE to partially fail and leaving the job stuck as
-// 'running' forever.  The real fix is migration 010 (adding those columns),
-// but this route is also hardened to:
+// ROOT CAUSE OF "stuck at running forever, no errors":
+// This route used to fire `runModuleBackup(...)` without awaiting it, then
+// immediately returned a 202 response. On Vercel, a serverless function's
+// execution context can be frozen or torn down as soon as the response is
+// sent — orphaned promises are NOT guaranteed to keep running. That means
+// the backup engine could be killed mid-flight before it ever updates the
+// job status, downloads attachments, or logs an error. This is why nothing
+// showed up in the logs: the function was terminated, not failed.
 //
-//   1. Immediately mark the job 'running' in the DB so the health poller
-//      can find it quickly.
-//   2. Catch and log any synchronous engine errors that would otherwise
-//      be swallowed by the fire-and-forget pattern.
-//   3. Return the jobId in the response so the modal can poll for it.
+// FIX: wrap the detached work in Vercel's waitUntil(), which explicitly
+// extends the function's lifetime until the given promise settles. This is
+// the documented, supported way to do "respond now, finish work after" on
+// Vercel. See: https://vercel.com/docs/functions/functions-api-reference
+//
+// NOTE: waitUntil() still respects the route's maxDuration (300s here), so
+// very long backups can still hit the limit — but at minimum the job will
+// now either complete or be correctly killed in a way that's consistent
+// with the timeout, not silently abandoned the instant the response flushes.
 
 import { NextResponse } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { runModuleBackup } from '@/lib/backup/engine'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
 import { requireAdmin, getCurrentUser, AuthError } from '@/lib/backup/auth-guard'
@@ -141,29 +147,22 @@ export async function POST(request: Request) {
   }
 
   // ── 6. Immediately mark as 'running' so the health poller finds it ─────────
-  // This avoids a race where the modal polls before the engine updates status.
   const { error: runningErr } = await db
     .from('backup_jobs')
     .update({ status: 'running' })
     .eq('id', job.id)
 
   if (runningErr) {
-    // Non-fatal — engine will set it correctly; just log
     console.warn(
       `[Trigger] Could not pre-set job ${job.id} to running: ${runningErr.message}`
     )
   }
 
-  // ── 7. Fire backup asynchronously — return job ID immediately ─────────────
-  // We intentionally do NOT await here so the HTTP response returns quickly.
-  // The engine updates backup_jobs.status to 'completed' or 'failed' when done.
-  // The modal polls /api/backup/health every 3 s until it sees a terminal status.
-  //
-  // IMPORTANT: runModuleBackup must be able to write `download_url` and
-  // `local_saved` to backup_jobs. If those columns are missing (pre-migration-010),
-  // the engine's final UPDATE will fail and the job will stay stuck as 'running'.
-  // Fix: run supabase/migrations/010_fix_backup_jobs_missing_columns.sql
-  runModuleBackup({ jobId: job.id, module_name, backup_type })
+  // ── 7. Run the backup, kept alive past the response via waitUntil ─────────
+  // THIS IS THE CORE FIX. Without waitUntil, Vercel can tear down the
+  // function's execution context the instant the response below is sent,
+  // killing runModuleBackup mid-execution with no error logged anywhere.
+  const backupPromise = runModuleBackup({ jobId: job.id, module_name, backup_type })
     .then(result => {
       if (!result.success) {
         console.error(
@@ -176,29 +175,34 @@ export async function POST(request: Request) {
         )
       }
     })
-    .catch(err => {
+    .catch(async err => {
       const msg = err?.message ?? String(err)
       console.error(
-        `[Trigger] Job ${job.id} (${module_name}) threw unexpectedly after async dispatch:`,
+        `[Trigger] Job ${job.id} (${module_name}) threw unexpectedly:`,
         msg
       )
-      // Attempt to mark the job failed so the UI doesn't spin forever
-      db.from('backup_jobs')
+      // Mark the job failed so the UI doesn't spin forever even if the
+      // engine itself crashed before reaching its own catch block.
+      const { error: updateErr } = await db
+        .from('backup_jobs')
         .update({
           status:        'failed',
           completed_at:  new Date().toISOString(),
           error_message: `Unhandled engine error: ${msg}`,
         })
         .eq('id', job.id)
-        .then(({ error: updateErr }) => {
-          if (updateErr) {
-            console.error(
-              `[Trigger] Could not mark job ${job.id} as failed after crash:`,
-              updateErr.message
-            )
-          }
-        })
+
+      if (updateErr) {
+        console.error(
+          `[Trigger] Could not mark job ${job.id} as failed after crash:`,
+          updateErr.message
+        )
+      }
     })
+
+  // Tell Vercel: keep this function alive until backupPromise settles,
+  // even though we're about to return the HTTP response below.
+  waitUntil(backupPromise)
 
   console.log(
     `[Trigger] Job ${job.id} started for module="${module_name}", ` +
