@@ -41,9 +41,13 @@ const ROLE_META: Record<string, { color: string; name: string }> = {
   P10:  { color: '#10b981', name: 'Admin Officer P10' },
 }
 
-function getRoleColor(role: string)    { return ROLE_META[role]?.color ?? '#64748b' }
-function getRoleName(role: string)     { return ROLE_META[role]?.name  ?? role }
-function getRoleInitials(role: string) { return role.slice(0, 2).toUpperCase() }
+const DYNAMIC_COLORS = [
+  '#dc2626', '#1d4ed8', '#0d9488', '#16a34a', '#7c3aed',
+  '#0891b2', '#ca8a04', '#ea580c', '#e11d48', '#8b5cf6',
+  '#06b6d4', '#10b981', '#be185d', '#374151',
+]
+
+
 
 // ── Action config ──────────────────────────────
 const ACTION_CONFIG: Record<string, { label: string; icon: string; badgeCls: string }> = {
@@ -85,6 +89,7 @@ const ACTION_CONFIG: Record<string, { label: string; icon: string; badgeCls: str
   // ── Account management ────────────────────────────────────────────────────
   disable_account:        { label: 'Disable Account', icon: '🚫', badgeCls: 'bg-red-100 text-red-800 border-red-300' },
   enable_account:         { label: 'Enable Account',  icon: '🔓', badgeCls: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
+  delete_account: { label: 'Delete Account', icon: '🗑️', badgeCls: 'bg-red-100 text-red-800 border-red-300' },
 }
 
 function getActionConfig(action: string) {
@@ -134,6 +139,7 @@ export default function LogHistoryPage() {
   const { toast }  = useToast()
   const supabase   = useMemo(() => createClient(), [])
 
+  const [roleMeta, setRoleMeta] = useState<Record<string, { color: string; name: string }>>(ROLE_META)
   const [logs,     setLogs]     = useState<AdminLog[]>([])
   const [loading,  setLoading]  = useState(true)
   const [realtime, setRealtime] = useState(false)
@@ -174,6 +180,10 @@ export default function LogHistoryPage() {
 
     return () => { supabase.removeChannel(channel) }
   }, [supabase])
+
+    const getRoleColor    = (role: string) => roleMeta[role]?.color ?? '#64748b'
+    const getRoleName     = (role: string) => roleMeta[role]?.name  ?? role
+    const getRoleInitials = (role: string) => role.slice(0, 2).toUpperCase()
 
   // ── Filtering ────────────────────────────────
   const filtered = useMemo(() => {
@@ -236,6 +246,34 @@ export default function LogHistoryPage() {
       .map(a => ACTION_CONFIG[a].label)
       .filter(label => !hiddenLabels.has(label))
   )).sort()
+
+
+
+
+  // Load role_registry and merge any new roles into the map
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from('role_registry')
+      .select('role, display_name')
+      .eq('is_active', true)
+      .then(({ data }) => {
+        if (!data) return
+        setRoleMeta(prev => {
+          const merged = { ...prev }
+          data.forEach((r, i) => {
+            if (!merged[r.role]) {
+              // Assign a color from the pool (cycles if more roles than colors)
+              merged[r.role] = {
+                name:  r.display_name,
+                color: DYNAMIC_COLORS[i % DYNAMIC_COLORS.length],
+              }
+            }
+          })
+          return merged
+        })
+      })
+  }, [])
 
   // right after your existing hooks, before the main return
     if (loading) {

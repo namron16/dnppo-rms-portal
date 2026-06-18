@@ -15,11 +15,11 @@ export const FULL_ACCESS_ROLES: AdminRole[] = ['DPDA', 'DPDO']
 export const VIEWER_ROLES: AdminRole[] = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10']
 
 // Roles that may upload, edit, delete, or archive documents
-const DOCUMENT_WRITER_ROLES: AdminRole[] = [
-  'P1', 'P2', 'P3', 'P4', 'P5',
-  'P6', 'P7', 'P8', 'P9', 'P10',
-  'WCPD', 'PPSMU',
+const DOCUMENT_WRITER_ROLES_KNOWN = [
+  'P1','P2','P3','P4','P5','P6','P7','P8','P9','P10','WCPD','PPSMU',
 ]
+
+const NON_WRITER_ROLES = ['admin', 'PD', 'DPDA', 'DPDO']
 
 export const ROLE_META: Record<AdminRole, { name: string; level: 'head' | 'deputy' | 'super_admin' | 'viewer' }> = {
   PD:    { name: 'Provincial Director',              level: 'head'        },
@@ -40,31 +40,42 @@ export const ROLE_META: Record<AdminRole, { name: string; level: 'head' | 'deput
   PPSMU: { name: 'Admin Officer PPSMU',              level: 'viewer'      },
 }
 
+export function getRoleMeta(role: string): { name: string; level: 'head' | 'deputy' | 'super_admin' | 'viewer' } {
+  return ROLE_META[role as AdminRole] ?? {
+    name:  role,       // Fall back to the role ID itself
+    level: 'viewer',
+  }
+}
+
 // ── Document write permissions ────────────────────────────────────────────────
 
 /** True if this role may upload new documents to any module. */
 export function canUploadDocuments(role: AdminRole): boolean {
-  return DOCUMENT_WRITER_ROLES.includes(role)
+  if (NON_WRITER_ROLES.includes(role)) return false
+  // Known roles first for explicit check
+  if (DOCUMENT_WRITER_ROLES_KNOWN.includes(role)) return true
+  // Any unrecognized role that isn't leadership = writer by default
+  return true
 }
 
 /** True if this role may edit existing document metadata. */
 export function canEditDocuments(role: AdminRole): boolean {
-  return DOCUMENT_WRITER_ROLES.includes(role)
+  return canUploadDocuments(role)
 }
 
 /** True if this role may permanently delete documents. */
 export function canDeleteDocuments(role: AdminRole): boolean {
-  return DOCUMENT_WRITER_ROLES.includes(role)
+  return canUploadDocuments(role)
 }
 
 /** True if this role may archive documents. */
 export function canArchiveDocuments(role: AdminRole): boolean {
-  return DOCUMENT_WRITER_ROLES.includes(role)
+  return canUploadDocuments(role)
 }
 
 /** True if this role may forward documents to other roles. */
 export function canForwardDocuments(role: AdminRole): boolean {
-  return DOCUMENT_WRITER_ROLES.includes(role)
+  return canUploadDocuments(role)
 }
 
 // ── Specialised permissions ───────────────────────────────────────────────────
@@ -106,3 +117,4 @@ export function canSaveFromInbox(role: AdminRole): boolean {
 export function canAssignVisibility(role: AdminRole): boolean {
   return role === 'P1'
 }
+

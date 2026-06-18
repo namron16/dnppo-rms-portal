@@ -8,10 +8,7 @@ import { clearSession, registerSession }        from './sessionLock'
 import { setAdminActive, setAdminInactive }     from './accessRequests'
 import type { Session, User }                   from '@supabase/supabase-js'
 
-export type AdminRole =
-  | 'admin' | 'PD' | 'DPDA' | 'DPDO'
-  | 'P1' | 'P2' | 'P3' | 'P4' | 'P5'
-  | 'P6' | 'P7' | 'P8' | 'P9' | 'P10' | 'PPSMU' | 'WCPD'
+export type AdminRole = string // e.g. 'admin', 'P1', 'PD', 'DPDA', 'DPDO' — defined in DB
 
 export type RoleLevel = 'head' | 'deputy' | 'super_admin' | 'viewer' | 'admin'
 
@@ -45,15 +42,15 @@ function permissionsForRole(role: AdminRole): AdminUser['permissions'] {
     case 'PD':
       return { canUpload: false, canApproveReview: false, canApproveFinal: true,
                canManageUsers: false, canManageVisibility: false, canViewAll: true }
-    case 'DPDA':
-    case 'DPDO':
+    case 'DPDA': case 'DPDO':
       return { canUpload: false, canApproveReview: true, canApproveFinal: false,
                canManageUsers: false, canManageVisibility: false, canViewAll: true }
     case 'P1':
       return { canUpload: true, canApproveReview: false, canApproveFinal: false,
                canManageUsers: true, canManageVisibility: true, canViewAll: true }
     default:
-      return { canUpload: true, canApproveReview: false, canApproveFinal: true,
+      // Any new role gets standard officer permissions
+      return { canUpload: true, canApproveReview: false, canApproveFinal: false,
                canManageUsers: false, canManageVisibility: false, canViewAll: true }
   }
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, Suspense } from 'react'
+import { useState, useCallback, Suspense, useEffect } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -9,24 +9,8 @@ import { getDefaultAdminRoute, type SessionRole } from '@/lib/adminRouteAccess'
 
 // ── Role map ──────────────────────────────────────────────────────────────────
 
-const ROLE_IDS = [
-  'admin', 'DPDA',
-  'P1', 'P2', 'P3', 'P4', 'P5',
-  'P6', 'P7', 'P8', 'P9', 'P10', 'PPSMU', 'WCPD',
-] as const
 
-function getRoleLabel(id: string): string {
-  switch (id) {
-    case 'admin': return 'admin — Super Administrator'
-    case 'DPDA':  return 'DPDA — Deputy Director for Administration'
-    case 'P1':    return 'P1 — Records Officer'
-    case 'PPSMU': return 'PPSMU — Provincial Police Strategy Management Unit'
-    case 'WCPD':  return 'WCPD — Women and Children Protection Desk'
-    default:      return `${id} — Admin Officer ${id}`
-  }
-}
 
-const ROLE_OPTIONS = ROLE_IDS.map(id => ({ id, label: getRoleLabel(id) }))
 
 // ── Password strength helper ──────────────────────────────────────────────────
 
@@ -127,11 +111,14 @@ const FEATURES = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 function LoginForm() {
+  const [roleOptions, setRoleOptions] = useState<{ id: string; label: string }[]>([])
+
   const { loginPassword, sendPasswordResetOTP, verifyOTPAndReset } = useAuth()
   const router       = useRouter()
   const searchParams = useSearchParams()
   const reason       = searchParams.get('reason')
 
+  
   const [view,    setView]    = useState<View>('login')
   const [loading, setLoading] = useState(false)
 
@@ -151,6 +138,23 @@ function LoginForm() {
   const [showConPw, setShowConPw] = useState(false)
 
   const pwStrength = getPwStrength(newPw)
+
+   useEffect(() => {
+    async function loadRoles() {
+      const { createClient } = await import('@/lib/supabase/client')
+      const supabase = createClient()
+      const { data } = await supabase.rpc('get_active_roles')
+      if (data) {
+        setRoleOptions(
+          (data as { role: string; display_name: string }[]).map(r => ({
+            id:    r.role,
+            label: `${r.role} — ${r.display_name}`,
+          }))
+        )
+      }
+    }
+    void loadRoles()
+  }, [])
 
   function goToLogin() {
     setView('login')
@@ -255,7 +259,7 @@ function LoginForm() {
                   name="username"
                 >
                   <option value="" disabled>Select your admin role</option>
-                  {ROLE_OPTIONS.map(r => (
+                  {roleOptions.map(r => (
                     <option key={r.id} value={r.id}>{r.label}</option>
                   ))}
                 </select>
@@ -377,7 +381,7 @@ function LoginForm() {
                 <select value={fpRoleId} onChange={e => { setFpRoleId(e.target.value); setFpError('') }}
                   className={inputCls(!!fpError && !fpRoleId)} disabled={loading}>
                   <option value="" disabled>Select your admin role</option>
-                  {ROLE_OPTIONS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                  {roleOptions.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
                 </select>
               </div>
               <button type="button" onClick={handleSendOTP} disabled={loading || !fpRoleId}

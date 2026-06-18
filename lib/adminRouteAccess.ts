@@ -1,102 +1,58 @@
-export type SessionRole = 'admin' | 'PD' | 'DPDA' | 'DPDO' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9' | 'P10' | 'PPSMU' | 'WCPD'
+// lib/adminRouteAccess.ts
+// Dynamic role access. Standard 'documents' roles get DOC_ROUTES automatically.
+// Special roles (admin, DPDA) keep their hardcoded routes.
+// New roles created via the dashboard get documents access by default.
 
-const PUBLIC_ROUTES = [
-  '/privacy-policy',
-  '/terms-and-condition',
-] as const
+export type SessionRole = string   // No longer a fixed union — any role string is valid
+
+const PUBLIC_ROUTES = ['/privacy-policy', '/terms-and-condition'] as const
 
 const DOC_ROUTES = [
-  '/admin/master',
-  '/admin/admin-orders',
-  '/admin/personnel',
-  '/admin/daily-journals',
-  '/admin/organization',
-  '/admin/e-library',
-  '/admin/forwarded',
-  '/admin/archive',
+  '/admin/master', '/admin/admin-orders', '/admin/personnel',
+  '/admin/daily-journals', '/admin/organization', '/admin/e-library',
+  '/admin/forwarded', '/admin/archive',
 ] as const
 
 const VIEWER_DOC_ROUTES = [
-  '/admin/master',
-  '/admin/admin-orders',
-  '/admin/daily-journals',
-  '/admin/organization',
-  '/admin/e-library',
-  '/admin/forwarded',
-  '/admin/archive',
+  '/admin/master', '/admin/admin-orders', '/admin/daily-journals',
+  '/admin/organization', '/admin/e-library', '/admin/forwarded', '/admin/archive',
 ] as const
 
 const P2_DOC_ROUTES = [
-  '/admin/master',
-  '/admin/admin-orders',
-  '/admin/classified-documents',
-  '/admin/organization',
-  '/admin/e-library',
-  '/admin/forwarded',
-  '/admin/archive',
+  '/admin/master', '/admin/admin-orders', '/admin/classified-documents',
+  '/admin/organization', '/admin/e-library', '/admin/forwarded', '/admin/archive',
 ] as const
 
 const ADMIN_ROUTES = [
-  '/admin/log-history',
-  '/admin/user-management',
-  '/admin/gdrive',
-  '/admin/backup-recovery',
+  '/admin/log-history', '/admin/user-management',
+  '/admin/gdrive', '/admin/backup-recovery',
 ] as const
 
-const DPDA_ROUTES = [
-  '/admin/dpda-inbox',
-] as const
+const DPDA_ROUTES   = ['/admin/inbox'] as const
 
-const P1_ONLY_ROUTES: readonly string[] = []
-
-const ROLE_DEFAULT_ROUTE: Record<SessionRole, string> = {
-  admin: '/admin/log-history',
-  PD: '/admin/master',
-  DPDA: '/admin/dpda-inbox',
-  DPDO: '/admin/dpda-inbox',
-  P1: '/admin/master',
-  P2: '/admin/master',
-  P3: '/admin/master',
-  P4: '/admin/master',
-  P5: '/admin/master',
-  P6: '/admin/master',
-  P7: '/admin/master',
-  P8: '/admin/master',
-  P9: '/admin/master',
-  P10: '/admin/master',
-  PPSMU: '/admin/master',
-  WCPD: '/admin/master',
-}
-
-function uniqueRoutes(routes: string[]): string[] {
-  return Array.from(new Set(routes))
-}
+// Roles that use the full docs nav (includes 201 files)
+const FULL_DOC_ROLES = ['P1', 'PD'] as const
+// Roles with their own special nav
+const SPECIAL_CASES  = ['admin', 'DPDA', 'DPDO', 'P2'] as const
 
 export function getDefaultAdminRoute(role: SessionRole): string {
-  return ROLE_DEFAULT_ROUTE[role]
+  if (role === 'admin')               return '/admin/log-history'
+  if (role === 'DPDA' || role === 'DPDO') return '/admin/inbox'
+  return '/admin/master'
 }
 
 export function getAllowedAdminRoutes(role: SessionRole): string[] {
-  const viewerRoles = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'PPSMU', 'WCPD'] as const
-  const docs = role === 'admin'
-    ? []
-    : role === 'P2'
-      ? [...P2_DOC_ROUTES]
-      : viewerRoles.includes(role as typeof viewerRoles[number])
-        ? [...VIEWER_DOC_ROUTES]
-        : [...DOC_ROUTES]
-  const admin = role === 'admin' ? [...ADMIN_ROUTES] : []
-  const dpdaRoutes = (role === 'DPDA' || role === 'DPDO') ? [...DPDA_ROUTES] : []
-  const p1Only = role === 'P1' ? [...P1_ONLY_ROUTES] : []
-  return uniqueRoutes([...docs, ...admin, ...dpdaRoutes, ...p1Only])
+  if (role === 'admin')               return [...ADMIN_ROUTES]
+  if (role === 'DPDA' || role === 'DPDO') return [...DPDA_ROUTES, ...VIEWER_DOC_ROUTES]
+  if (role === 'P2')                  return [...P2_DOC_ROUTES]
+  if ((FULL_DOC_ROLES as readonly string[]).includes(role)) return [...DOC_ROUTES]
+  // Default: all other roles (P3–P10, WCPD, PPSMU, and ANY new role) get viewer doc routes
+  return [...VIEWER_DOC_ROUTES]
 }
 
 export function isAllowedAdminPath(pathname: string, role: SessionRole): boolean {
   if (pathname === '/admin') return true
-
-  // Public routes are always allowed
-  if (PUBLIC_ROUTES.some(route => pathname === route)) return true
-
+  if (PUBLIC_ROUTES.some(r => pathname === r)) return true
   const routes = getAllowedAdminRoutes(role)
-  return routes.some(route => pathname === route || pathname.startsWith(`${route}/`))
+  return routes.some(r => pathname === r || pathname.startsWith(`${r}/`))
 }

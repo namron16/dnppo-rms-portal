@@ -107,6 +107,20 @@ export function Sidebar() {
   // Local overrides — updated after profile save
   const [localDisplayName, setLocalDisplayName] = useState<string | null>(null)
   const [localAvatarUrl,   setLocalAvatarUrl]   = useState<string | null>(null)
+  const [navGroup, setNavGroup] = useState<string | null>(null)
+
+  useEffect(() => {
+  if (!user) return
+  const supabase = createClient()
+  supabase
+    .from('role_registry')
+    .select('nav_group, is_viewer_only')
+    .eq('role', user.role)
+    .single()
+    .then(({ data }) => {
+      if (data) setNavGroup(data.nav_group)
+    })
+}, [user?.role])
 
   // Reset local overrides when user changes (e.g. logout/login)
   useEffect(() => {
@@ -241,11 +255,11 @@ export function Sidebar() {
     if (avatarUrl)   setLocalAvatarUrl(avatarUrl)
   }
 
-  const isAdmin = user && ['admin'].includes(user.role)
-  const isDPDA = user && ['DPDA', 'DPDO'].includes(user.role)
-  const canSeeP2    = user?.role === 'P2'
-  const isViewerNo201 = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'PPSMU', 'WCPD'].includes(user?.role ?? '')
-  const isP1        = user?.role === 'P1'
+    const isAdmin       = navGroup === 'admin'
+    const isDPDA        = navGroup === 'dpda'
+    const isViewerNo201 = navGroup === 'documents' && user?.role !== 'P1' && user?.role !== 'P2'
+    const isP1          = user?.role === 'P1'
+    const canSeeP2      = user?.role === 'P2'
 
   // Effective display values (auth sync > temporary local override)
   const displayName = localDisplayName ?? user?.name ?? user?.role ?? ''

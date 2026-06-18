@@ -18,6 +18,8 @@ import {
 import { ResetPasswordModal } from './ResetPasswordModal'
 import { EditEmailModal }     from './EditEmailModal'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { CreateAccountModal } from './CreateAccountModal'
+import {DeleteAccountModal} from './DeleteAccountModal'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -60,6 +62,13 @@ export default function UserManagementPage() {
 
   const [resetTarget,     setResetTarget]     = useState<{ id: string; displayName: string } | null>(null)
   const [editEmailTarget, setEditEmailTarget] = useState<{ id: string; displayName: string; email?: string } | null>(null)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [deleteTarget,    setDeleteTarget]    = useState<{
+      userId:      string
+      role:        string
+      displayName: string
+      email:       string
+    } | null>(null)
 
   const usersRef = useRef<ManagedUser[]>([])
   usersRef.current = users
@@ -312,6 +321,14 @@ export default function UserManagementPage() {
               {onlineCount} online
             </span>
           </div>
+          {user?.role === 'admin' && (
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="ml-2 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition"
+              >
+                + Create Account
+              </button>
+            )}
 
           <div className="ml-auto">
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-all ${
@@ -480,6 +497,21 @@ export default function UserManagementPage() {
                             >
                               Edit Email
                             </button>
+                            {/* Only show delete for non-protected roles */}
+                            {user?.role === 'admin' && !['admin', 'PD'].includes(u.role) && (
+                              <button
+                                onClick={() => setDeleteTarget({
+                                  userId:      u.id,
+                                  role:        u.role,
+                                  displayName: u.displayName,
+                                  email:       u.email ?? '',
+                                })}
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-red-600 hover:bg-red-50 border border-red-200 transition"
+                                title="Permanently delete this account"
+                              >
+                                🗑️ Delete
+                              </button>
+                            )}
                           </div>
                         </td>
 
@@ -521,6 +553,32 @@ export default function UserManagementPage() {
           onSuccess={handleEditEmailSuccess}
         />
       )}
+
+      {showCreateModal && (
+          <CreateAccountModal
+            onClose={() => setShowCreateModal(false)}
+            onSuccess={(role) => {
+              setShowCreateModal(false)
+              setMessage({ type: 'info', text: `Account "${role}" created successfully. Reloading…` })
+              void load()   // refresh the user list
+            }}
+          />
+        )}
+
+        {deleteTarget && (
+          <DeleteAccountModal
+            userId={deleteTarget.userId}
+            role={deleteTarget.role}
+            displayName={deleteTarget.displayName}
+            email={deleteTarget.email}
+            onClose={() => setDeleteTarget(null)}
+            onSuccess={() => {
+              setDeleteTarget(null)
+              setMessage({ type: 'info', text: `Account "${deleteTarget.role}" deleted. Don't forget to remove ${deleteTarget.email} from Google Cloud Console → Test Users.` })
+              void load()
+            }}
+          />
+        )}
     </>
   )
 }
