@@ -1033,13 +1033,20 @@ export default function AdminOrdersPage() {
     setUploadingId(null)
   }
 
-  async function handleAdd(newSO: SOWithUrl) {
-    await addSpecialOrder(newSO)
-    setOrders(prev => [newSO, ...prev])
-    setAttachmentsMap(prev => { const next = new Map(prev); next.set(newSO.id, []); return next })
-    setSelectedOrder(newSO)
-    setNavStack([{ kind: 'order', order: newSO }])
-  }
+async function handleAdd(newSO: SOWithUrl) {
+  await addSpecialOrder(newSO)
+  
+  // Only add if not already present (realtime may have beaten us to it)
+  setOrders(prev => prev.some(o => o.id === newSO.id) ? prev : [newSO, ...prev])
+  
+  setAttachmentsMap(prev => {
+    const next = new Map(prev)
+    next.set(newSO.id, [])
+    return next
+  })
+  setSelectedOrder(newSO)
+  setNavStack([{ kind: 'order', order: newSO }])
+}
 
   async function handleArchiveOrder() {
     const so = archiveDisc.payload
