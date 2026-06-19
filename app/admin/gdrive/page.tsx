@@ -54,31 +54,7 @@ interface StatusResponse {
 
 // All users who can have Drive accounts connected
 // DPDA is listed first as a special admin-level pool
-const [allUsers, setAllUsers] = useState<string[]>([
-  // fallback defaults while loading
-  'DPDA', 'DPDO','P1','P2','P3','P4','P5','P6','P7','P8','P9','P10','WCPD','PPSMU'
-])
 
-useEffect(() => {
-  async function loadUsers() {
-    const res  = await fetch('/api/gdrive/status')
-    const json = await res.json()
-    if (json.data?.accounts) {
-      // Build list from actual connected accounts + role_registry
-      const { createClient } = await import('@/lib/supabase/client')
-      const supabase = createClient()
-      const { data } = await supabase
-        .from('role_registry')
-        .select('role')
-        .eq('is_active', true)
-        .neq('role', 'admin')   // admin has no drive pool
-        .neq('role', 'PD')
-        .order('sort_order')
-      if (data) setAllUsers(data.map((r: { role: string }) => r.role))
-    }
-  }
-  void loadUsers()
-}, [])
 
 // =============================================================================
 // SUB-COMPONENTS
@@ -348,6 +324,32 @@ export default function GDriveAdminPage() {
   const [loadingHealth, setLoadingHealth] = useState(false)
   const [repairing,     setRepairing]     = useState(false)
   const [scanning,      setScanning]      = useState(false)
+
+  const [allUsers, setAllUsers] = useState<string[]>([
+  // fallback defaults while loading
+  'DPDA', 'DPDO','P1','P2','P3','P4','P5','P6','P7','P8','P9','P10','WCPD','PPSMU'
+])
+
+useEffect(() => {
+  async function loadUsers() {
+    const res  = await fetch('/api/gdrive/status')
+    const json = await res.json()
+    if (json.data?.accounts) {
+      // Build list from actual connected accounts + role_registry
+      const { createClient } = await import('@/lib/supabase/client')
+      const supabase = createClient()
+      const { data } = await supabase
+        .from('role_registry')
+        .select('role')
+        .eq('is_active', true)
+        .neq('role', 'admin')   // admin has no drive pool
+        .neq('role', 'PD')
+        .order('sort_order')
+      if (data) setAllUsers(data.map((r: { role: string }) => r.role))
+    }
+  }
+  void loadUsers()
+}, [])
 
   // ── Load status ──────────────────────────────────────────────────────────
   const loadStatus = useCallback(async () => {
