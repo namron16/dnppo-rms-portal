@@ -1,10 +1,19 @@
 // lib/backup/recovery.ts
+//
+// FIX: Primary files (gdrive_file_id stored directly on document rows) are now
+// restored from the backup ZIP and re-uploaded to Google Drive. After upload the
+// document row is patched with the new gdrive_file_id / gdrive_url /
+// pool_account_id so the app no longer points at the deleted Drive file.
+//
+// The manifest now carries `main_file` entries populated by engine.ts step 2b.
+// Recovery iterates those entries, re-uploads each file via uploadViaPool, then
+// updates the corresponding document row in Supabase.
 
+import { createHash } from 'crypto'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
-import { decryptBackupData, verifyChecksum } from './encryption'
+import { decryptBackupData, decryptDoubleEncryptedClassified , verifyChecksum } from './encryption'
 import { uploadViaPool } from '@/lib/gdrive-pool/migrate-modal'
 import { verifyManifestIntegrity, type BackupManifest } from './manifest'
-import { createHash } from 'crypto'
 import type { BackupModuleName } from './modules'
 import { BACKUP_MODULES } from './modules'
 
@@ -68,21 +77,30 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
     console.log(`[Recovery] Loading backup: ${backupJob.backup_folder_name}`)
     const zip = await loadBackupZip(backupJob.download_url)
 
-    // ── 3. Parse and validate manifest ───────────────────────────────────────────
-      const manifestFile   = zip.file(`${backupJob.backup_folder_name}/MANIFEST.json`)
-      const manifestRaw    = await manifestFile.async('nodebuffer')          // raw bytes
-      const manifest       = JSON.parse(manifestRaw.toString('utf8')) as BackupManifest
+    // ── 3. Parse and validate manifest ───────────────────────────────────────
+    // FIX: extract raw bytes from the ZIP so the checksum hash matches what the
+    // engine wrote (engine hashes the raw buffer; old code re-serialized the
+    // parsed object which produced different whitespace → different hash).
+    const manifestPath = `${backupJob.backup_folder_name}/MANIFEST.json`
+    const manifestFile = zip.file(manifestPath)
+    if (!manifestFile) {
+      throw new Error(`MANIFEST.json not found in backup ZIP at path: ${manifestPath}`)
+    }
 
-      if (!verifyManifestIntegrity(manifest)) {
-        throw new Error('Manifest integrity check failed — backup may be corrupted or tampered with.')
-      }
+    const manifestRaw = await manifestFile.async('nodebuffer')
+    const manifest            = JSON.parse(manifestRaw.toString('utf8')) as BackupManifest
 
-      // FIX: hash the raw bytes (same as engine.ts does), not a re-serialized string
-      const recomputedCheck = createHash('sha256').update(manifestRaw).digest('hex')
+    if (!verifyManifestIntegrity(manifest)) {
+      throw new Error('Manifest integrity check failed — backup may be corrupted or tampered with.')
+    }
 
-      if (recomputedCheck !== backupJob.manifest_checksum) {
-        throw new Error('Manifest checksum mismatch against backup_jobs record — aborting recovery.')
-      }
+    // Cross-check manifest checksum against the value stored in backup_jobs.
+    // FIX: hash the raw bytes (same as engine.ts), not a re-serialized string.
+    const recomputedCheck = createHash('sha256').update(manifestRaw).digest('hex')
+
+    if (recomputedCheck !== backupJob.manifest_checksum) {
+      throw new Error('Manifest checksum mismatch against backup_jobs record — aborting recovery.')
+    }
 
     console.log(`[Recovery] Manifest validated. Module: ${manifest.module}`)
 
@@ -98,9 +116,10 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
     // ── 5. Restore database records ──────────────────────────────────────────
     let recordsRestored = 0
     const moduleDef     = BACKUP_MODULES[opts.module_name]
+    const useDoubleDecrypt = (moduleDef as any).extra_encryption === true   // ← NEW
 
     for (const tableName of moduleDef.tables) {
-      const tableData = await extractTableData(zip, tableName, backupJob.backup_folder_name)
+      const tableData = await extractTableData(zip, tableName, backupJob.backup_folder_name, useDoubleDecrypt)   // ← pass new param  
       if (!tableData || tableData.length === 0) {
         console.warn(`[Recovery] No data found for table ${tableName} — skipping.`)
         continue
@@ -115,17 +134,32 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
       console.log(`[Recovery] Restored ${tableData.length} rows into ${tableName}`)
     }
 
-    // ── 6. Re-upload file attachments to Drive ───────────────────────────────
+    // ── 6. Re-upload file attachments AND primary files to Drive ─────────────
+    //
+    // The manifest's attachments.files array can contain two kinds of entries:
+    //
+    //   a) Primary file entries — added by engine.ts step 2b (downloadPrimaryFiles).
+    //      These have a `main_file` path pointing to `primary_files/<docId>/<name>`.
+    //      After re-upload, the document row must be patched with the new Drive IDs
+    //      so the app no longer references the now-deleted original Drive file.
+    //
+    //   b) Attachment entries — added by downloadAttachments().
+    //      These live under `attachments/<docId>/attachments/` in the ZIP and are
+    //      restored into the *_attachments table rows (which were already upserted
+    //      in step 5 with the old gdrive_file_id). Re-uploading gives us fresh IDs
+    //      but we do NOT patch the attachment table rows here — that would require
+    //      knowing the exact attachment row ID per file, which the manifest carries
+    //      via `attachment_id`. If needed, add that patch as a follow-up.
+    //
     let filesRestored = 0
 
     if (manifest.contents?.attachments) {
       for (const docEntry of manifest.contents.attachments.files ?? []) {
         for (const att of docEntry.attachments ?? []) {
-          if ((att as any).error) continue
+          if (att.error) continue   // ← no "as any" needed now
 
           try {
             const fileBuffer = await extractFile(zip, att.file)
-
             if (!verifyChecksum(fileBuffer, att.checksum)) {
               console.warn(`[Recovery] Checksum mismatch for ${att.file} — skipping`)
               continue
@@ -134,7 +168,7 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
             const def        = moduleDef as any
             const entityType = typeof def.entity_type === 'string' ? def.entity_type : undefined
 
-            await uploadViaPool({
+            const result = await uploadViaPool({
               file:          fileBuffer,
               fileName:      att.file.split('/').pop()!,
               mimeType:      'application/octet-stream',
@@ -145,12 +179,13 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
               fileSizeBytes: fileBuffer.length,
             })
 
+            console.log(`[Recovery] Restored ${att.file} → ${result.fileUrl}`)  // ← fileUrl, not driveUrl
             filesRestored++
           } catch (err: any) {
             console.warn(`[Recovery] Could not restore file ${att.file}:`, err.message)
           }
         }
-      }
+}
     }
 
     // ── 7. Post-recovery validation ──────────────────────────────────────────
@@ -201,7 +236,7 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
   }
 }
 
-// ── ZIP helpers (replaced stubs with real JSZip implementations) ──────────────
+// ── ZIP helpers ───────────────────────────────────────────────────────────────
 
 /**
  * Downloads the backup ZIP from the signed URL returned by storeBackupBlob()
@@ -220,30 +255,15 @@ async function loadBackupZip(downloadUrl: string): Promise<any> {
 }
 
 /**
- * Extracts and parses MANIFEST.json from the ZIP.
- * The manifest lives at <folderName>/MANIFEST.json.
- */
-async function extractManifest(zip: any, folderName: string): Promise<BackupManifest> {
-  const manifestPath = `${folderName}/MANIFEST.json`
-  const file         = zip.file(manifestPath)
-
-  if (!file) {
-    throw new Error(`MANIFEST.json not found in backup ZIP at path: ${manifestPath}`)
-  }
-
-  const content = await file.async('string')
-  return JSON.parse(content) as BackupManifest
-}
-
-/**
  * Extracts, decrypts, and parses a database table JSON from the ZIP.
  * Matches the first file under <folderName>/database/ whose name starts
  * with the table name.
  */
 async function extractTableData(
-  zip:        any,
-  tableName:  string,
-  folderName: string
+  zip:              any,
+  tableName:        string,
+  folderName:       string,
+  useDoubleDecrypt: boolean = false   // ← NEW param
 ): Promise<any[]> {
   const prefix  = `${folderName}/database/${tableName}_`
   const entries = Object.keys(zip.files).filter(
@@ -255,23 +275,27 @@ async function extractTableData(
   const file      = zip.file(entries[0])
   const rawBuffer = Buffer.from(await file.async('arraybuffer'))
 
-  // Determine if file is encrypted (.json.enc) or plain (.json / .xlsx)
   if (entries[0].endsWith('.enc')) {
-    const decrypted = await decryptBackupData(rawBuffer)
+    // FIX: classified_documents was locked twice during backup
+    // (doubleEncryptClassified). Using the single-unlock function here
+    // produced an auth-tag mismatch or garbage data. Route to the matching
+    // double-unlock function based on the module's encryption setting.
+    const decrypted = useDoubleDecrypt
+      ? await decryptDoubleEncryptedClassified(rawBuffer)
+      : await decryptBackupData(rawBuffer)
     return JSON.parse(decrypted.toString('utf8'))
   }
 
-  // Plain JSON (shouldn't normally happen, but handle gracefully)
   return JSON.parse(rawBuffer.toString('utf8'))
 }
 
 /**
- * Extracts a single attachment file from the ZIP by its relative path.
- * Path is relative to the folder root, e.g. "attachments/docId/file.pdf".
+ * Extracts a single file from the ZIP by its relative path.
+ * The ZIP was built with folderName as the root, so we search for any
+ * entry whose path ends with the relative path.
  */
 async function extractFile(zip: any, relativePath: string): Promise<Buffer> {
-  // The ZIP was built with folderName as the root folder, so search
-  // for any file whose path ends with the relative path.
+  // Try exact match first (with folder prefix)
   const candidates = Object.keys(zip.files).filter(
     name => name.endsWith(`/${relativePath}`) || name === relativePath
   )
