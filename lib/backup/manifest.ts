@@ -19,6 +19,7 @@ export interface AttachmentEntry {
   title:         string
   file:          string
   checksum:      string
+  error?:        string
 }
 
 export interface DocumentAttachmentGroup {
@@ -27,6 +28,7 @@ export interface DocumentAttachmentGroup {
   main_file:      string
   main_checksum:  string
   attachments:    AttachmentEntry[]
+  error?:         string
 }
 
 export interface ManifestDatabaseSection {
