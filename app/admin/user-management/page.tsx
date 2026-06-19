@@ -17,9 +17,9 @@ import {
 } from './actions'
 import { ResetPasswordModal } from './ResetPasswordModal'
 import { EditEmailModal }     from './EditEmailModal'
-import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { LoadingSpinner }     from '@/components/ui/LoadingSpinner'
 import { CreateAccountModal } from './CreateAccountModal'
-import {DeleteAccountModal} from './DeleteAccountModal'
+import { DeleteAccountModal } from './DeleteAccountModal'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,157 @@ interface ManagedUser {
   initials:       string
   avatarColor:    string
   title?:         string
+}
+
+// ─── Action Menu ──────────────────────────────────────────────────────────────
+
+interface ActionMenuProps {
+  user:           ManagedUser
+  currentUserId:  string | undefined
+  isAdmin:        boolean
+  onToggleActive: (userId: string, currentlyActive: boolean, displayName: string) => void
+  onResetPW:      (userId: string, displayName: string) => void
+  onEditEmail:    (userId: string, displayName: string, email?: string) => void
+  onDelete:       (u: ManagedUser) => void
+}
+
+function ActionMenu({
+  user,
+  currentUserId,
+  isAdmin,
+  onToggleActive,
+  onResetPW,
+  onEditEmail,
+  onDelete,
+}: ActionMenuProps) {
+  const [open, setOpen] = useState(false)
+  const ref             = useRef<HTMLDivElement>(null)
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [open])
+
+  const close = () => setOpen(false)
+
+  const canDelete = isAdmin && !['admin', 'PD'].includes(user.role)
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        aria-label={`Actions for ${user.displayName}`}
+        aria-haspopup="true"
+        aria-expanded={open}
+        className="flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200
+                   text-slate-500 hover:bg-slate-50 hover:border-slate-300 transition"
+      >
+        {/* Three vertical dots */}
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <circle cx="8" cy="3"  r="1.2" />
+          <circle cx="8" cy="8"  r="1.2" />
+          <circle cx="8" cy="13" r="1.2" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-9 z-50 bg-white border border-slate-200
+                     rounded-xl shadow-lg overflow-hidden py-1"
+          style={{ minWidth: '172px' }}
+        >
+          {/* Edit email */}
+          <button
+            role="menuitem"
+            onClick={() => { close(); onEditEmail(user.id, user.displayName, user.email) }}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[13px] text-slate-700
+                       hover:bg-slate-50 transition text-left"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth="1.8" className="text-slate-400 shrink-0" aria-hidden="true">
+              <rect x="2" y="4" width="20" height="16" rx="2"/>
+              <path d="m2 7 10 7 10-7"/>
+            </svg>
+            Edit email
+          </button>
+
+          {/* Reset password */}
+          <button
+            role="menuitem"
+            onClick={() => { close(); onResetPW(user.id, user.displayName) }}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[13px] text-slate-700
+                       hover:bg-slate-50 transition text-left"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth="1.8" className="text-slate-400 shrink-0" aria-hidden="true">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            Reset password
+          </button>
+
+          {/* Divider */}
+          <div className="my-1 border-t border-slate-100" />
+
+          {/* Enable / Disable toggle */}
+          {user.isActive ? (
+            <button
+              role="menuitem"
+              onClick={() => { close(); onToggleActive(user.id, user.isActive, user.displayName) }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[13px] text-amber-700
+                         hover:bg-amber-50 transition text-left"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   strokeWidth="1.8" className="shrink-0" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M4.93 4.93 19.07 19.07"/>
+              </svg>
+              Disable account
+            </button>
+          ) : (
+            <button
+              role="menuitem"
+              onClick={() => { close(); onToggleActive(user.id, user.isActive, user.displayName) }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[13px] text-emerald-700
+                         hover:bg-emerald-50 transition text-left"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   strokeWidth="1.8" className="shrink-0" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="m9 12 2 2 4-4"/>
+              </svg>
+              Enable account
+            </button>
+          )}
+
+          {/* Delete — only for non-protected roles */}
+          {canDelete && (
+            <button
+              role="menuitem"
+              onClick={() => { close(); onDelete(user) }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[13px] text-red-600
+                         hover:bg-red-50 transition text-left"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   strokeWidth="1.8" className="shrink-0" aria-hidden="true">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14H6L5 6"/>
+                <path d="M10 11v6M14 11v6"/>
+                <path d="M9 6V4h6v2"/>
+              </svg>
+              Delete account
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -64,11 +215,11 @@ export default function UserManagementPage() {
   const [editEmailTarget, setEditEmailTarget] = useState<{ id: string; displayName: string; email?: string } | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [deleteTarget,    setDeleteTarget]    = useState<{
-      userId:      string
-      role:        string
-      displayName: string
-      email:       string
-    } | null>(null)
+    userId:      string
+    role:        string
+    displayName: string
+    email:       string
+  } | null>(null)
 
   const usersRef = useRef<ManagedUser[]>([])
   usersRef.current = users
@@ -146,7 +297,6 @@ export default function UserManagementPage() {
 
     const supabase = createClient()
 
-    // Channel 1: presence changes
     const presenceChannel = supabase
       .channel('um_presence')
       .on(
@@ -176,7 +326,6 @@ export default function UserManagementPage() {
         if (status === 'SUBSCRIBED') setRealtimeConnected(true)
       })
 
-    // Channel 2: profile changes
     const profileChannel = supabase
       .channel('um_profiles')
       .on(
@@ -233,31 +382,23 @@ export default function UserManagementPage() {
   // ── Toggle active / inactive ──────────────────────────────────────────────
 
   async function toggleActive(userId: string, currentlyActive: boolean, displayName: string) {
-    // Optimistic patch — flip the UI immediately
     patchUser(userId, { isActive: !currentlyActive })
-
     try {
       await setUserActive(userId, !currentlyActive)
-
       const verb = currentlyActive ? 'deactivated' : 'activated'
       setMessage({ type: 'info', text: `${displayName} has been ${verb}.` })
-
-      // Log the specific account action
       if (currentlyActive) {
         await logDisableAccount(displayName)
       } else {
         await logEnableAccount(displayName)
       }
-
-      // Realtime subscription on profiles will confirm the final DB value.
     } catch (e: unknown) {
-      // Roll back the optimistic patch on error
       patchUser(userId, { isActive: currentlyActive })
       setMessage({ type: 'error', text: e instanceof Error ? e.message : 'Action failed.' })
     }
   }
 
-  // ── Password reset modal ──────────────────────────────────────────────────
+  // ── Modal handlers ────────────────────────────────────────────────────────
 
   const handleResetPassword = (userId: string, displayName: string) =>
     setResetTarget({ id: userId, displayName })
@@ -268,8 +409,6 @@ export default function UserManagementPage() {
     setMessage({ type: 'info', text: `Password reset for ${name}.` })
   }
 
-  // ── Email edit modal ──────────────────────────────────────────────────────
-
   const handleEditEmail = (userId: string, displayName: string, email?: string) =>
     setEditEmailTarget({ id: userId, displayName, email })
 
@@ -278,6 +417,15 @@ export default function UserManagementPage() {
     if (oldTarget?.id) patchUser(oldTarget.id, { email: newEmail })
     setEditEmailTarget(null)
     setMessage({ type: 'info', text: `Email updated to ${newEmail}.` })
+  }
+
+  const handleDeleteTarget = (u: ManagedUser) => {
+    setDeleteTarget({
+      userId:      u.id,
+      role:        u.role,
+      displayName: u.displayName,
+      email:       u.email ?? '',
+    })
   }
 
   // ── Role badge ────────────────────────────────────────────────────────────
@@ -295,17 +443,16 @@ export default function UserManagementPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  // right after your existing hooks, before the main return
-    if (loading) {
-      return (
-        <>
-          <PageHeader title="User Management" />
-          <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 56px)' }}>
-            <LoadingSpinner size="lg" />
-          </div>
-        </>
-      )
-    }
+  if (loading) {
+    return (
+      <>
+        <PageHeader title="User Management" />
+        <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 56px)' }}>
+          <LoadingSpinner size="lg" />
+        </div>
+      </>
+    )
+  }
 
   return (
     <>
@@ -321,14 +468,16 @@ export default function UserManagementPage() {
               {onlineCount} online
             </span>
           </div>
+
           {user?.role === 'admin' && (
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="ml-2 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition"
-              >
-                + Create Account
-              </button>
-            )}
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="ml-2 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600
+                         hover:bg-blue-700 text-white text-xs font-semibold transition"
+            >
+              + Create Account
+            </button>
+          )}
 
           <div className="ml-auto">
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-all ${
@@ -393,11 +542,7 @@ export default function UserManagementPage() {
               </span>
             </div>
 
-            {loading ? (
-              <div className="flex items-center justify-center py-16">
-                <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              </div>
-            ) : filtered.length === 0 ? (
+            {filtered.length === 0 ? (
               <EmptyState icon="👥" title="No users found" description="Try a different search term." />
             ) : (
               <div className="overflow-x-auto">
@@ -405,7 +550,10 @@ export default function UserManagementPage() {
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200">
                       {['Account', 'Role', 'Status', 'Last Sign-In', 'Presence', 'Actions'].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                        <th
+                          key={h}
+                          className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400"
+                        >
                           {h}
                         </th>
                       ))}
@@ -437,7 +585,7 @@ export default function UserManagementPage() {
                           {u.title && <p className="text-[10px] text-slate-400 mt-0.5">{u.title}</p>}
                         </td>
 
-                        {/* Account enabled / disabled */}
+                        {/* Account status */}
                         <td className="px-4 py-3.5">
                           <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${
                             u.isActive
@@ -472,47 +620,17 @@ export default function UserManagementPage() {
                           )}
                         </td>
 
-                        {/* Actions */}
+                        {/* ⋮ Action menu */}
                         <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              onClick={() => toggleActive(u.id, u.isActive, u.displayName)}
-                              className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition ${
-                                u.isActive
-                                  ? 'border-red-200 text-red-600 hover:bg-red-50'
-                                  : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
-                              }`}
-                            >
-                              {u.isActive ? 'Disable' : 'Enable'}
-                            </button>
-                            <button
-                              onClick={() => handleResetPassword(u.id, u.displayName)}
-                              className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 transition"
-                            >
-                              Reset PW
-                            </button>
-                            <button
-                              onClick={() => handleEditEmail(u.id, u.displayName, u.email)}
-                              className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 transition"
-                            >
-                              Edit Email
-                            </button>
-                            {/* Only show delete for non-protected roles */}
-                            {user?.role === 'admin' && !['admin', 'PD'].includes(u.role) && (
-                              <button
-                                onClick={() => setDeleteTarget({
-                                  userId:      u.id,
-                                  role:        u.role,
-                                  displayName: u.displayName,
-                                  email:       u.email ?? '',
-                                })}
-                                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-red-600 hover:bg-red-50 border border-red-200 transition"
-                                title="Permanently delete this account"
-                              >
-                                🗑️ Delete
-                              </button>
-                            )}
-                          </div>
+                          <ActionMenu
+                            user={u}
+                            currentUserId={user?.id}
+                            isAdmin={user?.role === 'admin'}
+                            onToggleActive={toggleActive}
+                            onResetPW={handleResetPassword}
+                            onEditEmail={handleEditEmail}
+                            onDelete={handleDeleteTarget}
+                          />
                         </td>
 
                       </tr>
@@ -533,7 +651,7 @@ export default function UserManagementPage() {
         </div>
       </div>
 
-      {/* Reset Password Modal */}
+      {/* Modals */}
       {resetTarget && (
         <ResetPasswordModal
           userId={resetTarget.id}
@@ -543,7 +661,6 @@ export default function UserManagementPage() {
         />
       )}
 
-      {/* Edit Email Modal */}
       {editEmailTarget && (
         <EditEmailModal
           userId={editEmailTarget.id}
@@ -555,30 +672,33 @@ export default function UserManagementPage() {
       )}
 
       {showCreateModal && (
-          <CreateAccountModal
-            onClose={() => setShowCreateModal(false)}
-            onSuccess={(role) => {
-              setShowCreateModal(false)
-              setMessage({ type: 'info', text: `Account "${role}" created successfully. Reloading…` })
-              void load()   // refresh the user list
-            }}
-          />
-        )}
+        <CreateAccountModal
+          onClose={() => setShowCreateModal(false)}
+          onSuccess={(role) => {
+            setShowCreateModal(false)
+            setMessage({ type: 'info', text: `Account "${role}" created successfully. Reloading…` })
+            void load()
+          }}
+        />
+      )}
 
-        {deleteTarget && (
-          <DeleteAccountModal
-            userId={deleteTarget.userId}
-            role={deleteTarget.role}
-            displayName={deleteTarget.displayName}
-            email={deleteTarget.email}
-            onClose={() => setDeleteTarget(null)}
-            onSuccess={() => {
-              setDeleteTarget(null)
-              setMessage({ type: 'info', text: `Account "${deleteTarget.role}" deleted. Don't forget to remove ${deleteTarget.email} from Google Cloud Console → Test Users.` })
-              void load()
-            }}
-          />
-        )}
+      {deleteTarget && (
+        <DeleteAccountModal
+          userId={deleteTarget.userId}
+          role={deleteTarget.role}
+          displayName={deleteTarget.displayName}
+          email={deleteTarget.email}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            setDeleteTarget(null)
+            setMessage({
+              type: 'info',
+              text: `Account "${deleteTarget.role}" deleted. Don't forget to remove ${deleteTarget.email} from Google Cloud Console → Test Users.`,
+            })
+            void load()
+          }}
+        />
+      )}
     </>
   )
 }
