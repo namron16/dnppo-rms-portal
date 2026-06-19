@@ -59,6 +59,35 @@ export async function decryptBackupData(ciphertext: Buffer): Promise<Buffer> {
   return Buffer.concat([decipher.update(data), decipher.final()])
 }
 
+/**
+ * Reverses doubleEncryptClassified(). Undoes the outer classified-only lock
+ * first, then hands the result to decryptBackupData() to undo the inner
+ * standard lock. Without this, classified document backups could be created
+ * but never restored.
+ */
+export async function decryptDoubleEncryptedClassified(ciphertext: Buffer): Promise<Buffer> {
+  const classifiedSecret = process.env.CLASSIFIED_BACKUP_SECRET
+  if (!classifiedSecret) throw new Error('CLASSIFIED_BACKUP_SECRET not set.')
+
+  if (ciphertext.length < SALT_LEN + IV_LENGTH + TAG_LENGTH + 1) {
+    throw new Error('Classified ciphertext is too short — file may be corrupted.')
+  }
+
+  // ── Outer layer: undo the classified-only AES-256-GCM wrap ──────────────
+  const salt    = ciphertext.subarray(0, SALT_LEN)
+  const iv      = ciphertext.subarray(SALT_LEN, SALT_LEN + IV_LENGTH)
+  const authTag = ciphertext.subarray(SALT_LEN + IV_LENGTH, SALT_LEN + IV_LENGTH + TAG_LENGTH)
+  const data    = ciphertext.subarray(SALT_LEN + IV_LENGTH + TAG_LENGTH)
+  const key     = scryptSync(classifiedSecret, salt, 32) as Buffer
+
+  const decipher = createDecipheriv(ALGORITHM, key, iv)
+  decipher.setAuthTag(authTag)
+  const layer1 = Buffer.concat([decipher.update(data), decipher.final()])
+
+  // ── Inner layer: undo the standard backup encryption ─────────────────────
+  return decryptBackupData(layer1)
+}
+
 /** Computes SHA-256 checksum of a buffer */
 export function computeChecksum(data: Buffer): string {
   return createHash('sha256').update(data).digest('hex')
@@ -87,3 +116,5 @@ export async function doubleEncryptClassified(data: Buffer): Promise<Buffer> {
 
   return Buffer.concat([salt, iv, tag, enc])
 }
+
+
