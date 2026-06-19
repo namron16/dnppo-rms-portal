@@ -24,9 +24,9 @@ export interface AttachmentEntry {
 
 export interface DocumentAttachmentGroup {
   document_id:    string
-  document_title: string
-  main_file:      string
-  main_checksum:  string
+  document_title?: string
+  main_file?:      string
+  main_checksum?:  string
   attachments:    AttachmentEntry[]
   error?:         string
 }
@@ -214,7 +214,7 @@ function buildAttachmentSection(
   let totalSizeBytes  = 0
 
   const files = attachmentManifest.map(group => {
-    const mainBuf      = backupFiles.get(group.main_file)
+    const mainBuf      = group.main_file ? backupFiles.get(group.main_file) : undefined
     const mainChecksum = mainBuf ? sha256(mainBuf) : group.main_checksum
     if (mainBuf) totalSizeBytes += mainBuf.length
 
@@ -232,12 +232,12 @@ function buildAttachmentSection(
     })
 
     return {
-      document_id:    group.document_id,
-      document_title: group.document_title,
-      main_file:      group.main_file,
-      main_checksum:  mainChecksum,
-      attachments:    resolvedAttachments,
-    }
+    document_id:    group.document_id,
+    document_title: group.document_title ?? '',
+    main_file:      group.main_file ?? '',
+    main_checksum:  mainChecksum,
+    attachments:    resolvedAttachments,
+  }
   })
 
   return {
@@ -303,5 +303,10 @@ function extractTableName(filename: string): string {
     .replace(/\.json$/, '')
 
   const match = cleaned.match(/^(.+?)_\d{4}-\d{2}-\d{2}/)
-  return match ? match[1] : cleaned
+  const tableName = match ? match[1] : cleaned
+
+  // FIX: exportArchivedTables() names files like "master_documents_archived_<date>",
+  // so the captured group above is "master_documents_archived". Strip the
+  // suffix here so the manifest's table label matches the real table name.
+  return tableName.replace(/_archived$/, '')
 }
