@@ -599,7 +599,8 @@ export default function LoginPage() {
             height={70}
             priority
             sizes="70px"
-            className="w-[70px] h-auto drop-shadow-2xl opacity-80"
+            className="drop-shadow-2xl opacity-80"
+            style={{ width: '70px', height: 'auto' }}
           />
         </div>
 
