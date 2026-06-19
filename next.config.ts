@@ -7,6 +7,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const nextConfig: NextConfig = {
   devIndicators: false,
   reactStrictMode: true,
+  images: {qualities: [75, 85]},
 
   async headers() {
     return [
