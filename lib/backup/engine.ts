@@ -4,6 +4,10 @@
 //
 // To test locally: set BACKUP_DEV_MODE=true in .env.local
 // Drive downloads are skipped; ZIP is saved to /tmp instead of Supabase Storage.
+//
+// FIX: Primary files (gdrive_file_id stored directly on document rows) are now
+// downloaded during backup and included in the manifest as `main_file` entries.
+// Recovery re-uploads them and patches the document row with the new Drive reference.
 
 import { createHash } from 'crypto'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
@@ -39,6 +43,15 @@ export interface BackupResult {
   manifestChecksum: string
   error?:           string
 }
+
+// Modules that store a primary file directly on the document row
+// (gdrive_file_id column on the main table, not just in attachment tables)
+const MODULES_WITH_PRIMARY_FILES: BackupModuleName[] = [
+  'master_documents',
+  'admin_orders',
+  'daily_journals',
+  'e_library',
+]
 
 // ── FIX-1: resolve date range for admin_logs ──────────────────────────────────
 function resolveLogsDateRange(
@@ -113,6 +126,93 @@ async function exportArchivedTables(now: Date): Promise<Map<string, Buffer>> {
 }
 
 /**
+ * Downloads the primary file (gdrive_file_id on the document row itself) for each
+ * document in modules that store a direct file reference. Pushes entries into
+ * attachmentManifest so recovery can find and re-upload them.
+ *
+ * This is separate from downloadAttachments() which handles child rows in the
+ * *_attachments tables. A document can have both a primary file AND attachments.
+ */
+async function downloadPrimaryFiles(params: {
+  module_name:        BackupModuleName
+  moduleDef:          any
+  backupFiles:        Map<string, Buffer>
+  attachmentManifest: any[]
+  now:                Date
+}): Promise<void> {
+  const { module_name, moduleDef, backupFiles, attachmentManifest, now } = params
+  const db          = getServiceClient()
+  const primaryTable = moduleDef.tables[0]  // e.g. 'master_documents'
+
+  const { data: docRows, error } = await db
+    .from(primaryTable)
+    .select('id, gdrive_file_id, pool_account_id, file_name, mime_type')
+    .not('gdrive_file_id', 'is', null)
+
+  if (error) {
+    console.warn(`[Backup] Could not fetch primary file rows for ${primaryTable}: ${error.message}`)
+    return
+  }
+
+  if (!docRows || docRows.length === 0) {
+    console.log(`[Backup] No primary files found in ${primaryTable}`)
+    return
+  }
+
+  console.log(`[Backup] Downloading ${docRows.length} primary file(s) from ${primaryTable}`)
+
+  for (const doc of docRows) {
+    try {
+      let fileBuffer: Buffer
+
+      if (DEV_MODE) {
+        console.log(`[DevMode] Skipping Drive download for primary file doc ${doc.id} (${doc.file_name ?? 'unnamed'})`)
+        fileBuffer = devModeAttachmentPlaceholder(doc.file_name ?? doc.id)
+      } else {
+        const drive    = await getDriveClient(doc.pool_account_id)
+        const response = await drive.files.get(
+          { fileId: doc.gdrive_file_id, alt: 'media' },
+          { responseType: 'arraybuffer' }
+        )
+        fileBuffer = Buffer.from(response.data as ArrayBuffer)
+      }
+
+      const safeFileName = sanitizeFileName(doc.file_name ?? `${doc.id}.pdf`)
+      const filePath     = `primary_files/${doc.id}/${safeFileName}`
+      backupFiles.set(filePath, fileBuffer)
+
+      const checksum = createHash('sha256').update(fileBuffer).digest('hex')
+
+      // Push into attachmentManifest — recovery iterates this list to restore files
+      attachmentManifest.push({
+        document_id:    doc.id,
+        document_title: doc.file_name ?? doc.id,
+        main_file:      filePath,
+        main_checksum:  checksum,
+        // Carry the Drive metadata so recovery knows what it is restoring
+        gdrive_file_id: doc.gdrive_file_id,
+        pool_account_id: doc.pool_account_id,
+        mime_type:      doc.mime_type ?? 'application/pdf',
+        attachments:    [],
+      })
+
+      console.log(`[Backup] Primary file backed up: ${filePath} (${fileBuffer.length} bytes)`)
+    } catch (err: any) {
+      console.warn(`[Backup] Could not download primary file for doc ${doc.id}:`, err.message)
+      // Push a stub so the manifest still references this doc (recovery will skip on error flag)
+      attachmentManifest.push({
+        document_id:    doc.id,
+        document_title: doc.file_name ?? doc.id,
+        main_file:      null,
+        main_checksum:  null,
+        error:          err.message,
+        attachments:    [],
+      })
+    }
+  }
+}
+
+/**
  * Runs a complete backup for a single module.
  */
 export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupResult> {
@@ -169,6 +269,21 @@ export async function runModuleBackup(opts: BackupRunOptions): Promise<BackupRes
       } else if ((moduleDef as any).gdrive_category) {
         attachmentManifest = await downloadFromRecordsTable({ module_name, moduleDef, backupFiles, now })
       }
+    }
+
+    // ── 2b. Download PRIMARY files stored directly on document rows ───────────
+    // These are separate from attachment_table rows — they are the main PDF/file
+    // stored as gdrive_file_id on the document row itself (e.g. master_documents.gdrive_file_id).
+    // Without this step, deleting a document from Drive means recovery cannot
+    // restore the actual file even though the DB row comes back.
+    if (MODULES_WITH_PRIMARY_FILES.includes(module_name)) {
+      await downloadPrimaryFiles({
+        module_name,
+        moduleDef,
+        backupFiles,
+        attachmentManifest,
+        now,
+      })
     }
 
     // ── 3. Generate manifest ──────────────────────────────────────────────────
@@ -318,6 +433,8 @@ async function downloadAttachments(params: {
 }
 
 // ── Helper: download from records table ──────────────────────────────────────
+
+// ── Helper: download from records table ──────────────────────────────────────
 async function downloadFromRecordsTable(params: {
   module_name: string; moduleDef: any; backupFiles: Map<string, Buffer>; now: Date
 }): Promise<any[]> {
@@ -331,6 +448,8 @@ async function downloadFromRecordsTable(params: {
   if (!records) return []
 
   for (const record of records) {
+    const docId = record.entity_id ?? record.id
+
     try {
       let fileBuffer: Buffer
 
@@ -348,17 +467,46 @@ async function downloadFromRecordsTable(params: {
       }
 
       const safeFileName = sanitizeFileName(record.file_name)
-      const docId        = record.entity_id ?? record.id
-      const filePath     = `attachments/${docId}/main_${safeFileName}`
+      const filePath      = `attachments/${docId}/main_${safeFileName}`
       backupFiles.set(filePath, fileBuffer)
 
       const checksum = createHash('sha256').update(fileBuffer).digest('hex')
+
+      // FIX: wrap as a "folder" object (document_id + attachments[]) instead of
+      // a flat { record_id, file, checksum } object. manifest.ts always expects
+      // a folder with an attachments array inside it — handing it a loose paper
+      // crashed with "Cannot read properties of undefined (reading 'map')".
       manifest.push({
-        record_id: record.id, file: filePath, checksum, size_bytes: fileBuffer.length,
-        dev_mode_placeholder: DEV_MODE || undefined,
+        document_id:    docId,
+        document_title: record.file_name,
+        main_file:      filePath,
+        main_checksum:  checksum,
+        attachments: [{
+          attachment_id: record.id,
+          title:         record.file_name,
+          file:          filePath,
+          checksum,
+        }],
       })
     } catch (err: any) {
       console.warn(`[Backup] Could not download record ${record.id}:`, err.message)
+
+      // FIX: still record the failure inside a folder (with `error` set on the
+      // attachment) instead of silently dropping it. recovery.ts checks
+      // att.error to skip broken files — it needs this entry to exist.
+      manifest.push({
+        document_id:    docId,
+        document_title: record.file_name,
+        main_file:      '',
+        main_checksum:  '',
+        attachments: [{
+          attachment_id: record.id,
+          title:         record.file_name,
+          file:          '',
+          checksum:      '',
+          error:         err.message,
+        }],
+      })
     }
   }
   return manifest
