@@ -43,7 +43,7 @@ export const BACKUP_MODULES = {
   },
   archived_files: {
     label: 'Archived Files',
-    tables: ['master_documents', 'special_orders', 'daily_journals'],
+    tables: ['master_documents', 'special_orders', 'daily_journals', 'library_items', 'confidential_docs'],
     gdrive_category: 'all',
     filter: { archived: true },
     attachment_table: null,
@@ -61,7 +61,7 @@ export const BACKUP_MODULES = {
   personnel_201: {
     label: '201 Files',
     tables: ['personnel_201', 'personnel_201_docs'],
-    gdrive_category: null,
+    gdrive_category: 'personnel_201',
     entity_type: 'doc_201',
     attachment_table: null,
     attachment_fk: null,
