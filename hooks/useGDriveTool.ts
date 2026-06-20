@@ -117,8 +117,6 @@ export function useGDrivePool() {
               const r    = json.data
               resolve({
                 success:       true,
-                // The API route returns the PoolUploadResult shape from uploadViaPool:
-                // { fileUrl, downloadUrl, previewUrl, gdriveFileId, poolAccountId, accountEmail, recordId, sizeBytes }
                 driveUrl:      r.fileUrl      ?? r.driveUrl,
                 downloadUrl:   r.downloadUrl,
                 gdriveFileId:  r.gdriveFileId,
@@ -132,9 +130,10 @@ export function useGDrivePool() {
           } else {
             try {
               const json = JSON.parse(xhr.responseText)
-              resolve({ success: false, error: json.error ?? `HTTP ${xhr.status}` })
+              // FIX: preserve the full server error message — never discard it
+              resolve({ success: false, error: json.error ?? `Upload failed (HTTP ${xhr.status}).` })
             } catch {
-              resolve({ success: false, error: `HTTP ${xhr.status}` })
+              resolve({ success: false, error: `Upload failed (HTTP ${xhr.status}).` })
             }
           }
         })
@@ -258,43 +257,61 @@ export interface DriveUploadResult {
  * Minimal hook for components that need to upload a file and get Drive metadata back.
  * Returns the full DriveUploadResult so callers can persist gdriveFileId, poolAccountId, etc.
  *
+ * FIX: uploadToDrive now returns { result, error } so callers get the exact server
+ * error message synchronously — no more relying on stale `uploadError` state.
+ *
  * @example
  * const { uploadToDrive, uploading } = useDriveUpload()
  *
- * const result = await uploadToDrive(file, 'master_documents', {
+ * const { result, error } = await uploadToDrive(file, 'master_documents', {
  *   uploadedBy: user.role,
  *   entityId:   newDocId,
  *   entityType: 'master_document',
  * })
- * if (result) {
- *   // result.fileUrl, result.gdriveFileId, result.poolAccountId, result.recordId
+ * if (!result) {
+ *   toast.error(error)  // always the real server message
+ *   return
  * }
+ * // result.fileUrl, result.gdriveFileId, result.poolAccountId, result.recordId
  */
 export function useDriveUpload() {
   const [uploading,   setUploading]   = useState(false)
   const [driveUrl,    setDriveUrl]    = useState<string | null>(null)
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
   const [progress,    setProgress]    = useState(0)
+  // FIX: kept for backward-compat but callers should prefer the returned error string
   const [error,       setError]       = useState<string | null>(null)
 
   const { uploadFile } = useGDrivePool()
 
   /**
-   * Uploads a file and returns the full Drive result, or null on failure.
-   * All Drive metadata (gdriveFileId, poolAccountId, recordId) is included
-   * so callers can store it in Supabase alongside the document record.
+   * FIX: returns { result, error } tuple instead of DriveUploadResult | null.
+   *
+   * The old signature returned null on failure and put the error in `uploadError`
+   * state — but state updates are async, so by the time the caller read
+   * `uploadError` it was still the *previous* value (usually null or a stale
+   * message), causing the generic "File upload failed. Please try again." toast
+   * instead of the real server message (e.g. "No Google Drive account connected.").
+   *
+   * The new signature returns the error string *synchronously* in the same
+   * promise resolution, so callers always get the real message immediately.
+   *
+   * Backward-compat note: the old `null` return path still sets `error` state,
+   * so any callers still using `uploadError` will also eventually get the right
+   * value (next render), but new callers should destructure `error` from the
+   * return value.
    */
   const uploadToDrive = useCallback(async (
     file: File,
     category: DocumentCategory,
     meta: { uploadedBy: string; entityId?: string; entityType?: string }
-  ): Promise<DriveUploadResult | null> => {
+  ): Promise<{ result: DriveUploadResult; error: null } | { result: null; error: string }> => {
     setUploading(true)
     setDriveUrl(null)
     setDownloadUrl(null)
     setError(null)
 
-    const result = await uploadFile({
+    const uploadResult = await uploadFile({
       file,
       category,
       uploadedBy:  meta.uploadedBy,
@@ -306,25 +323,29 @@ export function useDriveUpload() {
     setUploading(false)
 
     if (
-      result.success &&
-      result.driveUrl &&
-      result.gdriveFileId &&
-      result.poolAccountId
+      uploadResult.success &&
+      uploadResult.driveUrl &&
+      uploadResult.gdriveFileId &&
+      uploadResult.poolAccountId
     ) {
-      setDriveUrl(result.driveUrl)
-      setDownloadUrl(result.downloadUrl ?? null)
-      return {
-        fileUrl:       result.driveUrl,
-        downloadUrl:   result.downloadUrl ?? '',
-        gdriveFileId:  result.gdriveFileId,
-        poolAccountId: result.poolAccountId,
-        accountEmail:  result.accountEmail ?? '',
-        recordId:      result.recordId     ?? '',
+      setDriveUrl(uploadResult.driveUrl)
+      setDownloadUrl(uploadResult.downloadUrl ?? null)
+      const driveResult: DriveUploadResult = {
+        fileUrl:       uploadResult.driveUrl,
+        downloadUrl:   uploadResult.downloadUrl ?? '',
+        gdriveFileId:  uploadResult.gdriveFileId,
+        poolAccountId: uploadResult.poolAccountId,
+        accountEmail:  uploadResult.accountEmail ?? '',
+        recordId:      uploadResult.recordId     ?? '',
       }
+      return { result: driveResult, error: null }
     }
 
-    setError(result.error ?? 'Upload failed.')
-    return null
+    // FIX: capture error synchronously and return it directly — never rely on
+    // state being readable by the caller in the same render cycle.
+    const errorMsg = uploadResult.error ?? 'Upload failed. Please try again.'
+    setError(errorMsg)
+    return { result: null, error: errorMsg }
   }, [uploadFile])
 
   return {
@@ -333,6 +354,7 @@ export function useDriveUpload() {
     progress,
     driveUrl,
     downloadUrl,
+    // FIX: kept for backward-compat; prefer the `error` returned by uploadToDrive()
     error,
     reset: () => {
       setDriveUrl(null)

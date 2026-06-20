@@ -1,17 +1,9 @@
 'use client'
 // components/modals/AddLibraryItemModal.tsx
 //
-// FIX: Upload is now open to all P1–P10, WCPD, and PPSMU accounts.
-//      Each item is tagged with uploaded_by = user.role so the page
-//      only shows each user their own items (privileged roles see all).
-//      The Drive gateway routes the file to the uploader's own connected
-//      Google Drive account — never another user's Drive.
-//
-// FIX (Drive pool columns): newItem now includes gdrive_file_id,
-//      gdrive_url, pool_account_id, file_name, file_size_bytes, mime_type
-//      from the upload result. Previously these were available in uploadResult
-//      but never written into the newItem object passed to addLibraryItem(),
-//      so the DB row always had null Drive pool columns, making forwarding fail.
+// FIX (error message): uploadToDrive now returns { result, error } so the
+//      exact server error (e.g. "No Google Drive account connected") is shown
+//      instead of the generic fallback from stale uploadError state.
 
 import { useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -37,7 +29,7 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
   const { user }  = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const { uploadToDrive, uploading, error: uploadError } = useDriveUpload()
+  const { uploadToDrive, uploading } = useDriveUpload()
 
   const [errors,   setErrors]   = useState<Record<string, string>>({})
   const [file,     setFile]     = useState<File | null>(null)
@@ -102,14 +94,20 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
       const today  = new Date().toISOString().split('T')[0]
       const now    = new Date().toISOString()
 
-      const uploadResult = await uploadToDrive(file!, 'library_items', {
-        uploadedBy: user.role,
-        entityId:   itemId,
-        entityType: 'library_item',
-      })
+      // FIX: destructure { result, error } — error is always the real server
+      // message, never stale state from a previous render cycle.
+      const { result: driveResult, error: driveError } = await uploadToDrive(
+        file!,
+        'library_items',
+        {
+          uploadedBy: user.role,
+          entityId:   itemId,
+          entityType: 'library_item',
+        }
+      )
 
-      if (!uploadResult) {
-        toast.error(uploadError ?? 'File upload failed. Please try again.')
+      if (!driveResult) {
+        toast.error(driveError)
         return
       }
 
@@ -117,24 +115,20 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
         ? `${(file!.size / 1024).toFixed(1)} KB`
         : `${(file!.size / 1024 / 1024).toFixed(1)} MB`
 
-      // FIX: include all Drive pool fields in newItem so addLibraryItem()
-      // persists them to the DB. Previously only fileUrl was set here;
-      // gdrive_file_id, pool_account_id etc. were silently dropped.
       const newItem: LibraryItemWithUrl = {
         id:          itemId,
         title:       result.data.title.trim(),
         category:    result.data.category as LibraryCategory,
         size:        fileSize,
         dateAdded:   today,
-        fileUrl:     uploadResult.fileUrl,
+        fileUrl:     driveResult.fileUrl,
         description: form.description.trim() || undefined,
         created_at:  now,
         uploaded_by: user.role,
         archived:    false,
-        // FIX: Drive pool fields
-        gdrive_file_id:  uploadResult.gdriveFileId,
-        gdrive_url:      uploadResult.fileUrl,
-        pool_account_id: uploadResult.poolAccountId,
+        gdrive_file_id:  driveResult.gdriveFileId,
+        gdrive_url:      driveResult.fileUrl,
+        pool_account_id: driveResult.poolAccountId,
         file_name:       file!.name,
         file_size_bytes: file!.size,
         mime_type:       file!.type || undefined,

@@ -6,6 +6,10 @@
 //      only shows each user their own documents (privileged roles see all).
 //      The Drive gateway routes the file to the uploader's own connected
 //      Google Drive account — never another user's Drive.
+//
+// FIX (error message): uploadToDrive now returns { result, error } so the
+//      exact server error (e.g. "No Google Drive account connected") is shown
+//      instead of the generic fallback from stale uploadError state.
 
 import { useState, useRef } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -25,10 +29,10 @@ type DocWithUrl = MasterDocument & {
   gdrive_url?:      string
   pool_account_id?: string
   download_url?:    string
-  uploaded_by?:     string   // tracks who uploaded this document
-  file_name?:      string   // for Drive uploads, store original file name
-  file_size_bytes?: number   // for Drive uploads, store original file size
-  mime_type?:      string | null // for Drive uploads, store original MIME type
+  uploaded_by?:     string
+  file_name?:       string
+  file_size_bytes?: number
+  mime_type?:       string | null
 }
 
 interface AddDocumentModalProps {
@@ -43,7 +47,7 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
   const fileInputRef = useRef<HTMLInputElement>(null)
   const today = new Date().toISOString().split('T')[0]
 
-  const { uploadToDrive, uploading, error: uploadError } = useDriveUpload()
+  const { uploadToDrive, uploading } = useDriveUpload()
 
   const [file, setFile]           = useState<File | null>(null)
   const [dragging, setDragging]   = useState(false)
@@ -82,7 +86,6 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
   async function handleSubmit() {
     if (!user) { toast.error('Not authenticated.'); return }
 
-    // FIX: assertCanUpload now allows P1–P10, WCPD, PPSMU (not just P1)
     try {
       assertCanUpload(user.role as AdminRole)
     } catch (err: any) {
@@ -104,24 +107,25 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
     try {
       const newDocId = `md-${Date.now()}`
 
-      // Upload to THIS user's own connected Google Drive account.
-      // The gateway uses uploadedBy to scope the Drive account selection —
-      // it will never route to another user's Drive.
-      const driveResult = await uploadToDrive(file, 'master_documents', {
-        uploadedBy: user.role,
-        entityId:   newDocId,
-        entityType: 'master_document',
-      })
+      // FIX: destructure { result, error } — error is always the real server
+      // message, never stale state from a previous render cycle.
+      const { result: driveResult, error: driveError } = await uploadToDrive(
+        file,
+        'master_documents',
+        {
+          uploadedBy: user.role,
+          entityId:   newDocId,
+          entityType: 'master_document',
+        }
+      )
 
       if (!driveResult) {
-        toast.error(uploadError ?? 'File upload failed. Please try again.')
+        toast.error(driveError)
         return
       }
 
       const fileSize = (file.size / 1024 / 1024).toFixed(1) + ' MB'
 
-      // Tag the document with the uploader's role so the page can filter
-      // and show each user only their own documents.
       const newDoc: DocWithUrl = {
         id:      newDocId,
         title:   result.data.title,
@@ -130,17 +134,14 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
         date:    result.data.date,
         size:    fileSize,
         tag:     result.data.tag,
-      
+
         fileUrl:          driveResult.fileUrl,
         gdrive_file_id:   driveResult.gdriveFileId,
         gdrive_url:       driveResult.fileUrl,
         pool_account_id:  driveResult.poolAccountId,
         download_url:     driveResult.downloadUrl,
-      
+
         uploaded_by:     user.role,
-        // FIX: these three were missing — without them the DB row has null
-        // gdrive columns for file_name / file_size_bytes / mime_type,
-        // which breaks the forward save flow and health checks.
         file_name:       file.name,
         file_size_bytes: file.size,
         mime_type:       file.type || null,
@@ -174,7 +175,6 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
     <Modal open={open} onClose={uploading ? () => {} : resetAndClose} title="Upload Master Document" width="max-w-lg">
       <div className="p-6 space-y-4">
 
-        {/* Title */}
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
             Document Title <span className="text-red-500">*</span>
@@ -186,7 +186,6 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
           {errors.title && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.title}</p>}
         </div>
 
-        {/* Level + Tag */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Level</label>
@@ -207,7 +206,6 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
           </div>
         </div>
 
-        {/* Date + Type */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
@@ -224,7 +222,6 @@ export function AddDocumentModal({ open, onClose, onAdd }: AddDocumentModalProps
           </div>
         </div>
 
-        {/* File upload */}
         <input ref={fileInputRef} type="file"
           accept=".pdf"
           className="hidden"

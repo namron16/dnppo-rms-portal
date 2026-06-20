@@ -1,17 +1,9 @@
 'use client'
 // components/modals/AddJournalEntryModal.tsx
 //
-// FIX: Upload is now open to all P1–P10, WCPD, and PPSMU accounts.
-//      uploaded_by (user.role) is passed back through onSubmit so the page
-//      can tag the journal entry and filter by user on next load.
-//      The Drive gateway routes the file to the uploader's own connected
-//      Google Drive account — never another user's Drive.
-//
-// FIX (Drive pool columns): onSubmit now also passes gdriveFileId,
-//      poolAccountId, and mimeType from the upload result so the page
-//      handler can persist them to the DB via addDailyJournal().
-//      Without this, gdrive_file_id / pool_account_id stayed null in the
-//      DB row, making the document impossible to forward successfully.
+// FIX (error message): uploadToDrive now returns { result, error } so the
+//      exact server error (e.g. "No Google Drive account connected") is shown
+//      instead of the generic fallback from stale uploadError state.
 
 import { useEffect, useRef, useState } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -52,14 +44,13 @@ interface Props {
   title?: string
   submitLabel?: string
   initialValue?: Partial<AddJournalEntryInput> & { content?: string; fileUrl?: string }
-  // FIX: onSubmit now receives Drive pool fields so the page can persist them
   onSubmit?: (entry: JournalEntryFormInput & {
     driveFileUrl?:   string
     uploaded_by?:    string
-    gdriveFileId?:   string   // FIX: Drive file ID for forwarding
-    poolAccountId?:  string   // FIX: pool account ID for re-upload on save
-    mimeType?:       string   // FIX: mime type for re-upload
-    fileSizeBytes?:  number   // FIX: file size for accounting
+    gdriveFileId?:   string
+    poolAccountId?:  string
+    mimeType?:       string
+    fileSizeBytes?:  number
   }) => void | Promise<void>
 }
 
@@ -78,7 +69,7 @@ export function AddJournalEntryModal({
   const { user }  = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const { uploadToDrive, uploading, error: uploadError } = useDriveUpload()
+  const { uploadToDrive, uploading } = useDriveUpload()
 
   const [errors, setErrors]           = useState<Record<string, string>>({})
   const [form, setForm]               = useState<JournalFormState>(EMPTY_FORM)
@@ -150,7 +141,6 @@ export function AddJournalEntryModal({
 
     try {
       let driveFileUrl: string | undefined
-      // FIX: capture all Drive pool fields, not just the URL
       let gdriveFileId:  string | undefined
       let poolAccountId: string | undefined
       let mimeType:      string | undefined
@@ -159,27 +149,30 @@ export function AddJournalEntryModal({
       if (file) {
         const journalId = `jnl-${Date.now()}`
 
-        const uploadResult = await uploadToDrive(file, 'daily_journals', {
-          uploadedBy: user.role,
-          entityId:   journalId,
-          entityType: 'daily_journal',
-        })
+        // FIX: destructure { result, error } — error is always the real server
+        // message, never stale state from a previous render cycle.
+        const { result: driveResult, error: driveError } = await uploadToDrive(
+          file,
+          'daily_journals',
+          {
+            uploadedBy: user.role,
+            entityId:   journalId,
+            entityType: 'daily_journal',
+          }
+        )
 
-        if (!uploadResult) {
-          toast.error(uploadError ?? 'File upload failed. Please try again.')
+        if (!driveResult) {
+          toast.error(driveError)
           return
         }
 
-        driveFileUrl  = uploadResult.fileUrl
-        // FIX: extract Drive pool metadata from upload result
-        gdriveFileId  = uploadResult.gdriveFileId
-        poolAccountId = uploadResult.poolAccountId
+        driveFileUrl  = driveResult.fileUrl
+        gdriveFileId  = driveResult.gdriveFileId
+        poolAccountId = driveResult.poolAccountId
         mimeType      = file.type || undefined
         fileSizeBytes = file.size
       }
 
-      // FIX: pass Drive pool fields to onSubmit so the page handler can
-      // include them when calling addDailyJournal()
       await onSubmit?.({
         ...result.data,
         file:          file ?? undefined,

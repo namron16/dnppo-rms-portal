@@ -1,8 +1,9 @@
 'use client'
 // components/modals/AddConfidentialDocModal.tsx
 //
-// FIX: uploadResult now persists gdrive_file_id and pool_account_id to the doc
-// so that delete and archive operations can actually reach the Drive file.
+// FIX (error message): uploadToDrive now returns { result, error } so the
+//      exact server error (e.g. "No Google Drive account connected") is shown
+//      instead of the generic fallback from stale uploadError state.
 
 import { useState, useRef } from 'react'
 import { Modal }    from '@/components/ui/Modal'
@@ -39,7 +40,7 @@ export function AddConfidentialDocModal({ open, onClose, onAdd }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const today = new Date().toISOString().split('T')[0]
 
-  const { uploadToDrive, uploading, error: uploadError } = useDriveUpload()
+  const { uploadToDrive, uploading } = useDriveUpload()
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [dragging, setDragging]         = useState(false)
@@ -89,23 +90,22 @@ export function AddConfidentialDocModal({ open, onClose, onAdd }: Props) {
       const passwordHash = await hashPassword(result.data.password)
       const docId = `cd-${Date.now()}`
 
-      const uploadResult = await uploadToDrive(selectedFile, 'classified_documents', {
-        uploadedBy: user?.role ?? 'unknown',
-        entityId:   docId,
-        entityType: 'classified_document',
-      })
+      // FIX: destructure { result, error } — error is always the real server
+      // message, never stale state from a previous render cycle.
+      const { result: driveResult, error: driveError } = await uploadToDrive(
+        selectedFile,
+        'classified_documents',
+        {
+          uploadedBy: user?.role ?? 'unknown',
+          entityId:   docId,
+          entityType: 'classified_document',
+        }
+      )
 
-      if (!uploadResult) {
-        toast.error(uploadError ?? 'File upload failed. Please try again.')
+      if (!driveResult) {
+        toast.error(driveError)
         return
       }
-
-      // FIX: persist all three Drive identifiers so delete/archive can use them.
-      // Previously only fileUrl was carried forward; gdrive_file_id and
-      // pool_account_id were silently dropped, breaking Drive cleanup.
-      const fileUrl       = typeof uploadResult === 'string' ? uploadResult : uploadResult.fileUrl
-      const gdriveFileId  = typeof uploadResult === 'object' ? uploadResult.gdriveFileId  : undefined
-      const poolAccountId = typeof uploadResult === 'object' ? uploadResult.poolAccountId : undefined
 
       const newDoc = {
         id:             docId,
@@ -113,12 +113,11 @@ export function AddConfidentialDocModal({ open, onClose, onAdd }: Props) {
         classification: result.data.classification as 'RESTRICTED' | 'CONFIDENTIAL',
         date:           result.data.date,
         access:         result.data.access,
-        fileUrl,
+        fileUrl:         driveResult.fileUrl,
         passwordHash,
-        // FIX: these two were missing before
-        gdrive_file_id:  gdriveFileId,
-        gdrive_url:      fileUrl,
-        pool_account_id: poolAccountId,
+        gdrive_file_id:  driveResult.gdriveFileId,
+        gdrive_url:      driveResult.fileUrl,
+        pool_account_id: driveResult.poolAccountId,
       }
 
       toast.success(`Confidential document "${result.data.title}" added.`)
