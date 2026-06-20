@@ -8,6 +8,18 @@
 // The manifest now carries `main_file` entries populated by engine.ts step 2b.
 // Recovery iterates those entries, re-uploads each file via uploadViaPool, then
 // updates the corresponding document row in Supabase.
+//
+// FIX (this revision): recovery previously only restored child "attachments" —
+// it never restored or re-linked the PRIMARY file referenced directly on the
+// document row (gdrive_file_id / gdrive_url / file_url / pool_account_id on
+// master_documents, special_orders, daily_journals, library_items, and
+// confidential_docs). That meant a recovered document's row would point at a
+// Drive file that had already been deleted, showing "no valid Drive URL" in
+// the UI. Step 6b below fixes this by re-uploading the primary file and
+// patching the row with the new Drive reference — using only the columns
+// that actually exist on that table (confidential_docs has fewer Drive
+// columns than the other four modules, so we detect this per-row rather than
+// hardcoding a column list).
 
 import { createHash } from 'crypto'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
@@ -16,6 +28,19 @@ import { uploadViaPool } from '@/lib/gdrive-pool/migrate-modal'
 import { verifyManifestIntegrity, type BackupManifest } from './manifest'
 import type { BackupModuleName } from './modules'
 import { BACKUP_MODULES } from './modules'
+
+// Modules whose primary table stores a direct Drive file reference
+// (gdrive_file_id / gdrive_url / pool_account_id / file_url) on the document
+// row itself. After re-uploading the file during recovery, these rows must
+// be patched with the NEW reference — otherwise they keep pointing at a
+// Drive file that no longer exists.
+const MODULES_WITH_PATCHABLE_PRIMARY_FILE: BackupModuleName[] = [
+  'master_documents',
+  'admin_orders',
+  'daily_journals',
+  'e_library',
+  'classified_documents',
+]
 
 export interface RecoveryOptions {
   backup_job_id: string
@@ -142,21 +167,29 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
     //      These have a `main_file` path pointing to `primary_files/<docId>/<name>`.
     //      After re-upload, the document row must be patched with the new Drive IDs
     //      so the app no longer references the now-deleted original Drive file.
+    //      This patching now happens in step 6b below.
     //
-    //   b) Attachment entries — added by downloadAttachments().
-    //      These live under `attachments/<docId>/attachments/` in the ZIP and are
-    //      restored into the *_attachments table rows (which were already upserted
-    //      in step 5 with the old gdrive_file_id). Re-uploading gives us fresh IDs
-    //      but we do NOT patch the attachment table rows here — that would require
-    //      knowing the exact attachment row ID per file, which the manifest carries
-    //      via `attachment_id`. If needed, add that patch as a follow-up.
+    //   b) Attachment entries — added by downloadAttachments() or
+    //      downloadFromRecordsTable().
+    //      For most modules these live under `attachments/<docId>/attachments/`
+    //      and are restored into the *_attachments table rows. For
+    //      classified_documents (downloadFromRecordsTable), the single
+    //      attachment entry's `file` path is IDENTICAL to `main_file` — so we
+    //      skip it here to avoid uploading the same file twice; it gets
+    //      uploaded once in step 6b instead.
     //
     let filesRestored = 0
 
     if (manifest.contents?.attachments) {
       for (const docEntry of manifest.contents.attachments.files ?? []) {
         for (const att of docEntry.attachments ?? []) {
-          if (att.error) continue   // ← no "as any" needed now
+          if (att.error) continue
+
+          // FIX: skip attachment entries that are actually the primary file
+          // (classified_documents stores the same path in both places via
+          // downloadFromRecordsTable). Step 6b handles uploading + patching
+          // primary files, so uploading it again here would duplicate it.
+          if (docEntry.main_file && att.file === docEntry.main_file) continue
 
           try {
             const fileBuffer = await extractFile(zip, att.file)
@@ -186,6 +219,86 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
           }
         }
 }
+    }
+
+    // ── 6b. Restore PRIMARY files and re-link the document row ───────────────
+    //
+    // This is the fix for: "recovered document shows but has no valid Drive
+    // URL". The manifest's main_file entries point to the actual document
+    // file inside the ZIP. We re-upload each one to Drive, then patch the
+    // document row's Drive columns with the NEW file ID/URL — replacing the
+    // stale reference that was just restored in step 5.
+    //
+    // We select('*') instead of specific columns and only patch columns that
+    // exist on the row, because confidential_docs (classified_documents
+    // module) does not have file_name / file_size_bytes / mime_type columns,
+    // unlike master_documents / special_orders / daily_journals / library_items.
+    if (MODULES_WITH_PATCHABLE_PRIMARY_FILE.includes(opts.module_name) && manifest.contents?.attachments) {
+      const primaryTable = moduleDef.tables[0]
+
+      for (const docEntry of manifest.contents.attachments.files ?? []) {
+        if (!docEntry.main_file) continue
+
+        try {
+          const fileBuffer = await extractFile(zip, docEntry.main_file)
+
+          if (docEntry.main_checksum && !verifyChecksum(fileBuffer, docEntry.main_checksum)) {
+            console.warn(`[Recovery] Checksum mismatch for primary file ${docEntry.main_file} — skipping`)
+            continue
+          }
+
+          const { data: docRow } = await db
+            .from(primaryTable)
+            .select('*')
+            .eq('id', docEntry.document_id)
+            .maybeSingle()
+
+          const fileName = (docRow as any)?.file_name ?? docEntry.document_title ?? docEntry.main_file.split('/').pop()!
+          const mimeType = (docRow as any)?.mime_type ?? 'application/octet-stream'
+
+          const def        = moduleDef as any
+          const entityType = typeof def.entity_type === 'string' ? def.entity_type : undefined
+
+          const result = await uploadViaPool({
+            file: fileBuffer, fileName, mimeType,
+            category:      moduleDef.gdrive_category as any,
+            entityType,
+            entityId:      docEntry.document_id,
+            uploadedBy:    triggeredBy,
+            fileSizeBytes: fileBuffer.length,
+          })
+
+          // Only patch columns that actually exist on this row — avoids a
+          // "column does not exist" error on tables like confidential_docs.
+          const patch: Record<string, any> = {}
+          if (docRow && 'gdrive_file_id'  in docRow) patch.gdrive_file_id  = result.gdriveFileId
+          if (docRow && 'gdrive_url'      in docRow) patch.gdrive_url      = result.fileUrl
+          if (docRow && 'file_url'        in docRow) patch.file_url        = result.fileUrl
+          if (docRow && 'pool_account_id' in docRow) patch.pool_account_id = result.poolAccountId
+          if (docRow && 'file_size_bytes' in docRow) patch.file_size_bytes = fileBuffer.length
+          if (docRow && 'mime_type'       in docRow) patch.mime_type       = mimeType
+          if (docRow && 'file_name'       in docRow) patch.file_name       = fileName
+
+          if (Object.keys(patch).length === 0) {
+            console.warn(`[Recovery] No patchable Drive columns found on ${primaryTable} for ${docEntry.document_id} — skipping patch.`)
+            continue
+          }
+
+          const { error: patchErr } = await db
+            .from(primaryTable)
+            .update(patch)
+            .eq('id', docEntry.document_id)
+
+          if (patchErr) {
+            console.warn(`[Recovery] Uploaded primary file but failed to patch ${primaryTable}: ${patchErr.message}`)
+          } else {
+            console.log(`[Recovery] Restored primary file for ${docEntry.document_id} → ${result.fileUrl}`)
+            filesRestored++
+          }
+        } catch (err: any) {
+          console.warn(`[Recovery] Could not restore primary file for ${docEntry.document_id}:`, err.message)
+        }
+      }
     }
 
     // ── 7. Post-recovery validation ──────────────────────────────────────────
