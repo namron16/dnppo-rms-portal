@@ -13,12 +13,16 @@ export type LogActionType =
   | 'review_document' | 'approve_document' | 'reject_document'
   | 'add_org_member' | 'edit_org_member' | 'remove_org_member'
   | 'recall_inbox_item' | 'save_inbox_item' | 'change_password' | 'save_forwarded_document'
-  | 'disable_account' | 'enable_account'
+  | 'disable_account' | 'enable_account' | 'delete_account'
+  // ── NEW: GDrive account management ────────────────────────────────────────
+  | 'gdrive_connect'
+  | 'gdrive_reconnect'
+  | 'gdrive_disconnect'
+  // ── NEW: User management ─────────────────────────────────────────────────
+  | 'edit_email'
+  | 'reset_password'
 
 // ── Module-level state — set on login via setCurrentLogger() ─────────────────
-// _currentRole is still cached for convenience wrappers that pass the role
-// as a description string. _currentUserId is now only a fallback; the live
-// session is always preferred so auth.uid() and the inserted user_id match.
 let _currentUserId: string | null = null
 let _currentRole:   AdminRole | null = null
 
@@ -32,13 +36,8 @@ export function isLoggerReady(): boolean {
 }
 
 // ── Client factory ────────────────────────────────────────────────────────────
-// Server-side API routes (typeof window === 'undefined') use the service role
-// client so auth.uid() = null doesn't trip the RLS policy.
-// Browser code uses the anon client whose session cookie satisfies RLS.
-
 function getSupabaseClient() {
   if (typeof window === 'undefined') {
-    // Server-side: service role key bypasses all RLS
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!url || !key) {
@@ -52,7 +51,6 @@ function getSupabaseClient() {
     })
   }
 
-  // Browser-side: anon client — session cookie satisfies RLS
   const { createClient } = require('./supabase/client')
   return createClient()
 }
@@ -68,11 +66,6 @@ export async function logAction(
   const descriptionValue =
     typeof description === 'string' ? description : JSON.stringify(description)
 
-  // ── Resolve user_id and role ──────────────────────────────────────────────
-  // On the browser we always pull the live session so the inserted user_id
-  // equals auth.uid() — mismatches are what trigger the RLS 42501 error.
-  // On the server (service role) we fall back to the cached values because
-  // auth.getUser() is not meaningful with the service role key.
   let resolvedUserId: string | null = _currentUserId
   let resolvedRole:   string | null = _currentRole
 
@@ -81,7 +74,6 @@ export async function logAction(
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         resolvedUserId = user.id
-        // If role wasn't cached yet, try to read it from user_metadata or app_metadata
         if (!resolvedRole) {
           resolvedRole =
             (user.user_metadata?.role as string | undefined) ??
@@ -98,8 +90,7 @@ export async function logAction(
     if (process.env.NODE_ENV === 'development') {
       console.warn(
         `[adminLogger] logAction("${action}") called before auth resolved — log dropped.\n` +
-        'Ensure setCurrentLogger(role, userId) is called after login, or that the ' +
-        'Supabase session cookie is present before triggering uploads.'
+        'Ensure setCurrentLogger(role, userId) is called after login.'
       )
     }
     return
@@ -120,7 +111,6 @@ export async function logAction(
       `  Hint:    ${error.hint ?? '—'}\n`,
       `  Details: ${error.details ?? '—'}`
     )
-    // Never throw — a failed log must not crash the caller
   }
 }
 
@@ -228,3 +218,50 @@ export const logDisableAccount = (targetDisplayName: string) =>
 
 export const logEnableAccount = (targetDisplayName: string) =>
   logAction('enable_account', `Enabled account for "${targetDisplayName}"`)
+
+export const logDeleteAccount = (targetDisplayName: string) =>
+  logAction('delete_account', `Deleted account for "${targetDisplayName}"`)
+
+// ── NEW: GDrive account management ───────────────────────────────────────────
+
+/**
+ * Logged when the admin starts the OAuth flow to connect a fresh Drive account.
+ * @param username  The user whose pool is being expanded (e.g. 'P1', 'DPDA')
+ */
+export const logGDriveConnect = (username: string) =>
+  logAction('gdrive_connect', `Initiated Google Drive connection for user "${username}"`)
+
+/**
+ * Logged when the admin re-runs the OAuth flow for an account that already
+ * exists in the pool (token refresh / scope upgrade).
+ * @param username     The pool owner
+ * @param accountEmail The Google account being reconnected
+ */
+export const logGDriveReconnect = (username: string, accountEmail: string) =>
+  logAction('gdrive_reconnect', `Reconnected Google Drive account "${accountEmail}" for user "${username}"`)
+
+/**
+ * Logged when the admin removes a Drive account from a user's pool.
+ * @param accountEmail The Google account being disconnected
+ * @param username     The pool owner
+ */
+export const logGDriveDisconnect = (accountEmail: string, username: string) =>
+  logAction('gdrive_disconnect', `Disconnected Google Drive account "${accountEmail}" from user "${username}"`)
+
+// ── NEW: User management ─────────────────────────────────────────────────────
+
+/**
+ * Logged when an admin changes another user's email address.
+ * @param targetDisplayName  Human-readable name of the affected account
+ * @param oldEmail           Previous email
+ * @param newEmail           New email
+ */
+export const logEditEmail = (targetDisplayName: string, oldEmail: string, newEmail: string) =>
+  logAction('edit_email', `Changed email for "${targetDisplayName}" from "${oldEmail}" to "${newEmail}"`)
+
+/**
+ * Logged when an admin resets another user's password.
+ * @param targetDisplayName  Human-readable name of the affected account
+ */
+export const logResetPassword = (targetDisplayName: string) =>
+  logAction('reset_password', `Reset password for "${targetDisplayName}"`)
