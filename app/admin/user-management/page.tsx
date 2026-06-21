@@ -6,10 +6,16 @@ import { Badge }        from '@/components/ui/Badge'
 import { Avatar }       from '@/components/ui/Avatar'
 import { SearchInput }  from '@/components/ui/SearchInput'
 import { EmptyState }   from '@/components/ui/EmptyState'
+import {useToast}         from '@/components/ui/Toast'
 import { useSearch }    from '@/hooks'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth }      from '@/lib/auth'
-import { logDisableAccount, logEnableAccount } from '@/lib/adminLogger'
+import {
+  logDisableAccount,
+  logEnableAccount,
+  logResetPassword,
+  logEditEmail,
+} from '@/lib/adminLogger'
 import {
   listAllUsers,
   getSingleUser,
@@ -61,7 +67,6 @@ function ActionMenu({
   const [open, setOpen] = useState(false)
   const ref             = useRef<HTMLDivElement>(null)
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return
     function handle(e: MouseEvent) {
@@ -85,7 +90,6 @@ function ActionMenu({
         className="flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200
                    text-slate-500 hover:bg-slate-50 hover:border-slate-300 transition"
       >
-        {/* Three vertical dots */}
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <circle cx="8" cy="3"  r="1.2" />
           <circle cx="8" cy="8"  r="1.2" />
@@ -130,7 +134,6 @@ function ActionMenu({
             Reset password
           </button>
 
-          {/* Divider */}
           <div className="my-1 border-t border-slate-100" />
 
           {/* Enable / Disable toggle */}
@@ -205,7 +208,7 @@ function PresenceDot({ isActive }: { isActive: boolean }) {
 
 export default function UserManagementPage() {
   const { user } = useAuth()
-
+  const { toast } = useToast()
   const [users,             setUsers]             = useState<ManagedUser[]>([])
   const [loading,           setLoading]           = useState(true)
   const [realtimeConnected, setRealtimeConnected] = useState(false)
@@ -398,26 +401,45 @@ export default function UserManagementPage() {
     }
   }
 
-  // ── Modal handlers ────────────────────────────────────────────────────────
+  // ── Reset password handler ────────────────────────────────────────────────
+  // Opens the modal. Log fires in handleResetSuccess after confirmed success.
 
   const handleResetPassword = (userId: string, displayName: string) =>
     setResetTarget({ id: userId, displayName })
 
-  const handleResetSuccess = () => {
-    const name = resetTarget?.displayName
+  const handleResetSuccess = async () => {
+    const name = resetTarget?.displayName ?? ''
     setResetTarget(null)
     setMessage({ type: 'info', text: `Password reset for ${name}.` })
+    // Log after modal confirms success — never log on cancelled/failed resets
+    toast.success(`Password reset for ${name}.`)
+    await logResetPassword(name)
   }
+
+  // ── Edit email handler ────────────────────────────────────────────────────
+  // Opens the modal. Log fires in handleEditEmailSuccess with old + new email.
 
   const handleEditEmail = (userId: string, displayName: string, email?: string) =>
     setEditEmailTarget({ id: userId, displayName, email })
 
-  const handleEditEmailSuccess = (newEmail: string) => {
-    const oldTarget = editEmailTarget
+  const handleEditEmailSuccess = async (newEmail: string) => {
+    const oldTarget  = editEmailTarget
+    const oldEmail   = oldTarget?.email ?? ''
+    const displayName = oldTarget?.displayName ?? ''
+
     if (oldTarget?.id) patchUser(oldTarget.id, { email: newEmail })
     setEditEmailTarget(null)
     setMessage({ type: 'info', text: `Email updated to ${newEmail}.` })
+
+    // Log with both old and new email so the audit trail is self-contained
+    toast.success(`Email updated to ${newEmail}.`)
+    await logEditEmail(displayName, oldEmail, newEmail)
   }
+
+  // ── Delete handler ────────────────────────────────────────────────────────
+  // deleteAccount() in actions.ts already writes to admin_logs directly
+  // (because it runs server-side with the service role key).
+  // No additional client-side log call is needed here.
 
   const handleDeleteTarget = (u: ManagedUser) => {
     setDeleteTarget({
@@ -658,6 +680,7 @@ export default function UserManagementPage() {
           displayName={resetTarget.displayName}
           onClose={() => setResetTarget(null)}
           onSuccess={handleResetSuccess}
+          onError={(msg) => toast.error(msg)}
         />
       )}
 
@@ -668,6 +691,7 @@ export default function UserManagementPage() {
           currentEmail={editEmailTarget.email}
           onClose={() => setEditEmailTarget(null)}
           onSuccess={handleEditEmailSuccess}
+          onError={(msg) => toast.error(msg)}
         />
       )}
 

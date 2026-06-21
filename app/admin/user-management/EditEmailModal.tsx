@@ -8,9 +8,10 @@ interface Props {
   currentEmail?: string
   onClose:       () => void
   onSuccess:     (newEmail: string) => void
+  onError?: (msg: string) => void
 }
 
-export function EditEmailModal({ userId, displayName, currentEmail, onClose, onSuccess }: Props) {
+export function EditEmailModal({ userId, displayName, currentEmail, onClose, onSuccess, onError }: Props) {
   const [email,   setEmail]   = useState(currentEmail ?? '')
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
@@ -28,7 +29,9 @@ export function EditEmailModal({ userId, displayName, currentEmail, onClose, onS
       await adminUpdateEmail(userId, email)
       onSuccess(email)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to update email.')
+      const msg = e instanceof Error ? e.message : 'Failed to update email.'
+      setError(msg)
+      onError?.(msg)   // fires toast in parent
     } finally {
       setLoading(false)
     }

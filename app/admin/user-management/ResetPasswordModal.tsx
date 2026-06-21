@@ -7,9 +7,10 @@ interface Props {
   displayName: string
   onClose:     () => void
   onSuccess:   () => void
+  onError?: (msg: string) => void
 }
 
-export function ResetPasswordModal({ userId, displayName, onClose, onSuccess }: Props) {
+export function ResetPasswordModal({ userId, displayName, onClose, onSuccess, onError }: Props) {
   const [password, setPassword] = useState('')
   const [confirm,  setConfirm]  = useState('')
   const [loading,  setLoading]  = useState(false)
@@ -29,7 +30,9 @@ export function ResetPasswordModal({ userId, displayName, onClose, onSuccess }: 
       await adminResetPassword(userId, password)
       onSuccess()
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Reset failed.')
+      const msg = e instanceof Error ? e.message : 'Reset failed.'
+      setError(msg)
+      onError?.(msg)   // fires toast in parent
     } finally {
       setLoading(false)
     }

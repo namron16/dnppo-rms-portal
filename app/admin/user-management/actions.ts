@@ -56,8 +56,7 @@ export async function listAllUsers() {
   }))
 }
 
-// ── Fetch a single user by ID (used by realtime patch callbacks) ──────────
-// Returns null when the user no longer exists (deleted edge case).
+// ── Fetch a single user by ID ─────────────────────────────────────────────
 
 export async function getSingleUser(userId: string) {
   await assertSuperAdmin()
@@ -89,36 +88,13 @@ export async function getSingleUser(userId: string) {
 }
 
 // ── Toggle active/inactive ─────────────────────────────────────────────────
-//
-// Order of operations matters here:
-//
-//   1. Update profiles.is_active  — source of truth for the UI + realtime
-//   2. Update user_metadata       — what the middleware JWT check reads
-//   3. Global sign-out            — invalidate all existing sessions
-//
-// Steps 2 and 3 must happen in this order. If we sign out first, the user's
-// JWT is revoked before the metadata is updated, so the middleware still sees
-// the OLD is_active value on any in-flight request, allowing a brief window
-// where the account is signed out but the middleware would re-admit them.
-// Writing metadata first closes that window completely.
-//
-// FIX: Step 1 now uses the admin client (service role) instead of the regular
-// server client. The regular client is subject to RLS, and the profiles RLS
-// policy only allows users to update their OWN row — so an admin trying to
-// update someone else's profile would be silently blocked (no error thrown,
-// nothing saved). The admin client bypasses RLS entirely, ensuring the
-// is_active change is actually persisted to the database.
 
 export async function setUserActive(userId: string, isActive: boolean) {
   await assertSuperAdmin()
 
   const admin = getAdminClient()
 
-  // 1. Source of truth: profiles table
-  //    Must use the admin client here — the regular server client is bound by
-  //    RLS, which only permits a user to UPDATE their own profile row.
-  //    Using it to update another user's row would silently no-op (0 rows
-  //    affected, no error), causing the button to reset on page refresh.
+  // 1. Source of truth: profiles table (must use admin client to bypass RLS)
   const { error: profileError } = await admin
     .from('profiles')
     .update({ is_active: isActive })
@@ -126,8 +102,7 @@ export async function setUserActive(userId: string, isActive: boolean) {
 
   if (profileError) throw profileError
 
-  // 2. Sync into user_metadata for middleware checks.
-  //    Fetch the current metadata first so we don't wipe other fields.
+  // 2. Sync into user_metadata for middleware checks
   const { data: authUser, error: fetchError } = await admin.auth.admin.getUserById(userId)
   if (fetchError) throw fetchError
 
@@ -141,11 +116,7 @@ export async function setUserActive(userId: string, isActive: boolean) {
   })
   if (metaError) throw metaError
 
-  // 3. Immediately invalidate all sessions when deactivating.
-  //    A small pause ensures Supabase has propagated the metadata update
-  //    to its internal token-validation layer before the sessions are killed.
-  //    Without this, a racing token refresh on the client can produce a new
-  //    JWT that still carries is_active: true.
+  // 3. Invalidate all sessions when deactivating
   if (!isActive) {
     await new Promise(r => setTimeout(r, 150))
     await admin.auth.admin.signOut(userId, 'global')
@@ -184,13 +155,12 @@ export async function adminUpdateEmail(
   if (error) throw error
 }
 
-
-// ── Create a brand-new account (role + auth user + profile + drive slot) ──────
+// ── Create a brand-new account ────────────────────────────────────────────
 
 export async function createAccount(input: {
   email:        string
   password:     string
-  role:         string          // e.g. 'P11', 'FINANCE'
+  role:         string
   display_name: string
   title:        string
   initials:     string
@@ -205,15 +175,15 @@ export async function createAccount(input: {
 
   // 1. Register the role in role_registry
   const { error: roleError } = await admin.rpc('register_role', {
-    p_role:          input.role,
-    p_display_name:  input.display_name,
-    p_title:         input.title,
-    p_nav_group:     input.nav_group,
-    p_default_route: '/admin/master',
-    p_can_upload:    input.can_upload,
+    p_role:           input.role,
+    p_display_name:   input.display_name,
+    p_title:          input.title,
+    p_nav_group:      input.nav_group,
+    p_default_route:  '/admin/master',
+    p_can_upload:     input.can_upload,
     p_is_viewer_only: input.is_viewer_only,
-    p_sort_order:    100,
-    p_created_by:    'admin',
+    p_sort_order:     100,
+    p_created_by:     'admin',
   })
   if (roleError) throw new Error(`Role registration failed: ${roleError.message}`)
 
@@ -250,47 +220,63 @@ export async function createAccount(input: {
   return { userId }
 }
 
-//delete account (auth user + profile + drive slot + role registry entry)
+// ── Delete account ────────────────────────────────────────────────────────
+//
+// Logging note: this runs server-side with the service role key, so the
+// browser-side adminLogger (which relies on auth.getUser()) cannot be used.
+// Instead we write directly to admin_logs using the admin client, using
+// 'admin' as the role (the only role that can reach this action).
+// The log entry is written AFTER all destructive steps succeed so a failed
+// deletion is never recorded as complete.
+
 export async function deleteAccount(userId: string, role: string) {
   await assertSuperAdmin()
 
   const admin = getAdminClient()
 
-  // Guard: never allow deleting the built-in admin account
+  // Guard: never allow deleting built-in protected accounts
   const PROTECTED_ROLES = ['admin', 'PD']
   if (PROTECTED_ROLES.includes(role)) {
     throw new Error(`The "${role}" account is protected and cannot be deleted.`)
   }
 
-  // 1. Get the profile before deletion so we can log it
+  // 1. Fetch the profile first so we have the display name for the log
   const { data: profile } = await admin
     .from('profiles')
     .select('role, display_name')
     .eq('id', userId)
     .single()
 
-  // 2. Delete from Supabase Auth — this is the primary deletion
-  //    If your DB has an ON DELETE CASCADE trigger on profiles.id → auth.users.id,
-  //    the profile row will be removed automatically. Otherwise step 3 handles it.
+  const displayName = profile?.display_name ?? role
+
+  // 2. Delete from Supabase Auth (cascades to profile row if trigger exists)
   const { error: authDeleteError } = await admin.auth.admin.deleteUser(userId)
   if (authDeleteError) throw new Error(`Auth deletion failed: ${authDeleteError.message}`)
 
-  // 3. Delete profile row (safe to call even if cascade already removed it)
+  // 3. Delete profile row (safe even if cascade already removed it)
   await admin.from('profiles').delete().eq('id', userId)
 
   // 4. Remove from Drive pool users table
   await admin.from('users').delete().eq('username', role)
 
-  // 5. Soft-delete the role in registry (keeps log history display names intact)
+  // 5. Soft-delete the role in registry (preserves display names in log history)
   const { error: registryError } = await admin.rpc('deactivate_role', { p_role: role })
   if (registryError) throw new Error(`Registry deactivation failed: ${registryError.message}`)
 
-  // 6. Log the deletion in admin_logs for the audit trail
+  // 6. Write audit log — only after all destructive steps succeed.
+  //    We resolve the acting admin's user_id from the current session so the
+  //    log row satisfies the RLS policy (user_id must match auth.uid()).
+  //    The service role client bypasses RLS, so this insert always lands.
+  const supabase = await createServerClient()
+  const { data: { user: actingUser } } = await supabase.auth.getUser()
+
   await admin.from('admin_logs').insert({
-    user_id:     userId,
+    // Use the acting admin's real user_id so the log is attributable.
+    // Fall back to the deleted user's id only as a last resort (should never happen).
+    user_id:     actingUser?.id ?? userId,
     role:        'admin',
     action:      'delete_account',
-    description: `Deleted account: ${profile?.display_name ?? role} (${role})`,
+    description: `Deleted account: ${displayName} (${role})`,
   })
 
   return { success: true }
