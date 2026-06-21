@@ -7,28 +7,32 @@ import type { BackupModuleName } from './modules'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const RMS_VERSION       = '1.4.2'
-const MANIFEST_VERSION  = '1.0'
+const RMS_VERSION          = '1.4.2'
+const MANIFEST_VERSION     = '1.0'
 const ENCRYPTION_ALGORITHM = 'AES-256-GCM'
 const INTEGRITY_ALGORITHM  = 'SHA-256'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface AttachmentEntry {
-  attachment_id: string
-  title:         string
-  file:          string
-  checksum:      string
-  error?:        string
+  attachment_id:    string
+  title:            string
+  file:             string
+  checksum:         string
+  /** pool_account_id UUID — stored so recovery can resolve owner_username */
+  pool_account_id?: string
+  error?:           string
 }
 
 export interface DocumentAttachmentGroup {
-  document_id:    string
+  document_id:     string
   document_title?: string
   main_file?:      string
   main_checksum?:  string
-  attachments:    AttachmentEntry[]
-  error?:         string
+  /** pool_account_id of the Drive account that holds the primary file */
+  pool_account_id?: string
+  attachments:     AttachmentEntry[]
+  error?:          string
 }
 
 export interface ManifestDatabaseSection {
@@ -87,11 +91,6 @@ export interface GenerateManifestOptions {
   attachmentManifest: DocumentAttachmentGroup[]
   now:                Date
   triggeredBy?:       string
-  /**
-   * Record counts per table name, supplied by the engine after exporting.
-   * If not provided, the manifest will still try to infer counts from the
-   * JSON buffers in backupFiles (best-effort).
-   */
   recordCounts?:      Record<string, number>
 }
 
@@ -142,7 +141,7 @@ export async function generateManifest(
     statistics: {
       total_files:      backupFiles.size,
       total_size_bytes: totalSize(backupFiles),
-      duration_seconds: 0, // filled in by finalizeManifest()
+      duration_seconds: 0,
     },
   }
 
@@ -152,15 +151,6 @@ export async function generateManifest(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Builds one ManifestDatabaseSection per database file in the backup.
- *
- * FIX: record_count is now populated from:
- *   1. The recordCounts map passed in from the engine (most accurate).
- *   2. Fallback: parse the JSON buffer to count rows (best-effort for
- *      cases where the engine didn't pass explicit counts).
- *   3. Last resort: 0 (matches old behaviour, but now clearly documented).
- */
 function buildDatabaseSections(
   module_name:  BackupModuleName,
   backupFiles:  Map<string, Buffer>,
@@ -174,10 +164,8 @@ function buildDatabaseSections(
     const filename  = relativePath.replace('database/', '')
     const tableName = extractTableName(filename)
 
-    // Try explicit count first, then parse the buffer, then fall back to 0
     let count = recordCounts[tableName] ?? 0
-    if (count === 0 && filename.endsWith('.json.enc') === false) {
-      // Only parseable if it's a plain JSON (not encrypted)
+    if (count === 0 && !filename.endsWith('.json.enc')) {
       try {
         const parsed = JSON.parse(buffer.toString('utf8'))
         if (Array.isArray(parsed)) count = parsed.length
@@ -224,20 +212,24 @@ function buildAttachmentSection(
       if (attBuf) totalSizeBytes += attBuf.length
 
       return {
-        attachment_id: att.attachment_id,
-        title:         att.title,
-        file:          att.file,
-        checksum:      attBuf ? sha256(attBuf) : att.checksum,
+        attachment_id:   att.attachment_id,
+        title:           att.title,
+        file:            att.file,
+        checksum:        attBuf ? sha256(attBuf) : att.checksum,
+        // FIX: preserve pool_account_id so recovery can resolve owner_username
+        pool_account_id: att.pool_account_id,
       }
     })
 
     return {
-    document_id:    group.document_id,
-    document_title: group.document_title ?? '',
-    main_file:      group.main_file ?? '',
-    main_checksum:  mainChecksum,
-    attachments:    resolvedAttachments,
-  }
+      document_id:     group.document_id,
+      document_title:  group.document_title ?? '',
+      main_file:       group.main_file ?? '',
+      main_checksum:   mainChecksum,
+      // FIX: preserve pool_account_id on the group entry too
+      pool_account_id: group.pool_account_id,
+      attachments:     resolvedAttachments,
+    }
   })
 
   return {
@@ -248,21 +240,12 @@ function buildAttachmentSection(
   }
 }
 
-/**
- * Verifies a MANIFEST.json by recomputing its checksum and comparing.
- * Used during recovery to confirm the manifest hasn't been tampered with.
- */
 export function verifyManifestIntegrity(manifest: BackupManifest): boolean {
   const storedChecksum = manifest.integrity.manifest_checksum
   const recomputed     = computeManifestChecksum(manifest)
   return recomputed === storedChecksum
 }
 
-/**
- * Updates duration_seconds and recomputes the manifest checksum.
- * Must be called by the engine after the backup completes, before writing
- * the final MANIFEST.json buffer to backupFiles.
- */
 export function finalizeManifest(
   manifest:        BackupManifest,
   durationSeconds: number
@@ -302,11 +285,8 @@ function extractTableName(filename: string): string {
     .replace(/\.xlsx$/, '')
     .replace(/\.json$/, '')
 
-  const match = cleaned.match(/^(.+?)_\d{4}-\d{2}-\d{2}/)
+  const match     = cleaned.match(/^(.+?)_\d{4}-\d{2}-\d{2}/)
   const tableName = match ? match[1] : cleaned
 
-  // FIX: exportArchivedTables() names files like "master_documents_archived_<date>",
-  // so the captured group above is "master_documents_archived". Strip the
-  // suffix here so the manifest's table label matches the real table name.
   return tableName.replace(/_archived$/, '')
 }
