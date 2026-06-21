@@ -6,6 +6,7 @@ import { runRecovery } from '@/lib/backup/recovery'
 import { requireAdmin, getCurrentUser, AuthError } from '@/lib/backup/auth-guard'
 import { BACKUP_MODULES } from '@/lib/backup/modules'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
+import { logRestoreBackup } from '@/lib/adminLogger'
 
 export const runtime     = 'nodejs'
 export const maxDuration = 300
@@ -139,6 +140,15 @@ export async function POST(request: Request) {
       module_name,
       triggered_by: triggeredBy,
     })
+
+    
+    void logRestoreBackup(
+        module_name,
+        backup_job_id,
+        result.recoveryJobId,
+        result.recordsRestored,
+        result.filesRestored
+      )
 
     return NextResponse.json({ data: result })
   } catch (err: any) {

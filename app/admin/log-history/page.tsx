@@ -106,6 +106,8 @@ const ACTION_CONFIG: Record<string, { label: string; icon: string; badgeCls: str
   gdrive_connect:         { label: 'Drive Connect',   icon: '🔗', badgeCls: 'bg-blue-100 text-blue-800 border-blue-300' },
   gdrive_reconnect:       { label: 'Drive Reconnect', icon: '🔄', badgeCls: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
   gdrive_disconnect:      { label: 'Drive Disconnect',icon: '🔌', badgeCls: 'bg-red-100 text-red-800 border-red-300' },
+  trigger_backup: { label: 'Backup',  icon: '💾', badgeCls: 'bg-slate-100 text-slate-700 border-slate-200' },
+  restore_backup: { label: 'Restore', icon: '↩️', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
 }
 
 function getActionConfig(action: string) {

@@ -14,13 +14,11 @@ export type LogActionType =
   | 'add_org_member' | 'edit_org_member' | 'remove_org_member'
   | 'recall_inbox_item' | 'save_inbox_item' | 'change_password' | 'save_forwarded_document'
   | 'disable_account' | 'enable_account' | 'delete_account'
-  // ── NEW: GDrive account management ────────────────────────────────────────
-  | 'gdrive_connect'
-  | 'gdrive_reconnect'
-  | 'gdrive_disconnect'
-  // ── NEW: User management ─────────────────────────────────────────────────
-  | 'edit_email'
-  | 'reset_password'
+  | 'gdrive_connect' | 'gdrive_reconnect' | 'gdrive_disconnect'
+  | 'edit_email' | 'reset_password'
+  // ── Backup & Recovery ─────────────────────────────────────────────────────
+  | 'trigger_backup'
+  | 'restore_backup'
 
 // ── Module-level state — set on login via setCurrentLogger() ─────────────────
 let _currentUserId: string | null = null
@@ -222,46 +220,70 @@ export const logEnableAccount = (targetDisplayName: string) =>
 export const logDeleteAccount = (targetDisplayName: string) =>
   logAction('delete_account', `Deleted account for "${targetDisplayName}"`)
 
-// ── NEW: GDrive account management ───────────────────────────────────────────
+// ── GDrive account management ─────────────────────────────────────────────────
 
-/**
- * Logged when the admin starts the OAuth flow to connect a fresh Drive account.
- * @param username  The user whose pool is being expanded (e.g. 'P1', 'DPDA')
- */
 export const logGDriveConnect = (username: string) =>
   logAction('gdrive_connect', `Initiated Google Drive connection for user "${username}"`)
 
-/**
- * Logged when the admin re-runs the OAuth flow for an account that already
- * exists in the pool (token refresh / scope upgrade).
- * @param username     The pool owner
- * @param accountEmail The Google account being reconnected
- */
 export const logGDriveReconnect = (username: string, accountEmail: string) =>
   logAction('gdrive_reconnect', `Reconnected Google Drive account "${accountEmail}" for user "${username}"`)
 
-/**
- * Logged when the admin removes a Drive account from a user's pool.
- * @param accountEmail The Google account being disconnected
- * @param username     The pool owner
- */
 export const logGDriveDisconnect = (accountEmail: string, username: string) =>
   logAction('gdrive_disconnect', `Disconnected Google Drive account "${accountEmail}" from user "${username}"`)
 
-// ── NEW: User management ─────────────────────────────────────────────────────
+// ── User management ───────────────────────────────────────────────────────────
 
-/**
- * Logged when an admin changes another user's email address.
- * @param targetDisplayName  Human-readable name of the affected account
- * @param oldEmail           Previous email
- * @param newEmail           New email
- */
 export const logEditEmail = (targetDisplayName: string, oldEmail: string, newEmail: string) =>
   logAction('edit_email', `Changed email for "${targetDisplayName}" from "${oldEmail}" to "${newEmail}"`)
 
-/**
- * Logged when an admin resets another user's password.
- * @param targetDisplayName  Human-readable name of the affected account
- */
 export const logResetPassword = (targetDisplayName: string) =>
   logAction('reset_password', `Reset password for "${targetDisplayName}"`)
+
+// ── Backup & Recovery ─────────────────────────────────────────────────────────
+
+/**
+ * Logged when the Super Admin manually triggers a backup job.
+ *
+ * Called from app/api/backup/trigger/route.ts after the job row is created
+ * and status is set to 'running'. Uses the service-role client directly
+ * because this runs server-side with no browser session.
+ *
+ * @param module_name  e.g. 'master_documents', 'admin_orders'
+ * @param backup_type  e.g. 'full', 'incremental'
+ * @param jobId        The backup_jobs.id UUID
+ */
+export const logTriggerBackup = (
+  module_name: string,
+  backup_type: string,
+  jobId: string
+) =>
+  logAction(
+    'trigger_backup',
+    `Triggered manual ${backup_type} backup for module "${module_name}" (job: ${jobId.slice(0, 8)}…)`
+  )
+
+/**
+ * Logged when the Super Admin restores data from a backup job.
+ *
+ * Called from app/api/backup/recover/route.ts after runRecovery() completes
+ * successfully. Uses the service-role client directly.
+ *
+ * @param module_name     e.g. 'master_documents'
+ * @param backup_job_id   The source backup_jobs.id UUID
+ * @param recoveryJobId   The recovery_jobs.id UUID
+ * @param recordsRestored Number of DB rows restored
+ * @param filesRestored   Number of Drive files re-uploaded
+ */
+export const logRestoreBackup = (
+  module_name:     string,
+  backup_job_id:   string,
+  recoveryJobId:   string,
+  recordsRestored: number,
+  filesRestored:   number
+) =>
+  logAction(
+    'restore_backup',
+    `Restored module "${module_name}" from backup ${backup_job_id.slice(0, 8)}… ` +
+    `— ${recordsRestored} records, ${filesRestored} files restored ` +
+    `(recovery job: ${recoveryJobId.slice(0, 8)}…)`
+  )

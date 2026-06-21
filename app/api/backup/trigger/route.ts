@@ -26,6 +26,7 @@ import { waitUntil } from '@vercel/functions'
 import { runModuleBackup } from '@/lib/backup/engine'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
 import { requireAdmin, getCurrentUser, AuthError } from '@/lib/backup/auth-guard'
+import { logTriggerBackup } from '@/lib/adminLogger'
 import type { BackupModuleName } from '@/lib/backup/modules'
 import { BACKUP_MODULES } from '@/lib/backup/modules'
 
@@ -151,6 +152,8 @@ export async function POST(request: Request) {
     .from('backup_jobs')
     .update({ status: 'running' })
     .eq('id', job.id)
+
+    void logTriggerBackup(module_name, backup_type, job.id)
 
   if (runningErr) {
     console.warn(
