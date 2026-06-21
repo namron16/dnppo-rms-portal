@@ -1,14 +1,13 @@
 'use client'
 // app/admin/gdrive/page.tsx
 // Google Drive Storage Pool — Admin Management Dashboard
-// Shows all connected Drive accounts grouped by user (DPDA, P1–P10).
-// Admins connect Drive accounts here on behalf of each user.
 
 import { useEffect, useState, useCallback } from 'react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/lib/auth'
+import { logGDriveConnect, logGDriveReconnect, logGDriveDisconnect } from '@/lib/adminLogger'
 import type { SystemHealthReport, AccountHealthResult } from '@/lib/gdrive-pool/types'
 
 // =============================================================================
@@ -51,10 +50,6 @@ interface StatusResponse {
   }
   accounts: PoolAccountStatus[]
 }
-
-// All users who can have Drive accounts connected
-// DPDA is listed first as a special admin-level pool
-
 
 // =============================================================================
 // SUB-COMPONENTS
@@ -129,7 +124,7 @@ function DriveAccountCard({
   account: PoolAccountStatus
   healthResult?: AccountHealthResult
   onDisconnect: (id: string, email: string) => void
-  onReconnect: (username: string) => void
+  onReconnect: (username: string, email: string) => void
 }) {
   return (
     <div className={`bg-white border rounded-xl p-4 flex flex-col gap-2.5 transition ${
@@ -185,7 +180,7 @@ function DriveAccountCard({
       {/* Actions */}
       <div className="flex gap-2 pt-0.5">
         <button
-          onClick={() => onReconnect(account.ownerUsername)}
+          onClick={() => onReconnect(account.ownerUsername, account.accountEmail)}
           className="flex-1 py-1.5 rounded-lg border border-blue-200 text-blue-600 text-[10px] font-semibold hover:bg-blue-50 transition"
         >
           Reconnect
@@ -201,7 +196,7 @@ function DriveAccountCard({
   )
 }
 
-// ── Per-user section (one user = one or more Drive accounts) ───────────────
+// ── Per-user section ───────────────────────────────────────────────────────
 
 function UserDriveSection({
   username,
@@ -217,7 +212,7 @@ function UserDriveSection({
   healthReport: SystemHealthReport | null
   onConnect: (username: string) => void
   onDisconnect: (id: string, email: string) => void
-  onReconnect: (username: string) => void
+  onReconnect: (username: string, email: string) => void
   isDpda?: boolean
 }) {
   const connectedCount = accounts.filter(a => a.isActive).length
@@ -326,30 +321,28 @@ export default function GDriveAdminPage() {
   const [scanning,      setScanning]      = useState(false)
 
   const [allUsers, setAllUsers] = useState<string[]>([
-  // fallback defaults while loading
-  'DPDA', 'DPDO','P1','P2','P3','P4','P5','P6','P7','P8','P9','P10','WCPD','PPSMU'
-])
+    'DPDA', 'DPDO','P1','P2','P3','P4','P5','P6','P7','P8','P9','P10','WCPD','PPSMU'
+  ])
 
-useEffect(() => {
-  async function loadUsers() {
-    const res  = await fetch('/api/gdrive/status')
-    const json = await res.json()
-    if (json.data?.accounts) {
-      // Build list from actual connected accounts + role_registry
-      const { createClient } = await import('@/lib/supabase/client')
-      const supabase = createClient()
-      const { data } = await supabase
-        .from('role_registry')
-        .select('role')
-        .eq('is_active', true)
-        .neq('role', 'admin')   // admin has no drive pool
-        .neq('role', 'PD')
-        .order('sort_order')
-      if (data) setAllUsers(data.map((r: { role: string }) => r.role))
+  useEffect(() => {
+    async function loadUsers() {
+      const res  = await fetch('/api/gdrive/status')
+      const json = await res.json()
+      if (json.data?.accounts) {
+        const { createClient } = await import('@/lib/supabase/client')
+        const supabase = createClient()
+        const { data } = await supabase
+          .from('role_registry')
+          .select('role')
+          .eq('is_active', true)
+          .neq('role', 'admin')
+          .neq('role', 'PD')
+          .order('sort_order')
+        if (data) setAllUsers(data.map((r: { role: string }) => r.role))
+      }
     }
-  }
-  void loadUsers()
-}, [])
+    void loadUsers()
+  }, [])
 
   // ── Load status ──────────────────────────────────────────────────────────
   const loadStatus = useCallback(async () => {
@@ -447,8 +440,19 @@ useEffect(() => {
     }
   }
 
-  // ── Connect (OAuth redirect) ──────────────────────────────────────────────
-  function handleConnect(username: string) {
+  // ── Connect (OAuth redirect) — logs BEFORE redirect so it's captured ──────
+  // Note: the browser navigates away immediately after this, so we fire the log
+  // first (awaited), then redirect. The log records the *intent* to connect.
+  // The OAuth callback route should also log a confirmation on success.
+  async function handleConnect(username: string) {
+    await logGDriveConnect(username)
+    window.location.href = `/api/gdrive/connect?username=${encodeURIComponent(username)}`
+  }
+
+  // ── Reconnect — separate log action from a fresh connect ─────────────────
+  // Called by DriveAccountCard's Reconnect button, which passes the account email.
+  async function handleReconnect(username: string, accountEmail: string) {
+    await logGDriveReconnect(username, accountEmail)
     window.location.href = `/api/gdrive/connect?username=${encodeURIComponent(username)}`
   }
 
@@ -467,6 +471,10 @@ useEffect(() => {
       })
       const json = await res.json()
       if (json.data?.success) {
+        // Find owner username for the log (look up in current status)
+        const account  = status?.accounts.find(a => a.id === poolId)
+        const username = account?.ownerUsername ?? 'unknown'
+        await logGDriveDisconnect(email, username)
         toast.success(json.data.message)
         await loadStatus()
       } else {
@@ -478,8 +486,6 @@ useEffect(() => {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-
-  /** Returns all Drive accounts for a given username */
   function getAccountsForUser(username: string): PoolAccountStatus[] {
     if (!status?.accounts) return []
     return status.accounts.filter(a => a.ownerUsername === username)
@@ -494,7 +500,6 @@ useEffect(() => {
     : healthReport?.overallStatus === 'critical' ? 'text-red-600'
     : 'text-slate-600'
 
-  // Total capacity = sum of all connected accounts' quotas
   const totalCapacityGb = status?.accounts
     .filter(a => a.isActive)
     .reduce((s, a) => s + a.quotaGb, 0) ?? 0
@@ -586,7 +591,7 @@ useEffect(() => {
             healthReport={healthReport}
             onConnect={handleConnect}
             onDisconnect={handleDisconnect}
-            onReconnect={handleConnect}
+            onReconnect={handleReconnect}
             isDpda
           />
         </div>
@@ -605,7 +610,7 @@ useEffect(() => {
                 healthReport={healthReport}
                 onConnect={handleConnect}
                 onDisconnect={handleDisconnect}
-                onReconnect={handleConnect}
+                onReconnect={handleReconnect}
               />
             ))}
           </div>
