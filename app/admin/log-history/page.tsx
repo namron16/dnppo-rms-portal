@@ -47,13 +47,19 @@ const DYNAMIC_COLORS = [
   '#06b6d4', '#10b981', '#be185d', '#374151',
 ]
 
-
-
 // ── Action config ──────────────────────────────
+//
+// Each entry maps an action string → { label, icon, badgeCls }.
+// Adding a new action here is all that's needed to make it appear in the
+// log table and the Action filter dropdown.
+//
 const ACTION_CONFIG: Record<string, { label: string; icon: string; badgeCls: string }> = {
+  // ── Session ────────────────────────────────────────────────────────────────
   login:                  { label: 'Login',           icon: '🟢', badgeCls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
   logout:                 { label: 'Logout',          icon: '🔴', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
   change_password:        { label: 'Password',        icon: '🔑', badgeCls: 'bg-slate-100 text-slate-700 border-slate-200' },
+
+  // ── Documents ──────────────────────────────────────────────────────────────
   view_document:          { label: 'View',            icon: '🔵', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
   download_document:      { label: 'Download',        icon: '⬇️', badgeCls: 'bg-sky-100 text-sky-700 border-sky-200' },
   upload_document:        { label: 'Upload',          icon: '📤', badgeCls: 'bg-violet-100 text-violet-700 border-violet-200' },
@@ -86,10 +92,20 @@ const ACTION_CONFIG: Record<string, { label: string; icon: string; badgeCls: str
   reject_document:        { label: 'Reject',          icon: '❌', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
   recall_inbox_item:      { label: 'Recall',          icon: '↩️', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
   save_forwarded_document:{ label: 'Save',            icon: '💾', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
-  // ── Account management ────────────────────────────────────────────────────
+
+  // ── Account management ─────────────────────────────────────────────────────
   disable_account:        { label: 'Disable Account', icon: '🚫', badgeCls: 'bg-red-100 text-red-800 border-red-300' },
   enable_account:         { label: 'Enable Account',  icon: '🔓', badgeCls: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
-  delete_account: { label: 'Delete Account', icon: '🗑️', badgeCls: 'bg-red-100 text-red-800 border-red-300' },
+  delete_account:         { label: 'Delete Account',  icon: '🗑️', badgeCls: 'bg-red-100 text-red-800 border-red-300' },
+
+  // ── NEW: User management ───────────────────────────────────────────────────
+  edit_email:             { label: 'Edit Email',      icon: '✉️', badgeCls: 'bg-sky-100 text-sky-800 border-sky-300' },
+  reset_password:         { label: 'Reset Password',  icon: '🔐', badgeCls: 'bg-orange-100 text-orange-800 border-orange-300' },
+
+  // ── NEW: Google Drive management ───────────────────────────────────────────
+  gdrive_connect:         { label: 'Drive Connect',   icon: '🔗', badgeCls: 'bg-blue-100 text-blue-800 border-blue-300' },
+  gdrive_reconnect:       { label: 'Drive Reconnect', icon: '🔄', badgeCls: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
+  gdrive_disconnect:      { label: 'Drive Disconnect',icon: '🔌', badgeCls: 'bg-red-100 text-red-800 border-red-300' },
 }
 
 function getActionConfig(action: string) {
@@ -181,9 +197,9 @@ export default function LogHistoryPage() {
     return () => { supabase.removeChannel(channel) }
   }, [supabase])
 
-    const getRoleColor    = (role: string) => roleMeta[role]?.color ?? '#64748b'
-    const getRoleName     = (role: string) => roleMeta[role]?.name  ?? role
-    const getRoleInitials = (role: string) => role.slice(0, 2).toUpperCase()
+  const getRoleColor    = (role: string) => roleMeta[role]?.color ?? '#64748b'
+  const getRoleName     = (role: string) => roleMeta[role]?.name  ?? role
+  const getRoleInitials = (role: string) => role.slice(0, 2).toUpperCase()
 
   // ── Filtering ────────────────────────────────
   const filtered = useMemo(() => {
@@ -237,8 +253,12 @@ export default function LogHistoryPage() {
   }
 
   // ── Filter options ───────────────────────────
-  const allRoles = Array.from(new Set(logs.map(l => l.role))).sort()
-
+  const allRoles = Object.keys(roleMeta)
+  .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  // Build action label options from ACTION_CONFIG.
+  // Labels that are intentionally hidden from the filter dropdown:
+  // they either share a label with another action (covered by that entry)
+  // or are too granular to be useful as standalone filters.
   const hiddenLabels  = new Set(['Approve', 'Approve Request', 'Create', 'Recall', 'Reject', 'Review'])
   const actionOptions = Array.from(new Set(
     Object.keys(ACTION_CONFIG)
@@ -246,9 +266,6 @@ export default function LogHistoryPage() {
       .map(a => ACTION_CONFIG[a].label)
       .filter(label => !hiddenLabels.has(label))
   )).sort()
-
-
-
 
   // Load role_registry and merge any new roles into the map
   useEffect(() => {
@@ -262,30 +279,26 @@ export default function LogHistoryPage() {
         setRoleMeta(prev => {
           const merged = { ...prev }
           data.forEach((r, i) => {
-            if (!merged[r.role]) {
-              // Assign a color from the pool (cycles if more roles than colors)
-              merged[r.role] = {
-                name:  r.display_name,
-                color: DYNAMIC_COLORS[i % DYNAMIC_COLORS.length],
-              }
-            }
-          })
+          merged[r.role] = {           // ← remove the `if (!merged[r.role])` check
+            name:  r.display_name,
+            color: DYNAMIC_COLORS[i % DYNAMIC_COLORS.length],
+          }
+        })
           return merged
         })
       })
   }, [])
 
-  // right after your existing hooks, before the main return
-    if (loading) {
-      return (
-        <>
-          <PageHeader title="Activity Log History" />
-          <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 56px)' }}>
-            <LoadingSpinner size="lg" />
-          </div>
-        </>
-      )
-    }
+  if (loading) {
+    return (
+      <>
+        <PageHeader title="Activity Log History" />
+        <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 56px)' }}>
+          <LoadingSpinner size="lg" />
+        </div>
+      </>
+    )
+  }
 
   return (
     <>
