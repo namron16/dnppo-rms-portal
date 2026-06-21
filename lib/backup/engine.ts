@@ -421,10 +421,11 @@ async function downloadAttachments(params: {
           attachment_id: att.id, title: att.title, file: filePath,
           checksum, size_bytes: fileBuffer.length,
           dev_mode_placeholder: DEV_MODE || undefined,
+          pool_account_id: att.pool_account_id,
         })
       } catch (err: any) {
         console.warn(`[Backup] Could not download attachment ${att.id}:`, err.message)
-        docEntry.attachments.push({ attachment_id: att.id, error: err.message })
+        docEntry.attachments.push({ attachment_id: att.id, error: err.message, pool_account_id: att.pool_account_id,  })
       }
     }
     attachmentManifest.push(docEntry)
