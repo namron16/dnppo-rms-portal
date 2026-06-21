@@ -276,15 +276,15 @@ export function Sidebar() {
     <>
       <aside className="sidebar-fixed bg-white border-r border-gray-200">
         {/* ── Logo ── */}
-        <div className="px-5 py-6 border-b border-gray-200 flex items-center gap-3">
+        <div className="px-3 py-3 border-b border-gray-200 flex items-center gap-3">
           <img 
             src="/assets/polaris-logo.png" 
             alt="Polaris Logo" 
-            className="w-10 h-10 flex-shrink-0 object-cover"
+            className="w-[4rem] h-13 flex-shrink-0 object-cover"
           />
           <div className="leading-tight">
-            <div className="text-gray-900 text-[13px] font-bold tracking-tight">DNPPO Records</div>
-            <div className="text-gray-500 text-[11px] font-medium">Davao Del Norte</div>
+            <div className="text-gray-900 text-[15px] font-bold tracking-tight">DNPPO Records</div>
+            <div className="text-gray-500 text-[12px] font-medium">Davao Del Norte</div>
           </div>
         </div>
 
