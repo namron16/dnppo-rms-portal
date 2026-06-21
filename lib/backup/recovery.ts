@@ -1,29 +1,26 @@
 // lib/backup/recovery.ts
 //
-// FIX: Primary files (gdrive_file_id stored directly on document rows) are now
-// restored from the backup ZIP and re-uploaded to Google Drive. After upload the
-// document row is patched with the new gdrive_file_id / gdrive_url /
-// pool_account_id so the app no longer points at the deleted Drive file.
+// FIX (file restore): Recovery now re-uploads files to the CORRECT user's
+// Drive account by resolving owner_username from the original pool_account_id
+// stored on each document/attachment row. Previously it used triggered_by
+// ('admin') as uploadedBy, which always failed because admin has no connected
+// Drive account — so metadata was restored but files were not.
 //
-// The manifest now carries `main_file` entries populated by engine.ts step 2b.
-// Recovery iterates those entries, re-uploads each file via uploadViaPool, then
-// updates the corresponding document row in Supabase.
+// How it works:
+//   1. Each document row stores pool_account_id (UUID from storage_pool).
+//   2. We look up storage_pool.owner_username for that UUID.
+//   3. uploadViaPool is called with uploadedBy = owner_username (e.g. 'P1').
+//   4. gateway.selectPoolAccount() finds P1's connected Drive account.
+//   5. The file is uploaded and the document row is patched with the new
+//      gdrive_file_id / gdrive_url / pool_account_id / file_url.
 //
-// FIX (this revision): recovery previously only restored child "attachments" —
-// it never restored or re-linked the PRIMARY file referenced directly on the
-// document row (gdrive_file_id / gdrive_url / file_url / pool_account_id on
-// master_documents, special_orders, daily_journals, library_items, and
-// confidential_docs). That meant a recovered document's row would point at a
-// Drive file that had already been deleted, showing "no valid Drive URL" in
-// the UI. Step 6b below fixes this by re-uploading the primary file and
-// patching the row with the new Drive reference — using only the columns
-// that actually exist on that table (confidential_docs has fewer Drive
-// columns than the other four modules, so we detect this per-row rather than
-// hardcoding a column list).
+// Cross-account support: each docEntry in the manifest can carry a different
+// pool_account_id (uploaded by different users). We resolve owner_username
+// per entry so every file goes back to its original owner's Drive.
 
 import { createHash } from 'crypto'
 import { getServiceClient } from '@/lib/gdrive-pool/db'
-import { decryptBackupData, decryptDoubleEncryptedClassified , verifyChecksum } from './encryption'
+import { decryptBackupData, decryptDoubleEncryptedClassified, verifyChecksum } from './encryption'
 import { uploadViaPool } from '@/lib/gdrive-pool/migrate-modal'
 import { verifyManifestIntegrity, type BackupManifest } from './manifest'
 import type { BackupModuleName } from './modules'
@@ -42,13 +39,60 @@ const MODULES_WITH_PATCHABLE_PRIMARY_FILE: BackupModuleName[] = [
   'classified_documents',
 ]
 
+// ── owner_username cache ──────────────────────────────────────────────────────
+// Avoids repeated DB lookups when many files share the same pool account.
+const ownerUsernameCache = new Map<string, string>()
+
+/**
+ * Resolves the owner_username for a pool_account_id UUID.
+ * Returns null if the pool account no longer exists (deleted/disconnected).
+ */
+async function resolveOwnerUsername(
+  poolAccountId: string | null | undefined
+): Promise<string | null> {
+  if (!poolAccountId) return null
+
+  const cached = ownerUsernameCache.get(poolAccountId)
+  if (cached) return cached
+
+  const db = getServiceClient()
+  const { data, error } = await db
+    .from('storage_pool')
+    .select('owner_username')
+    .eq('id', poolAccountId)
+    .maybeSingle()
+
+  if (error || !data?.owner_username) {
+    console.warn(
+      `[Recovery] Could not resolve owner_username for pool_account_id="${poolAccountId}": ` +
+      `${error?.message ?? 'row not found'}`
+    )
+    return null
+  }
+
+  ownerUsernameCache.set(poolAccountId, data.owner_username)
+  return data.owner_username
+}
+
+// ── Module → primary table → Drive columns mapping ────────────────────────────
+// Maps each module name to its primary document table so we can:
+//   a) fetch the original pool_account_id stored on the document row
+//   b) patch it with the new Drive reference after re-upload
+const MODULE_PRIMARY_TABLE: Partial<Record<BackupModuleName, string>> = {
+  master_documents:     'master_documents',
+  admin_orders:         'special_orders',
+  daily_journals:       'daily_journals',
+  e_library:            'library_items',
+  classified_documents: 'confidential_docs',
+}
+
 export interface RecoveryOptions {
   backup_job_id: string
   module_name:   BackupModuleName
   /**
    * The role/username that triggered the recovery.
-   * Files are re-uploaded to this user's Drive pool.
-   * FIX: was defaulting to 'DPDA' (a view-only role). Now defaults to 'admin'.
+   * Used only as a fallback uploadedBy when the document row has no
+   * pool_account_id (pre-migration rows). Never used for file routing now.
    */
   triggered_by?: string
 }
@@ -68,8 +112,9 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
   const db    = getServiceClient()
   const start = Date.now()
 
-  // FIX: was hardcoded to 'DPDA' — now defaults to 'admin' which is the only
-  // role allowed to trigger recovery (enforced by recover/route.ts).
+  // Clear the owner_username cache for this recovery run
+  ownerUsernameCache.clear()
+
   const triggeredBy = opts.triggered_by ?? 'admin'
 
   const { data: recoveryJob } = await db
@@ -103,26 +148,20 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
     const zip = await loadBackupZip(backupJob.download_url)
 
     // ── 3. Parse and validate manifest ───────────────────────────────────────
-    // FIX: extract raw bytes from the ZIP so the checksum hash matches what the
-    // engine wrote (engine hashes the raw buffer; old code re-serialized the
-    // parsed object which produced different whitespace → different hash).
     const manifestPath = `${backupJob.backup_folder_name}/MANIFEST.json`
     const manifestFile = zip.file(manifestPath)
     if (!manifestFile) {
       throw new Error(`MANIFEST.json not found in backup ZIP at path: ${manifestPath}`)
     }
 
-    const manifestRaw = await manifestFile.async('nodebuffer')
+    const manifestRaw         = await manifestFile.async('nodebuffer')
     const manifest            = JSON.parse(manifestRaw.toString('utf8')) as BackupManifest
 
     if (!verifyManifestIntegrity(manifest)) {
       throw new Error('Manifest integrity check failed — backup may be corrupted or tampered with.')
     }
 
-    // Cross-check manifest checksum against the value stored in backup_jobs.
-    // FIX: hash the raw bytes (same as engine.ts), not a re-serialized string.
     const recomputedCheck = createHash('sha256').update(manifestRaw).digest('hex')
-
     if (recomputedCheck !== backupJob.manifest_checksum) {
       throw new Error('Manifest checksum mismatch against backup_jobs record — aborting recovery.')
     }
@@ -141,10 +180,15 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
     // ── 5. Restore database records ──────────────────────────────────────────
     let recordsRestored = 0
     const moduleDef     = BACKUP_MODULES[opts.module_name]
-    const useDoubleDecrypt = (moduleDef as any).extra_encryption === true   // ← NEW
+    const useDoubleDecrypt = (moduleDef as any).extra_encryption === true
 
     for (const tableName of moduleDef.tables) {
-      const tableData = await extractTableData(zip, tableName, backupJob.backup_folder_name, useDoubleDecrypt)   // ← pass new param  
+      const tableData = await extractTableData(
+        zip,
+        tableName,
+        backupJob.backup_folder_name,
+        useDoubleDecrypt
+      )
       if (!tableData || tableData.length === 0) {
         console.warn(`[Recovery] No data found for table ${tableName} — skipping.`)
         continue
@@ -159,36 +203,25 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
       console.log(`[Recovery] Restored ${tableData.length} rows into ${tableName}`)
     }
 
-    // ── 6. Re-upload file attachments AND primary files to Drive ─────────────
+    // ── 6. Re-upload file attachments to Drive ────────────────────────────────
     //
-    // The manifest's attachments.files array can contain two kinds of entries:
-    //
-    //   a) Primary file entries — added by engine.ts step 2b (downloadPrimaryFiles).
-    //      These have a `main_file` path pointing to `primary_files/<docId>/<name>`.
-    //      After re-upload, the document row must be patched with the new Drive IDs
-    //      so the app no longer references the now-deleted original Drive file.
-    //      This patching now happens in step 6b below.
-    //
-    //   b) Attachment entries — added by downloadAttachments() or
-    //      downloadFromRecordsTable().
-    //      For most modules these live under `attachments/<docId>/attachments/`
-    //      and are restored into the *_attachments table rows. For
-    //      classified_documents (downloadFromRecordsTable), the single
-    //      attachment entry's `file` path is IDENTICAL to `main_file` — so we
-    //      skip it here to avoid uploading the same file twice; it gets
-    //      uploaded once in step 6b instead.
+    // KEY FIX: For each file, we look up the original pool_account_id from
+    // the restored document row, resolve its owner_username from storage_pool,
+    // and pass that as uploadedBy. This routes the upload to the correct user's
+    // connected Drive account instead of failing with 'admin' (no Drive account).
     //
     let filesRestored = 0
+    const primaryTable = MODULE_PRIMARY_TABLE[opts.module_name]
 
     if (manifest.contents?.attachments) {
       for (const docEntry of manifest.contents.attachments.files ?? []) {
+
+        // ── 6a. Restore child attachment rows ──────────────────────────────
         for (const att of docEntry.attachments ?? []) {
           if (att.error) continue
 
-          // FIX: skip attachment entries that are actually the primary file
-          // (classified_documents stores the same path in both places via
-          // downloadFromRecordsTable). Step 6b handles uploading + patching
-          // primary files, so uploading it again here would duplicate it.
+          // Skip entries that are actually the primary file
+          // (classified_documents stores the same path in both places)
           if (docEntry.main_file && att.file === docEntry.main_file) continue
 
           try {
@@ -197,6 +230,14 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
               console.warn(`[Recovery] Checksum mismatch for ${att.file} — skipping`)
               continue
             }
+
+            // Resolve the correct uploader for this document
+            const uploadedBy = await resolveUploaderForDocument(
+              docEntry.document_id,
+              primaryTable,
+              triggeredBy,
+              db
+            )
 
             const def        = moduleDef as any
             const entityType = typeof def.entity_type === 'string' ? def.entity_type : undefined
@@ -208,95 +249,136 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
               category:      moduleDef.gdrive_category as any,
               entityType,
               entityId:      docEntry.document_id,
-              uploadedBy:    triggeredBy,
+              uploadedBy,
               fileSizeBytes: fileBuffer.length,
             })
 
-            console.log(`[Recovery] Restored ${att.file} → ${result.fileUrl}`)  // ← fileUrl, not driveUrl
+            console.log(
+              `[Recovery] Restored attachment ${att.file} → ${result.fileUrl} ` +
+              `(uploadedBy=${uploadedBy})`
+            )
             filesRestored++
           } catch (err: any) {
-            console.warn(`[Recovery] Could not restore file ${att.file}:`, err.message)
+            console.warn(`[Recovery] Could not restore attachment ${att.file}:`, err.message)
           }
         }
-}
-    }
 
-    // ── 6b. Restore PRIMARY files and re-link the document row ───────────────
-    //
-    // This is the fix for: "recovered document shows but has no valid Drive
-    // URL". The manifest's main_file entries point to the actual document
-    // file inside the ZIP. We re-upload each one to Drive, then patch the
-    // document row's Drive columns with the NEW file ID/URL — replacing the
-    // stale reference that was just restored in step 5.
-    //
-    // We select('*') instead of specific columns and only patch columns that
-    // exist on the row, because confidential_docs (classified_documents
-    // module) does not have file_name / file_size_bytes / mime_type columns,
-    // unlike master_documents / special_orders / daily_journals / library_items.
-    if (MODULES_WITH_PATCHABLE_PRIMARY_FILE.includes(opts.module_name) && manifest.contents?.attachments) {
-      const primaryTable = moduleDef.tables[0]
+        // ── 6b. Restore PRIMARY file and re-link the document row ──────────
+        //
+        // The primary file is the main PDF stored directly on the document row
+        // (gdrive_file_id / gdrive_url / pool_account_id on master_documents,
+        // special_orders, daily_journals, library_items, confidential_docs).
+        //
+        // After re-uploading, we patch the row with the NEW Drive reference so
+        // the app no longer points at the deleted original Drive file.
+        //
+        if (
+          MODULES_WITH_PATCHABLE_PRIMARY_FILE.includes(opts.module_name) &&
+          docEntry.main_file &&
+          primaryTable
+        ) {
+          try {
+            const fileBuffer = await extractFile(zip, docEntry.main_file)
 
-      for (const docEntry of manifest.contents.attachments.files ?? []) {
-        if (!docEntry.main_file) continue
+            if (docEntry.main_checksum && !verifyChecksum(fileBuffer, docEntry.main_checksum)) {
+              console.warn(
+                `[Recovery] Checksum mismatch for primary file ${docEntry.main_file} — skipping`
+              )
+              continue
+            }
 
-        try {
-          const fileBuffer = await extractFile(zip, docEntry.main_file)
+            // Fetch the restored document row to get original pool_account_id
+            const { data: docRow } = await db
+              .from(primaryTable)
+              .select('*')
+              .eq('id', docEntry.document_id)
+              .maybeSingle()
 
-          if (docEntry.main_checksum && !verifyChecksum(fileBuffer, docEntry.main_checksum)) {
-            console.warn(`[Recovery] Checksum mismatch for primary file ${docEntry.main_file} — skipping`)
-            continue
+            // KEY FIX: resolve owner_username from the original pool_account_id
+            // stored ON the document row (set when P1/P2/etc. originally uploaded it).
+            // This ensures the file goes back to the same user's Drive account.
+            const originalPoolId = (docRow as any)?.pool_account_id
+            const uploadedBy = originalPoolId
+              ? (await resolveOwnerUsername(originalPoolId) ?? triggeredBy)
+              : triggeredBy
+
+            if (!originalPoolId) {
+              console.warn(
+                `[Recovery] Document ${docEntry.document_id} in ${primaryTable} has no ` +
+                `pool_account_id — falling back to triggeredBy="${triggeredBy}". ` +
+                `This may fail if admin has no connected Drive account.`
+              )
+            } else {
+              console.log(
+                `[Recovery] Restoring primary file for doc ${docEntry.document_id}: ` +
+                `pool_account_id=${originalPoolId} → owner_username=${uploadedBy}`
+              )
+            }
+
+            const fileName = (docRow as any)?.file_name
+              ?? docEntry.document_title
+              ?? docEntry.main_file.split('/').pop()!
+            const mimeType = (docRow as any)?.mime_type ?? 'application/pdf'
+
+            const def        = moduleDef as any
+            const entityType = typeof def.entity_type === 'string' ? def.entity_type : undefined
+
+            const result = await uploadViaPool({
+              file:          fileBuffer,
+              fileName,
+              mimeType,
+              category:      moduleDef.gdrive_category as any,
+              entityType,
+              entityId:      docEntry.document_id,
+              uploadedBy,
+              fileSizeBytes: fileBuffer.length,
+            })
+
+            // Patch the document row with the NEW Drive reference.
+            // Only patch columns that actually exist on this table —
+            // confidential_docs has fewer Drive columns than the other modules.
+            const patch: Record<string, any> = {}
+            if (docRow && 'gdrive_file_id'  in docRow) patch.gdrive_file_id  = result.gdriveFileId
+            if (docRow && 'gdrive_url'       in docRow) patch.gdrive_url      = result.fileUrl
+            if (docRow && 'file_url'         in docRow) patch.file_url        = result.fileUrl
+            if (docRow && 'pool_account_id'  in docRow) patch.pool_account_id = result.poolAccountId
+            if (docRow && 'file_size_bytes'  in docRow) patch.file_size_bytes = fileBuffer.length
+            if (docRow && 'mime_type'        in docRow) patch.mime_type       = mimeType
+            if (docRow && 'file_name'        in docRow) patch.file_name       = fileName
+
+            if (Object.keys(patch).length === 0) {
+              console.warn(
+                `[Recovery] No patchable Drive columns found on ${primaryTable} ` +
+                `for ${docEntry.document_id} — skipping patch.`
+              )
+              filesRestored++
+              continue
+            }
+
+            const { error: patchErr } = await db
+              .from(primaryTable)
+              .update(patch)
+              .eq('id', docEntry.document_id)
+
+            if (patchErr) {
+              console.warn(
+                `[Recovery] Uploaded primary file but failed to patch ${primaryTable}: ` +
+                `${patchErr.message}`
+              )
+            } else {
+              console.log(
+                `[Recovery] Restored primary file for ${docEntry.document_id} → ` +
+                `${result.fileUrl} (uploadedBy=${uploadedBy}, ` +
+                `newPoolAccountId=${result.poolAccountId})`
+              )
+              filesRestored++
+            }
+          } catch (err: any) {
+            console.warn(
+              `[Recovery] Could not restore primary file for ${docEntry.document_id}:`,
+              err.message
+            )
           }
-
-          const { data: docRow } = await db
-            .from(primaryTable)
-            .select('*')
-            .eq('id', docEntry.document_id)
-            .maybeSingle()
-
-          const fileName = (docRow as any)?.file_name ?? docEntry.document_title ?? docEntry.main_file.split('/').pop()!
-          const mimeType = (docRow as any)?.mime_type ?? 'application/octet-stream'
-
-          const def        = moduleDef as any
-          const entityType = typeof def.entity_type === 'string' ? def.entity_type : undefined
-
-          const result = await uploadViaPool({
-            file: fileBuffer, fileName, mimeType,
-            category:      moduleDef.gdrive_category as any,
-            entityType,
-            entityId:      docEntry.document_id,
-            uploadedBy:    triggeredBy,
-            fileSizeBytes: fileBuffer.length,
-          })
-
-          // Only patch columns that actually exist on this row — avoids a
-          // "column does not exist" error on tables like confidential_docs.
-          const patch: Record<string, any> = {}
-          if (docRow && 'gdrive_file_id'  in docRow) patch.gdrive_file_id  = result.gdriveFileId
-          if (docRow && 'gdrive_url'      in docRow) patch.gdrive_url      = result.fileUrl
-          if (docRow && 'file_url'        in docRow) patch.file_url        = result.fileUrl
-          if (docRow && 'pool_account_id' in docRow) patch.pool_account_id = result.poolAccountId
-          if (docRow && 'file_size_bytes' in docRow) patch.file_size_bytes = fileBuffer.length
-          if (docRow && 'mime_type'       in docRow) patch.mime_type       = mimeType
-          if (docRow && 'file_name'       in docRow) patch.file_name       = fileName
-
-          if (Object.keys(patch).length === 0) {
-            console.warn(`[Recovery] No patchable Drive columns found on ${primaryTable} for ${docEntry.document_id} — skipping patch.`)
-            continue
-          }
-
-          const { error: patchErr } = await db
-            .from(primaryTable)
-            .update(patch)
-            .eq('id', docEntry.document_id)
-
-          if (patchErr) {
-            console.warn(`[Recovery] Uploaded primary file but failed to patch ${primaryTable}: ${patchErr.message}`)
-          } else {
-            console.log(`[Recovery] Restored primary file for ${docEntry.document_id} → ${result.fileUrl}`)
-            filesRestored++
-          }
-        } catch (err: any) {
-          console.warn(`[Recovery] Could not restore primary file for ${docEntry.document_id}:`, err.message)
         }
       }
     }
@@ -349,34 +431,74 @@ export async function runRecovery(opts: RecoveryOptions): Promise<RecoveryResult
   }
 }
 
-// ── ZIP helpers ───────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Downloads the backup ZIP from the signed URL returned by storeBackupBlob()
- * and loads it into JSZip for reading.
+ * Resolves the correct uploadedBy username for a document.
+ *
+ * Priority:
+ *   1. pool_account_id on the restored document row → owner_username
+ *   2. uploaded_by column on the document row (if present)
+ *   3. triggeredBy fallback (last resort — may fail if admin has no Drive)
+ *
+ * This ensures each file goes back to the Drive account of the user who
+ * originally uploaded it, not the admin who triggered the recovery.
  */
+async function resolveUploaderForDocument(
+  documentId:    string,
+  primaryTable:  string | undefined,
+  triggeredBy:   string,
+  db:            ReturnType<typeof getServiceClient>
+): Promise<string> {
+  if (!primaryTable) return triggeredBy
+
+  try {
+    const { data: docRow } = await db
+      .from(primaryTable)
+      .select('pool_account_id, uploaded_by')
+      .eq('id', documentId)
+      .maybeSingle()
+
+    // Try pool_account_id first (most reliable — always set by the gateway)
+    const poolId = (docRow as any)?.pool_account_id
+    if (poolId) {
+      const owner = await resolveOwnerUsername(poolId)
+      if (owner) return owner
+    }
+
+    // Fall back to uploaded_by column
+    const uploadedBy = (docRow as any)?.uploaded_by
+    if (uploadedBy) return uploadedBy
+  } catch (err: any) {
+    console.warn(
+      `[Recovery] Could not resolve uploader for doc ${documentId}: ${err.message}`
+    )
+  }
+
+  return triggeredBy
+}
+
+// ── ZIP helpers ───────────────────────────────────────────────────────────────
+
 async function loadBackupZip(downloadUrl: string): Promise<any> {
   const JSZip = (await import('jszip')).default
 
   const response = await fetch(downloadUrl)
   if (!response.ok) {
-    throw new Error(`Failed to download backup ZIP (${response.status}): ${response.statusText}`)
+    throw new Error(
+      `Failed to download backup ZIP (${response.status}): ${response.statusText}`
+    )
   }
 
   const arrayBuffer = await response.arrayBuffer()
   return JSZip.loadAsync(arrayBuffer)
 }
 
-/**
- * Extracts, decrypts, and parses a database table JSON from the ZIP.
- * Matches the first file under <folderName>/database/ whose name starts
- * with the table name.
- */
 async function extractTableData(
   zip:              any,
   tableName:        string,
   folderName:       string,
-  useDoubleDecrypt: boolean = false   // ← NEW param
+  useDoubleDecrypt: boolean = false
 ): Promise<any[]> {
   const prefix  = `${folderName}/database/${tableName}_`
   const entries = Object.keys(zip.files).filter(
@@ -389,10 +511,6 @@ async function extractTableData(
   const rawBuffer = Buffer.from(await file.async('arraybuffer'))
 
   if (entries[0].endsWith('.enc')) {
-    // FIX: classified_documents was locked twice during backup
-    // (doubleEncryptClassified). Using the single-unlock function here
-    // produced an auth-tag mismatch or garbage data. Route to the matching
-    // double-unlock function based on the module's encryption setting.
     const decrypted = useDoubleDecrypt
       ? await decryptDoubleEncryptedClassified(rawBuffer)
       : await decryptBackupData(rawBuffer)
@@ -402,13 +520,7 @@ async function extractTableData(
   return JSON.parse(rawBuffer.toString('utf8'))
 }
 
-/**
- * Extracts a single file from the ZIP by its relative path.
- * The ZIP was built with folderName as the root, so we search for any
- * entry whose path ends with the relative path.
- */
 async function extractFile(zip: any, relativePath: string): Promise<Buffer> {
-  // Try exact match first (with folder prefix)
   const candidates = Object.keys(zip.files).filter(
     name => name.endsWith(`/${relativePath}`) || name === relativePath
   )
@@ -426,7 +538,7 @@ async function extractFile(zip: any, relativePath: string): Promise<Buffer> {
 async function createRollbackSnapshot(module_name: BackupModuleName): Promise<string> {
   const db        = getServiceClient()
   const moduleDef = BACKUP_MODULES[module_name]
-  const snapshot:  Record<string, any[]> = {}
+  const snapshot: Record<string, any[]> = {}
 
   for (const tableName of moduleDef.tables) {
     const { data } = await db.from(tableName).select('*')
@@ -435,12 +547,11 @@ async function createRollbackSnapshot(module_name: BackupModuleName): Promise<st
 
   const snapshotId = `rollback_${module_name}_${Date.now()}`
 
-  // Persist to backup_snapshots table for rollback if needed
   const { error } = await db.from('backup_snapshots').insert({
-    snapshot_id:  snapshotId,
+    snapshot_id:   snapshotId,
     module_name,
     snapshot_data: snapshot,
-    created_at:   new Date().toISOString(),
+    created_at:    new Date().toISOString(),
   })
 
   if (error) {
