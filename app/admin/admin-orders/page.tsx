@@ -9,6 +9,9 @@
 //   loadAll filters special orders by uploaded_by = user.role so each account
 //   only sees the orders they personally uploaded.
 //   DPDA, DPDO, and admin are privileged roles that see all orders.
+//
+// UPDATE: Added Forward + Print actions to attachment table rows.
+//         Added Forward button to drilled-down nested file header.
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { PageHeader }           from '@/components/ui/PageHeader'
@@ -161,7 +164,7 @@ async function uploadAttachmentToDrive(
 ): Promise<DriveAttachmentResult> {
   const formData = new FormData()
   formData.append('file',        file)
-  formData.append('category',    'special_orders')   // or 'master_documents' in master/page.tsx
+  formData.append('category',    'special_orders')
   formData.append('uploadedBy',  uploadedBy)
   formData.append('entityType',  parentAttId ? 'special_order_attachment' : 'special_order')
   formData.append('entityId',    entityId)
@@ -409,7 +412,6 @@ function EditSpecialOrderModal({
             onChange={e => setForm(prev => ({ ...prev, subject: e.target.value }))}
           />
         </div>
-       
         <div className="flex justify-end gap-2.5 pt-1">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
@@ -482,8 +484,8 @@ function AttachmentsTablePanel({
   navStack, currentEntry, attachments, allAttachments,
   onUpload, uploadingId, onForwardOrder, onArchiveOrder, onDeleteOrder,
   canEditOrder, onEditOrder, onViewFile, onDownloadFile, onPrintFile,
-  onDeleteAttachment, onDrillDown, onNavigateTo, onRenameAttachment,onRequestAttach,
-  
+  onDeleteAttachment, onDrillDown, onNavigateTo, onRenameAttachment, onRequestAttach,
+  onForwardAttachment,
 }: {
   navStack: NavEntry[]
   currentEntry: NavEntry
@@ -504,6 +506,8 @@ function AttachmentsTablePanel({
   onNavigateTo: (index: number) => void
   onRenameAttachment: (att: SOAttachment, newTitle: string) => Promise<boolean>
   onRequestAttach: () => void
+  // ── new: forward a specific attachment ──
+  onForwardAttachment: (att: SOAttachment) => void
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [editingId,   setEditingId]   = useState<string | null>(null)
@@ -568,6 +572,7 @@ function AttachmentsTablePanel({
           )}
         </div>
 
+        {/* Root order actions */}
         {!isDrillDown && (
           <div className="flex gap-2 flex-shrink-0">
             {canEditOrder && <button onClick={onForwardOrder} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition"><Send size={16} />Forward</button>}
@@ -577,8 +582,9 @@ function AttachmentsTablePanel({
           </div>
         )}
 
+        {/* Drilled-down attachment actions */}
         {isDrillDown && drillAtt && (
-          <div className="flex gap-1.5 flex-shrink-0">
+          <div className="flex gap-1.5 flex-shrink-0 flex-wrap justify-end">
             <button onClick={() => onViewFile(drillAtt.gdrive_url, displayName(drillAtt))}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition">
               <Eye size={14} /> View File
@@ -591,6 +597,13 @@ function AttachmentsTablePanel({
               className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition">
               <Printer size={14} /> Print
             </button>
+            {/* ── Forward button for drilled-down attachment ── */}
+            {canEditOrder && (
+              <button onClick={() => onForwardAttachment(drillAtt)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition">
+                <Send size={14} /> Forward
+              </button>
+            )}
             <button onClick={() => canEditOrder && onDeleteAttachment(drillAtt)} disabled={!canEditOrder}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition disabled:opacity-60">
               <Trash2 size={14} /> Delete
@@ -610,18 +623,15 @@ function AttachmentsTablePanel({
           <div className="flex gap-1.5 flex-shrink-0">
             <button type="button" onClick={() => onDownloadFile(currentOrder.fileUrl!, currentOrder.reference)}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
-              <Download size={13} />
-              Download
+              <Download size={13} /> Download
             </button>
             <button type="button" onClick={() => onPrintFile(currentOrder.fileUrl!, currentOrder.reference, currentOrder.id)}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
-              <Printer size={13} />
-              Print
+              <Printer size={13} /> Print
             </button>
             <button onClick={() => onViewFile(currentOrder.fileUrl!, currentOrder.reference)}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
-              <Eye size={13} />
-              View
+              <Eye size={13} /> View
             </button>
           </div>
         </div>
@@ -693,7 +703,7 @@ function AttachmentsTablePanel({
                   <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[90px]">Size</th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[130px]">Added</th>
                   <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[90px]">Children</th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[220px]">Actions</th>
+                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[260px]">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -779,21 +789,39 @@ function AttachmentsTablePanel({
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {/* View */}
                           <button onClick={() => onViewFile(att.gdrive_url, label)}
                             className="inline-flex items-center justify-center px-1.5 py-1.5 text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
                             title="View file">
                             <Eye size={14} />
                           </button>
+                          {/* Download */}
                           <button type="button" onClick={() => onDownloadFile(att.gdrive_url, label)}
                             className="inline-flex items-center justify-center px-1.5 py-1.5 text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition"
                             title="Download file">
                             <Download size={14} />
                           </button>
+                          {/* Print — new for admin orders */}
+                          <button type="button" onClick={() => onPrintFile(att.gdrive_url, label, att.special_order_id)}
+                            className="inline-flex items-center justify-center px-1.5 py-1.5 text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition"
+                            title="Print file">
+                            <Printer size={14} />
+                          </button>
+                          {/* Drill-down */}
                           <button onClick={() => onDrillDown(att)}
                             className="inline-flex items-center justify-center px-1.5 py-1.5 text-violet-600 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100 hover:border-violet-300 transition"
                             title="Open & explore nested attachments">
                             <FolderOpen size={14} />
                           </button>
+                          {/* Forward — new */}
+                          {canEditOrder && (
+                            <button onClick={() => onForwardAttachment(att)}
+                              className="inline-flex items-center justify-center px-1.5 py-1.5 text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
+                              title="Forward attachment">
+                              <Send size={14} />
+                            </button>
+                          )}
+                          {/* Rename */}
                           <button
                             onClick={() => { setEditingId(att.id); setEditingName(att.title || att.file_name || '') }}
                             disabled={!canEditOrder}
@@ -801,6 +829,7 @@ function AttachmentsTablePanel({
                             title="Rename attachment">
                             <Pencil size={14} />
                           </button>
+                          {/* Delete */}
                           <button onClick={() => canEditOrder && onDeleteAttachment(att)} disabled={!canEditOrder}
                             className="inline-flex items-center justify-center px-1.5 py-1.5 text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 hover:border-red-300 transition disabled:opacity-60"
                             title="Delete attachment">
@@ -872,7 +901,6 @@ export default function AdminOrdersPage() {
   const { toast } = useToast()
   const { user }  = useAuth()
 
-  // FIX: use canUploadDocuments (P1–P10, WCPD, PPSMU) for the "+ New SO" button
   const canUpload    = user?.role ? canUploadDocuments(user.role as AdminRole) : false
   const canEditOrder = user ? !['DPDA', 'DPDO'].includes(user.role) : false
 
@@ -884,22 +912,28 @@ export default function AdminOrdersPage() {
   const [selectedOrder,  setSelectedOrder]  = useState<SOWithUrl | null>(null)
   const [uploadingId,    setUploadingId]    = useState<string | null>(null)
   const [isArchiving,    setIsArchiving]    = useState(false)
-  const [isDeleting,   setIsDeleting]   = useState(false)  // ← add this
-  const [isDeletingAtt, setIsDeletingAtt] = useState(false)
+  const [isDeleting,     setIsDeleting]     = useState(false)
+  const [isDeletingAtt,  setIsDeletingAtt]  = useState(false)
 
   useRealtimeSpecialOrders({ setOrders, setAttachmentsMap, user })
 
-  const [navStack,   setNavStack]   = useState<NavEntry[]>([])
+  const [navStack, setNavStack] = useState<NavEntry[]>([])
 
   const deleteAttDisc  = useDisclosure<SOAttachment>()
   const newSOModal     = useModal()
   const archiveDisc    = useDisclosure<SOWithUrl>()
   const deleteDisc     = useDisclosure<SOWithUrl>()
   const editOrderDisc  = useDisclosure<SOWithUrl>()
+
   const [forwardModalOpen, setForwardModalOpen] = useState(false)
-  const [soAttachModalOpen,    setSoAttachModalOpen]    = useState(false)
+
+  // ── Forward attachment state ───────────────────────────────────────────────
+  const [forwardAttachment,   setForwardAttachment]   = useState<SOAttachment | null>(null)
+  const [forwardAttModalOpen, setForwardAttModalOpen] = useState(false)
+
+  const [soAttachModalOpen,     setSoAttachModalOpen]     = useState(false)
   const [soAttachParentOrderId, setSoAttachParentOrderId] = useState<string>('')
-  const [soAttachParentAttId,  setSoAttachParentAttId]  = useState<string | null>(null)
+  const [soAttachParentAttId,   setSoAttachParentAttId]   = useState<string | null>(null)
 
   const currentEntry: NavEntry | null = navStack.length > 0 ? navStack[navStack.length - 1] : null
 
@@ -925,7 +959,6 @@ export default function AdminOrdersPage() {
             .map((id: string) => id.replace('arc-so-', ''))
         )
 
-        // Privileged roles see all orders; everyone else sees only their own.
         const activeOrders = data.filter((o: SOWithUrl) => {
           if (o.status === 'ARCHIVED' || archivedIds.has(o.id)) return false
           if (canSeeAllDocuments(user.role)) return true
@@ -984,6 +1017,12 @@ export default function AdminOrdersPage() {
     setNavStack(prev => prev.slice(0, index + 1))
   }
 
+  // ── Open forward modal for a specific attachment ──────────────────────────
+  function handleForwardAttachment(att: SOAttachment) {
+    setForwardAttachment(att)
+    setForwardAttModalOpen(true)
+  }
+
   async function handleUpload(parentOrderId: string, parentAttId: string | null, files: FileList) {
     if (!user) { toast.error('Not authenticated.'); return }
 
@@ -992,12 +1031,12 @@ export default function AdminOrdersPage() {
 
     for (const file of Array.from(files)) {
       let driveResult: DriveAttachmentResult
-  try {
-    driveResult = await uploadAttachmentToDrive(file, user.role, parentOrderId, parentAttId)
-  } catch (err: any) {
-    toast.error(err?.message ?? `Failed to upload "${file.name}" to Google Drive.`)
-    continue
-  }
+      try {
+        driveResult = await uploadAttachmentToDrive(file, user.role, parentOrderId, parentAttId)
+      } catch (err: any) {
+        toast.error(err?.message ?? `Failed to upload "${file.name}" to Google Drive.`)
+        continue
+      }
 
       const parentDepth = parentAttId
         ? (() => {
@@ -1039,27 +1078,23 @@ export default function AdminOrdersPage() {
     setUploadingId(null)
   }
 
-async function handleAdd(newSO: SOWithUrl) {
-  await addSpecialOrder(newSO)
-  
-  // Only add if not already present (realtime may have beaten us to it)
-  setOrders(prev => prev.some(o => o.id === newSO.id) ? prev : [newSO, ...prev])
-  
-  setAttachmentsMap(prev => {
-    const next = new Map(prev)
-    next.set(newSO.id, [])
-    return next
-  })
-  setSelectedOrder(newSO)
-  setNavStack([{ kind: 'order', order: newSO }])
-}
+  async function handleAdd(newSO: SOWithUrl) {
+    await addSpecialOrder(newSO)
+    setOrders(prev => prev.some(o => o.id === newSO.id) ? prev : [newSO, ...prev])
+    setAttachmentsMap(prev => {
+      const next = new Map(prev)
+      next.set(newSO.id, [])
+      return next
+    })
+    setSelectedOrder(newSO)
+    setNavStack([{ kind: 'order', order: newSO }])
+  }
 
   async function handleArchiveOrder() {
     const so = archiveDisc.payload
     if (!so) return
     setIsArchiving(true)
     try {
-      // Step 1: Move file in Google Drive to the archive folder
       const gdriveFileId  = (so as any).gdrive_file_id
       const poolAccountId = (so as any).pool_account_id
 
@@ -1067,34 +1102,26 @@ async function handleAdd(newSO: SOWithUrl) {
         const res = await fetch('/api/gdrive/archive', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
-            gdriveFileId,
-            poolAccountId,
-            category: 'special_orders',
-          }),
+          body:    JSON.stringify({ gdriveFileId, poolAccountId, category: 'special_orders' }),
         })
-
         if (!res.ok) {
           const json = await res.json().catch(() => ({}))
           toast.error(json.error ?? 'Could not move file to the archive. Please try again.')
         }
       }
 
-      // Step 2: Add to archived_docs table
       const today = new Date().toISOString().split('T')[0]
       await addArchivedDoc({
-        id: `arc-so-${so.id}`, 
+        id: `arc-so-${so.id}`,
         title: `${so.reference} – ${so.subject}`,
-        type: 'Special Order', 
-        archivedDate: today, 
+        type: 'Special Order',
+        archivedDate: today,
         archivedBy: user?.role ?? 'P1',
       })
 
-      // Step 3: Mark as archived
       await archiveSpecialOrder(so.id)
       await logArchiveDocument(`${so.reference} – ${so.subject}`, 'special order')
 
-      // Step 4: Remove from UI
       setOrders(prev => prev.filter(o => o.id !== so.id))
       setSelectedOrder(null)
       setNavStack([])
@@ -1105,31 +1132,28 @@ async function handleAdd(newSO: SOWithUrl) {
     }
   }
 
-    async function handleDeleteOrder() {
-      const so = deleteDisc.payload
-      if (!so) return
-      setIsDeleting(true)
-      try {
-        await deleteDriveFile(
-          (so as any).gdrive_file_id,
-          (so as any).pool_account_id
-        )
-        await deleteSpecialOrder(so.id)
-        await logDeleteDocument(`${so.reference} - ${so.subject}`, 'special order')
-        setOrders(prev => prev.filter(o => o.id !== so.id))
-        if (selectedOrder?.id === so.id) { setSelectedOrder(null); setNavStack([]) }
-        toast.success(`"${so.reference}" deleted permanently.`)
-        deleteDisc.close()
-      } catch(err: any){
-        toast.error(err?.message ?? 'Could not delete file from Google Drive. Please try again.')
-  return
-
-      }
-      
-      finally {
-        setIsDeleting(false)
-      }
+  async function handleDeleteOrder() {
+    const so = deleteDisc.payload
+    if (!so) return
+    setIsDeleting(true)
+    try {
+      await deleteDriveFile(
+        (so as any).gdrive_file_id,
+        (so as any).pool_account_id
+      )
+      await deleteSpecialOrder(so.id)
+      await logDeleteDocument(`${so.reference} - ${so.subject}`, 'special order')
+      setOrders(prev => prev.filter(o => o.id !== so.id))
+      if (selectedOrder?.id === so.id) { setSelectedOrder(null); setNavStack([]) }
+      toast.success(`"${so.reference}" deleted permanently.`)
+      deleteDisc.close()
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Could not delete file from Google Drive. Please try again.')
+      return
+    } finally {
+      setIsDeleting(false)
     }
+  }
 
   async function handleSaveOrder(updatedOrder: SOWithUrl) {
     await updateSpecialOrder(updatedOrder)
@@ -1145,86 +1169,84 @@ async function handleAdd(newSO: SOWithUrl) {
     editOrderDisc.close()
   }
 
-
   async function handleSOAttachmentModalResult(result: SOAttachmentUploadResult) {
-  if (!user || !selectedOrder) return
+    if (!user || !selectedOrder) return
 
-  const parentAttId = soAttachParentAttId
-  setUploadingId(parentAttId ?? soAttachParentOrderId)
+    const parentAttId = soAttachParentAttId
+    setUploadingId(parentAttId ?? soAttachParentOrderId)
 
-  const parentDepth = parentAttId
-    ? (() => {
-        for (const list of attachmentsMap.values()) {
-          const parent = list.find(a => a.id === parentAttId)
-          if (parent) return parent.depth + 1
-        }
-        return 1
-      })()
-    : 0
+    const parentDepth = parentAttId
+      ? (() => {
+          for (const list of attachmentsMap.values()) {
+            const parent = list.find(a => a.id === parentAttId)
+            if (parent) return parent.depth + 1
+          }
+          return 1
+        })()
+      : 0
 
-  const { supabase: sb } = await import('@/lib/supabase')
-  const { data: newAtt, error } = await sb
-    .from('special_order_attachments')
-    .insert({
-      special_order_id: soAttachParentOrderId,
-      parent_id:        parentAttId,
-      depth:            parentDepth,
-      // Rich title: "reference – subject" so the attachment is self-describing
-      title:            `${result.reference} – ${result.subject}`,
-      file_name:        result.fileName,
-      file_size_bytes:  result.fileSizeBytes,
-      mime_type:        result.mimeType,
-      gdrive_file_id:   result.gdriveFileId,
-      gdrive_url:       result.gdriveUrl,
-      pool_account_id:  result.poolAccountId,
-    })
-    .select()
-    .single()
+    const { supabase: sb } = await import('@/lib/supabase')
+    const { data: newAtt, error } = await sb
+      .from('special_order_attachments')
+      .insert({
+        special_order_id: soAttachParentOrderId,
+        parent_id:        parentAttId,
+        depth:            parentDepth,
+        title:            `${result.reference} – ${result.subject}`,
+        file_name:        result.fileName,
+        file_size_bytes:  result.fileSizeBytes,
+        mime_type:        result.mimeType,
+        gdrive_file_id:   result.gdriveFileId,
+        gdrive_url:       result.gdriveUrl,
+        pool_account_id:  result.poolAccountId,
+      })
+      .select()
+      .single()
 
-  if (error || !newAtt) {
-    toast.error('Attachment uploaded to Drive but could not save metadata. Please try again.')
-  } else {
-    const mapKey = parentAttId ?? soAttachParentOrderId
-    setAttachmentsMap(prev => {
-      const next = new Map(prev)
-      const existing = next.get(mapKey) ?? []
-      if (existing.some(a => a.id === newAtt.id)) return prev
-      next.set(mapKey, [...existing, newAtt])
-      return next
-    })
+    if (error || !newAtt) {
+      toast.error('Attachment uploaded to Drive but could not save metadata. Please try again.')
+    } else {
+      const mapKey = parentAttId ?? soAttachParentOrderId
+      setAttachmentsMap(prev => {
+        const next = new Map(prev)
+        const existing = next.get(mapKey) ?? []
+        if (existing.some(a => a.id === newAtt.id)) return prev
+        next.set(mapKey, [...existing, newAtt])
+        return next
+      })
 
-    await logAddAttachment(
+      await logAddAttachment(
         `${result.reference} – ${result.subject}`,
         selectedOrder.reference
       )
-  }
+    }
 
-  setUploadingId(null)
-}
+    setUploadingId(null)
+  }
 
   async function handleDeleteAttachment() {
-  const att = deleteAttDisc.payload
-  if (!att) return
-  setIsDeletingAtt(true)
-  try {
-    await deleteDriveFile(att.gdrive_file_id, att.pool_account_id)
-    const ok = await dbDeleteAttachment(att.id)
-    if (!ok) { toast.error('Could not delete attachment.'); return }
-    const mapKey = att.parent_id ?? att.special_order_id
-    setAttachmentsMap(prev => {
-      const next = new Map(prev)
-      next.set(mapKey, (next.get(mapKey) ?? []).filter(a => a.id !== att.id))
-      return next
-    })
-    toast.success(`"${displayName(att)}" deleted.`)
-    deleteAttDisc.close()
-    if (currentEntry?.kind === 'attachment' && currentEntry.att.id === att.id) {
-      setNavStack(prev => prev.slice(0, -1))
+    const att = deleteAttDisc.payload
+    if (!att) return
+    setIsDeletingAtt(true)
+    try {
+      await deleteDriveFile(att.gdrive_file_id, att.pool_account_id)
+      const ok = await dbDeleteAttachment(att.id)
+      if (!ok) { toast.error('Could not delete attachment.'); return }
+      const mapKey = att.parent_id ?? att.special_order_id
+      setAttachmentsMap(prev => {
+        const next = new Map(prev)
+        next.set(mapKey, (next.get(mapKey) ?? []).filter(a => a.id !== att.id))
+        return next
+      })
+      toast.success(`"${displayName(att)}" deleted.`)
+      deleteAttDisc.close()
+      if (currentEntry?.kind === 'attachment' && currentEntry.att.id === att.id) {
+        setNavStack(prev => prev.slice(0, -1))
+      }
+    } finally {
+      setIsDeletingAtt(false)
     }
-  } finally {
-    setIsDeletingAtt(false)
   }
-}
 
   async function handleRenameAttachment(att: SOAttachment, newTitle: string): Promise<boolean> {
     const trimmed = newTitle.trim()
@@ -1279,8 +1301,8 @@ async function handleAdd(newSO: SOWithUrl) {
   })
 
   function handleViewFile(fileUrl: string, _fileName: string) {
-  window.open(fileUrl, '_blank')
-}
+    window.open(fileUrl, '_blank')
+  }
 
   return (
     <>
@@ -1292,8 +1314,6 @@ async function handleAdd(newSO: SOWithUrl) {
           {/* Toolbar */}
           <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50 flex-shrink-0">
             <SearchInput value={query} onChange={setQuery} placeholder="Search orders…" className="max-w-xs flex-1" />
-            
-            {/* FIX: Show "+ New SO" for all allowed roles (P1–P10, WCPD, PPSMU) */}
             {canUpload && (
               <Button variant="primary" size="sm" className="ml-auto" onClick={newSOModal.open}>
                 + New SO
@@ -1400,14 +1420,15 @@ async function handleAdd(newSO: SOWithUrl) {
                     onNavigateTo={handleNavigateTo}
                     onRenameAttachment={handleRenameAttachment}
                     onRequestAttach={() => {
-                         if (!selectedOrder) return
-                         const parentAttId = currentEntry?.kind === 'attachment'
-                           ? currentEntry.att.id
-                           : null
-                         setSoAttachParentOrderId(selectedOrder.id)
-                        setSoAttachParentAttId(parentAttId)
-                        setSoAttachModalOpen(true)
-                       }}
+                      if (!selectedOrder) return
+                      const parentAttId = currentEntry?.kind === 'attachment'
+                        ? currentEntry.att.id
+                        : null
+                      setSoAttachParentOrderId(selectedOrder.id)
+                      setSoAttachParentAttId(parentAttId)
+                      setSoAttachModalOpen(true)
+                    }}
+                    onForwardAttachment={handleForwardAttachment}
                   />
                 </div>
               )}
@@ -1434,6 +1455,7 @@ async function handleAdd(newSO: SOWithUrl) {
         parentAttId={soAttachParentAttId}
       />
 
+      {/* Forward modal — root special order */}
       {selectedOrder && (
         <ForwardDocumentModal
           open={forwardModalOpen}
@@ -1456,38 +1478,60 @@ async function handleAdd(newSO: SOWithUrl) {
         />
       )}
 
-      
+      {/* Forward modal — individual attachment */}
+      {forwardAttachment && (
+        <ForwardDocumentModal
+          open={forwardAttModalOpen}
+          onClose={() => { setForwardAttModalOpen(false); setForwardAttachment(null) }}
+          document={{
+            id:            forwardAttachment.id,
+            title:         displayName(forwardAttachment),
+            type:          'Special Order',
+            documentType:  'admin_order',
+            gdriveFileId:  forwardAttachment.gdrive_file_id,
+            gdriveUrl:     forwardAttachment.gdrive_url,
+            poolAccountId: forwardAttachment.pool_account_id,
+            fileName:      forwardAttachment.file_name       ?? undefined,
+            fileSizeBytes: forwardAttachment.file_size_bytes ?? undefined,
+            mimeType:      forwardAttachment.mime_type       ?? undefined,
+          }}
+          attachmentsMap={attachmentsMap as any}
+          onForwarded={() => { setForwardAttModalOpen(false); setForwardAttachment(null) }}
+          senderRole={user?.role as AdminRole}
+        />
+      )}
+
       <ConfirmDialog
         open={archiveDisc.isOpen}
         title="Archive Special Order"
-        message={`Archive "${archiveDisc.payload?.reference}"? This will move the uploaded file to an archive folder in the connected Google Drive account, and remove it from the active document list. You can restore archived documents from the Archive section if needed..`}
+        message={`Archive "${archiveDisc.payload?.reference}"? This will move the uploaded file to an archive folder in the connected Google Drive account, and remove it from the active document list. You can restore archived documents from the Archive section if needed.`}
         confirmLabel="Archive" variant="danger"
         isLoading={isArchiving}
         onConfirm={handleArchiveOrder}
         onCancel={archiveDisc.close}
       />
 
-          <ConfirmDialog
-            open={deleteAttDisc.isOpen}
-            title="Delete Attachment"
-            message={`Delete "${deleteAttDisc.payload ? displayName(deleteAttDisc.payload) : ''}" permanently? This cannot be undone.`}
-            confirmLabel="Delete"
-            variant="danger"
-            isLoading={isDeletingAtt}     // ← add
-            onConfirm={handleDeleteAttachment}
-            onCancel={deleteAttDisc.close}
-          />
+      <ConfirmDialog
+        open={deleteAttDisc.isOpen}
+        title="Delete Attachment"
+        message={`Delete "${deleteAttDisc.payload ? displayName(deleteAttDisc.payload) : ''}" permanently? This cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        isLoading={isDeletingAtt}
+        onConfirm={handleDeleteAttachment}
+        onCancel={deleteAttDisc.close}
+      />
 
-          <ConfirmDialog
-            open={deleteDisc.isOpen}
-            title="Delete Special Order"
-            message={`Delete "${deleteDisc.payload?.reference}" permanently? This cannot be undone.`}
-            confirmLabel="Delete"
-            variant="danger"
-            isLoading={isDeleting}        // ← add
-            onConfirm={handleDeleteOrder}
-            onCancel={deleteDisc.close}
-          />
+      <ConfirmDialog
+        open={deleteDisc.isOpen}
+        title="Delete Special Order"
+        message={`Delete "${deleteDisc.payload?.reference}" permanently? This cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        isLoading={isDeleting}
+        onConfirm={handleDeleteOrder}
+        onCancel={deleteDisc.close}
+      />
     </>
   )
 }

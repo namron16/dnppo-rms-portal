@@ -15,6 +15,9 @@
 //   handleUpload now routes attachment files through the Drive pool gateway
 //   (/api/gdrive/upload) instead of supabase.storage. The Drive file ID,
 //   URL, and pool account ID are stored in master_document_attachments.
+//
+// UPDATE: Added Forward action to attachment table rows and nested file header.
+//         Added Print action to attachment table rows (already existed on header).
 
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { PageHeader }       from '@/components/ui/PageHeader'
@@ -150,9 +153,6 @@ async function dbRenameAttachment(id: string, newTitle: string): Promise<boolean
 }
 
 // ── Drive pool upload helper ───────────────────────────────────────────────────
-// Replaces the old supabase.storage.from('documents').upload() pattern.
-// Sends the file to /api/gdrive/upload which routes it through the pool
-// gateway into the uploading user's own connected Google Drive account.
 async function uploadAttachmentToDrive(
   file: File,
   uploadedBy: string,
@@ -166,28 +166,26 @@ async function uploadAttachmentToDrive(
   formData.append('entityType',  parentAttId ? 'master_document_attachment' : 'master_document')
   formData.append('entityId',    parentAttId ?? parentDocId)
 
-  
-    const res = await fetch('/api/gdrive/upload', { method: 'POST', body: formData })
+  const res = await fetch('/api/gdrive/upload', { method: 'POST', body: formData })
 
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}))
-      throw new Error(json.error ?? `Upload failed (HTTP ${res.status}). Please try again.`)
-    }
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}))
+    throw new Error(json.error ?? `Upload failed (HTTP ${res.status}). Please try again.`)
+  }
 
-    const json = await res.json()
-    const r    = json.data
+  const json = await res.json()
+  const r    = json.data
 
-    if (!r?.gdriveFileId && !r?.gdrive_file_id) {
-      throw new Error('Upload succeeded but no file ID was returned. Please try again.')
-    }
+  if (!r?.gdriveFileId && !r?.gdrive_file_id) {
+    throw new Error('Upload succeeded but no file ID was returned. Please try again.')
+  }
 
-    return {
-      gdriveFileId:  r.gdriveFileId  ?? r.gdrive_file_id,
-      gdrive_url:    r.fileUrl       ?? r.drive_url ?? `https://drive.google.com/file/d/${r.gdriveFileId}/view`,
-      poolAccountId: r.poolAccountId ?? r.pool_account_id,
-      fileSizeBytes: r.sizeBytes     ?? file.size,
-    }
- 
+  return {
+    gdriveFileId:  r.gdriveFileId  ?? r.gdrive_file_id,
+    gdrive_url:    r.fileUrl       ?? r.drive_url ?? `https://drive.google.com/file/d/${r.gdriveFileId}/view`,
+    poolAccountId: r.poolAccountId ?? r.pool_account_id,
+    fileSizeBytes: r.sizeBytes     ?? file.size,
+  }
 }
 
 function fileInfoFromMime(mimeType: string | null, fileName: string | null) {
@@ -472,7 +470,6 @@ export default function MasterPage() {
   const { toast } = useToast()
   const { user }  = useAuth()
 
-  // FIX: use canUploadDocuments (P1–P10, WCPD, PPSMU) instead of P1-only check
   const canUpload          = user?.role ? canUploadDocuments(user.role as AdminRole) : false
   const isP1               = user?.role === 'P1'
   const isPrivileged       = user ? hasFullDocumentAccess(user.role as AdminRole) : false
@@ -497,6 +494,11 @@ export default function MasterPage() {
   const [attachModalOpen,   setAttachModalOpen]   = useState(false)
   const [attachParentAttId, setAttachParentAttId] = useState<string | null>(null)
   const [attachParentDocId, setAttachParentDocId] = useState<string>('')
+
+  // ── Forward attachment state ───────────────────────────────────────────────
+  // Tracks which specific attachment is being forwarded (table row or nested header)
+  const [forwardAttachment,    setForwardAttachment]    = useState<DocAttachment | null>(null)
+  const [forwardAttModalOpen,  setForwardAttModalOpen]  = useState(false)
 
   const deleteAttDisc  = useDisclosure<DocAttachment>()
   const uploadModal    = useModal()
@@ -539,7 +541,6 @@ export default function MasterPage() {
             .map((id: string) => id.replace('arc-md-', ''))
         )
 
-        // Privileged roles see all; everyone else sees only their own uploads.
         const activeDocs = docs.filter((d: DocWithUrl) => {
           if (archivedIds.has(d.id)) return false
           if (canSeeAllDocuments(user.role)) return true
@@ -618,8 +619,6 @@ export default function MasterPage() {
       const doc  = selection
       const date = new Date().toISOString().split('T')[0]
 
-      // Step 1: Move file in Google Drive to the archive folder
-      // Only attempt if we have the Drive metadata
       const gdriveFileId  = (doc as any).gdrive_file_id
       const poolAccountId = (doc as any).pool_account_id
 
@@ -637,11 +636,9 @@ export default function MasterPage() {
         if (!res.ok) {
           const json = await res.json().catch(() => ({}))
           toast.error(json.error ?? 'Could not move file to the archive. Please try again.')
-          // Don't block the rest — still archive the record
         }
       }
 
-      // Step 2: Add to archived_docs table
       await addArchivedDoc({
         id:          `arc-md-${doc.id}`,
         title:       doc.title,
@@ -650,13 +647,9 @@ export default function MasterPage() {
         archivedBy:  user?.role ?? 'P1',
       })
 
-      // Step 3: Mark as archived in master_documents
-      // Update archiveMasterDocument in lib/data.ts to actually set archived = true
       await archiveMasterDocument(doc.id)
-
       await logArchiveDocument(doc.title, 'master document')
 
-      // Step 4: Remove from UI
       setDocuments(prev => prev.filter(d => d.id !== doc.id))
       setSelection(null)
       toast.success('Document archived.')
@@ -666,35 +659,31 @@ export default function MasterPage() {
     }
   }
 
-    async function handleDeleteDoc() {
-      if (!selection) return
-      const doc = selection
-      setIsDeleting(true)
-      try {
-        await deleteDriveFile(
-          (doc as any).gdrive_file_id,
-          (doc as any).pool_account_id
-        )
-        await deleteMasterDocument(doc.id)
-        await logDeleteDocument(doc.title, 'master document')
-        setDocuments(prev => prev.filter(d => d.id !== doc.id))
-        setSelection(null)
-        toast.success('Document deleted permanently.')
-        deleteDisc.close()
-      } 
-      catch (err: any) {
-        toast.error(err?.message ?? 'Could not delete file from Google Drive. Please try again.')
-        return
-      }
-      finally {
-        setIsDeleting(false)
-      }
+  async function handleDeleteDoc() {
+    if (!selection) return
+    const doc = selection
+    setIsDeleting(true)
+    try {
+      await deleteDriveFile(
+        (doc as any).gdrive_file_id,
+        (doc as any).pool_account_id
+      )
+      await deleteMasterDocument(doc.id)
+      await logDeleteDocument(doc.title, 'master document')
+      setDocuments(prev => prev.filter(d => d.id !== doc.id))
+      setSelection(null)
+      toast.success('Document deleted permanently.')
+      deleteDisc.close()
     }
+    catch (err: any) {
+      toast.error(err?.message ?? 'Could not delete file from Google Drive. Please try again.')
+      return
+    }
+    finally {
+      setIsDeleting(false)
+    }
+  }
 
-  // FIX: Attachment upload now routes through the Drive pool gateway.
-  // Previously used supabase.storage.from('documents').upload() which stored
-  // files in Supabase Storage. Now files go to the uploading user's own
-  // connected Google Drive account via /api/gdrive/upload.
   async function handleUpload(parentDocId: string, parentAttId: string | null, files: FileList) {
     if (!user) { toast.error('Not authenticated.'); return }
 
@@ -702,8 +691,7 @@ export default function MasterPage() {
     let count = 0
 
     for (const file of Array.from(files)) {
-      // Upload to Google Drive via the pool gateway
-     let driveResult: DriveAttachmentResult
+      let driveResult: DriveAttachmentResult
       try {
         driveResult = await uploadAttachmentToDrive(file, user.role, parentDocId, parentAttId)
       } catch (err: any) {
@@ -721,7 +709,6 @@ export default function MasterPage() {
           })()
         : 0
 
-      // Save metadata to Supabase — actual file lives in Google Drive
       const newAtt = await dbAddAttachment({
         master_document_id: parentDocId,
         parent_id:          parentAttId,
@@ -753,29 +740,29 @@ export default function MasterPage() {
   }
 
   async function handleDeleteAttachment() {
-  const att = deleteAttDisc.payload
-  if (!att) return
-  setIsDeleting(true)
-  try {
-    await deleteDriveFile(att.gdrive_file_id, att.pool_account_id)
-    const ok = await dbDeleteAttachment(att.id)
-    if (!ok) { toast.error('Could not delete attachment.'); return }
-    const mapKey = att.parent_id ?? att.master_document_id
-    setAttachmentsMap(prev => {
-      const next = new Map(prev)
-      next.set(mapKey, (next.get(mapKey) ?? []).filter(a => a.id !== att.id))
-      return next
-    })
-    setAttachmentNavStack(prev => {
-      const idx = prev.findIndex(entry => entry.kind === 'attachment' && entry.att.id === att.id)
-      return idx === -1 ? prev : prev.slice(0, idx)
-    })
-    toast.success(`"${displayName(att)}" deleted.`)
-    deleteAttDisc.close()
-  } finally {
-    setIsDeleting(false)
+    const att = deleteAttDisc.payload
+    if (!att) return
+    setIsDeleting(true)
+    try {
+      await deleteDriveFile(att.gdrive_file_id, att.pool_account_id)
+      const ok = await dbDeleteAttachment(att.id)
+      if (!ok) { toast.error('Could not delete attachment.'); return }
+      const mapKey = att.parent_id ?? att.master_document_id
+      setAttachmentsMap(prev => {
+        const next = new Map(prev)
+        next.set(mapKey, (next.get(mapKey) ?? []).filter(a => a.id !== att.id))
+        return next
+      })
+      setAttachmentNavStack(prev => {
+        const idx = prev.findIndex(entry => entry.kind === 'attachment' && entry.att.id === att.id)
+        return idx === -1 ? prev : prev.slice(0, idx)
+      })
+      toast.success(`"${displayName(att)}" deleted.`)
+      deleteAttDisc.close()
+    } finally {
+      setIsDeleting(false)
+    }
   }
-}
 
   async function handleRenameAttachment(att: DocAttachment, newTitle: string): Promise<boolean> {
     const trimmed = newTitle.trim()
@@ -795,58 +782,54 @@ export default function MasterPage() {
   }
 
   async function handleAttachmentModalResult(result: AttachmentUploadResult) {
-  if (!user || !selection) return
+    if (!user || !selection) return
 
-  setUploadingId(attachParentAttId ?? attachParentDocId)
+    setUploadingId(attachParentAttId ?? attachParentDocId)
 
-  // Build a synthetic File-like object isn't needed — we already have
-  // the Drive result.  We insert the attachment row directly.
-  const parentDepth = attachParentAttId
-    ? (() => {
-        for (const list of attachmentsMap.values()) {
-          const parent = list.find(a => a.id === attachParentAttId)
-          if (parent) return parent.depth + 1
-        }
-        return 1
-      })()
-    : 0
+    const parentDepth = attachParentAttId
+      ? (() => {
+          for (const list of attachmentsMap.values()) {
+            const parent = list.find(a => a.id === attachParentAttId)
+            if (parent) return parent.depth + 1
+          }
+          return 1
+        })()
+      : 0
 
-  const { data: newAtt, error } = await (await import('@/lib/supabase')).supabase
-    .from('master_document_attachments')
-    .insert({
-      master_document_id: attachParentDocId,
-      parent_id:          attachParentAttId,
-      depth:              parentDepth,
-      // Use the rich title from the modal, not just the file name
-      title:              result.title,
-      file_name:          result.fileName,
-      file_size_bytes:    result.fileSizeBytes,
-      mime_type:          result.mimeType,
-      gdrive_file_id:     result.gdriveFileId,
-      gdrive_url:         result.gdriveUrl,
-      pool_account_id:    result.poolAccountId,
-    })
-    .select()
-    .single()
+    const { data: newAtt, error } = await (await import('@/lib/supabase')).supabase
+      .from('master_document_attachments')
+      .insert({
+        master_document_id: attachParentDocId,
+        parent_id:          attachParentAttId,
+        depth:              parentDepth,
+        title:              result.title,
+        file_name:          result.fileName,
+        file_size_bytes:    result.fileSizeBytes,
+        mime_type:          result.mimeType,
+        gdrive_file_id:     result.gdriveFileId,
+        gdrive_url:         result.gdriveUrl,
+        pool_account_id:    result.poolAccountId,
+      })
+      .select()
+      .single()
 
-  if (error || !newAtt) {
-    toast.error('Attachment uploaded to Drive but could not save metadata. Please try again.')
-  } else {
-    const mapKey = attachParentAttId ?? attachParentDocId
-    setAttachmentsMap(prev => {
-      const next = new Map(prev)
-      const existing = next.get(mapKey) ?? []
-      if (existing.some(a => a.id === newAtt.id)) return prev
-      next.set(mapKey, [...existing, newAtt])
-      return next
-    })
-    // toast already shown by modal
+    if (error || !newAtt) {
+      toast.error('Attachment uploaded to Drive but could not save metadata. Please try again.')
+    } else {
+      const mapKey = attachParentAttId ?? attachParentDocId
+      setAttachmentsMap(prev => {
+        const next = new Map(prev)
+        const existing = next.get(mapKey) ?? []
+        if (existing.some(a => a.id === newAtt.id)) return prev
+        next.set(mapKey, [...existing, newAtt])
+        return next
+      })
 
-    await logAddAttachment(result.title, selection.title)
+      await logAddAttachment(result.title, selection.title)
+    }
+
+    setUploadingId(null)
   }
-
-  setUploadingId(null)
-}
 
   const countActiveAttachments = useCallback((parentId: string): number => {
     const children = attachmentsMap.get(parentId) ?? []
@@ -935,17 +918,22 @@ export default function MasterPage() {
     setAttachmentNavStack(prev => prev.slice(0, index + 1))
   }
 
+  // ── Open forward modal for a specific attachment ──────────────────────────
+  function handleForwardAttachment(att: DocAttachment) {
+    setForwardAttachment(att)
+    setForwardAttModalOpen(true)
+  }
+
   const suggestedAttachmentLevel: 'REGIONAL' | 'PROVINCIAL' | 'STATION' = (() => {
-      if (!currentAttachmentEntry) return 'PROVINCIAL'
-      if (currentAttachmentEntry.kind === 'attachment') {
-        // We're one level deep — suggest next level down
-        const att = currentAttachmentEntry.att as any
-        if (att.level === 'REGIONAL') return 'PROVINCIAL'
-        if (att.level === 'PROVINCIAL') return 'STATION'
-        return 'STATION'
-      }
-      return 'PROVINCIAL'
-    })()
+    if (!currentAttachmentEntry) return 'PROVINCIAL'
+    if (currentAttachmentEntry.kind === 'attachment') {
+      const att = currentAttachmentEntry.att as any
+      if (att.level === 'REGIONAL') return 'PROVINCIAL'
+      if (att.level === 'PROVINCIAL') return 'STATION'
+      return 'STATION'
+    }
+    return 'PROVINCIAL'
+  })()
 
   return (
     <>
@@ -963,7 +951,6 @@ export default function MasterPage() {
               <option value="PROVINCIAL">Provincial</option>
               <option value="STATION">Station</option>
             </ToolbarSelect>
-            {/* FIX: Show Upload button for all allowed roles (P1–P10, WCPD, PPSMU) */}
             {canUpload && (
               <Button variant="primary" size="sm" className="ml-auto" onClick={uploadModal.open}>
                 + Upload
@@ -1053,117 +1040,124 @@ export default function MasterPage() {
 
                     <Breadcrumb navStack={attachmentNavStack} onNavigateTo={handleNavigateTo} />
 
-                    {/* Document header */}
-                      {/* Document / attachment header */}
-                      {currentAttachmentEntry?.kind === 'attachment' ? (
-                        // ── Drilled into an attachment — mirror Admin Orders style ──
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-xl flex-shrink-0">
-                                {fileInfoFromMime(currentAttachmentEntry.att.mime_type, currentAttachmentEntry.att.file_name).icon}
-                              </span>
-                              <h2 className="text-lg font-extrabold text-slate-800 leading-tight truncate">
-                                {displayName(currentAttachmentEntry.att)}
-                              </h2>
-                              <span className="flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
-                                Nested File
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap mt-1">
-                              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
-                                {fileInfoFromMime(currentAttachmentEntry.att.mime_type, currentAttachmentEntry.att.file_name).label}
-                              </span>
-                              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
-                                {formatBytes(currentAttachmentEntry.att.file_size_bytes)}
-                              </span>
-                              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
-                                📅 {new Date(currentAttachmentEntry.att.created_at).toLocaleString('en-PH', {
-                                  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                    {/* Document / attachment header */}
+                    {currentAttachmentEntry?.kind === 'attachment' ? (
+                      // ── Drilled into an attachment ──
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xl flex-shrink-0">
+                              {fileInfoFromMime(currentAttachmentEntry.att.mime_type, currentAttachmentEntry.att.file_name).icon}
+                            </span>
+                            <h2 className="text-lg font-extrabold text-slate-800 leading-tight truncate">
+                              {displayName(currentAttachmentEntry.att)}
+                            </h2>
+                            <span className="flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
+                              Nested File
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap mt-1">
+                            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
+                              {fileInfoFromMime(currentAttachmentEntry.att.mime_type, currentAttachmentEntry.att.file_name).label}
+                            </span>
+                            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
+                              {formatBytes(currentAttachmentEntry.att.file_size_bytes)}
+                            </span>
+                            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
+                              📅 {new Date(currentAttachmentEntry.att.created_at).toLocaleString('en-PH', {
+                                year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                              })}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex gap-1.5 flex-shrink-0 flex-wrap justify-end">
+                          <button
+                            onClick={() => window.open(currentAttachmentEntry.att.gdrive_url, '_blank')}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition">
+                            <Eye size={14} /> View File
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadFile(
+                              currentAttachmentEntry.att.gdrive_url,
+                              getSuggestedFileName(displayName(currentAttachmentEntry.att), currentAttachmentEntry.att.gdrive_url),
+                              `attachment-${currentAttachmentEntry.att.id}`,
+                              currentAttachmentEntry.att.master_document_id
+                            )}
+                            disabled={downloadingKey === `attachment-${currentAttachmentEntry.att.id}`}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition disabled:opacity-60">
+                            <Download size={14} />
+                            {downloadingKey === `attachment-${currentAttachmentEntry.att.id}` ? 'Downloading…' : 'Download'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handlePrintFile(
+                              currentAttachmentEntry.att.gdrive_url,
+                              displayName(currentAttachmentEntry.att),
+                              currentAttachmentEntry.att.master_document_id
+                            )}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition">
+                            <Printer size={14} /> Print
+                          </button>
+                          {/* ── Forward button for drilled-down attachment ── */}
+                          {canModifyDocuments && (
+                            <button
+                              onClick={() => handleForwardAttachment(currentAttachmentEntry.att)}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition">
+                              <Send size={14} /> Forward
+                            </button>
+                          )}
+                          {canModifyDocuments && (
+                            <button
+                              onClick={() => deleteAttDisc.open(currentAttachmentEntry.att)}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
+                              <Trash2 size={14} /> Delete
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      // ── Root document header ──
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                            <h2 className="text-lg font-extrabold text-slate-800">{selection.title}</h2>
+                            <Badge className={levelBadgeClass(selection.level)}>{selection.level}</Badge>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500">
+                            {selection.created_at && (
+                              <span className="bg-slate-100 px-2 py-0.5 rounded-full">
+                                📅 {new Date(selection.created_at).toLocaleString('en-PH', {
+                                  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
                                 })}
                               </span>
-                            </div>
+                            )}
+                            <span className="bg-slate-100 px-2 py-0.5 rounded-full">{selection.type} · {selection.size}</span>
                           </div>
-                          <div className="flex gap-1.5 flex-shrink-0">
-                            <button
-                              onClick={() => window.open(currentAttachmentEntry.att.gdrive_url, '_blank')}
-                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition">
-                              <Eye size={14} /> View File
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadFile(
-                                currentAttachmentEntry.att.gdrive_url,
-                                getSuggestedFileName(displayName(currentAttachmentEntry.att), currentAttachmentEntry.att.gdrive_url),
-                                `attachment-${currentAttachmentEntry.att.id}`,
-                                currentAttachmentEntry.att.master_document_id
-                              )}
-                              disabled={downloadingKey === `attachment-${currentAttachmentEntry.att.id}`}
-                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition disabled:opacity-60">
-                              <Download size={14} />
-                              {downloadingKey === `attachment-${currentAttachmentEntry.att.id}` ? 'Downloading…' : 'Download'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handlePrintFile(
-                                currentAttachmentEntry.att.gdrive_url,
-                                displayName(currentAttachmentEntry.att),
-                                currentAttachmentEntry.att.master_document_id
-                              )}
-                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition">
-                              <Printer size={14} /> Print
-                            </button>
-                            {canModifyDocuments && (
-                              <button
-                                onClick={() => deleteAttDisc.open(currentAttachmentEntry.att)}
-                                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
-                                <Trash2 size={14} /> Delete
+                        </div>
+                        <div className="flex gap-2 flex-shrink-0 flex-wrap">
+                          {canModifyDocuments && (
+                            <>
+                              <button onClick={() => setForwardModalOpen(true)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition">
+                                <Send size={16} /> Forward
                               </button>
-                            )}
-                          </div>
+                              <button onClick={editModal.open} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
+                                <Pencil size={16} /> Edit
+                              </button>
+                              <button onClick={() => archiveDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition">
+                                <Archive size={16} /> Archive
+                              </button>
+                              <button onClick={() => deleteDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
+                                <Trash2 size={16} /> Delete
+                              </button>
+                            </>
+                          )}
                         </div>
-                      ) : (
-                        // ── Root document header (unchanged) ──
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                              <h2 className="text-lg font-extrabold text-slate-800">{selection.title}</h2>
-                              <Badge className={levelBadgeClass(selection.level)}>{selection.level}</Badge>
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500">
-                              {selection.created_at && (
-                                <span className="bg-slate-100 px-2 py-0.5 rounded-full">
-                                  📅 {new Date(selection.created_at).toLocaleString('en-PH', {
-                                    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                                  })}
-                                </span>
-                              )}
-                              <span className="bg-slate-100 px-2 py-0.5 rounded-full">{selection.type} · {selection.size}</span>
-                            </div>
-                          </div>
-                          <div className="flex gap-2 flex-shrink-0 flex-wrap">
-                            {canModifyDocuments && (
-                              <>
-                                <button onClick={() => setForwardModalOpen(true)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition">
-                                  <Send size={16} /> Forward
-                                </button>
-                                <button onClick={editModal.open} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
-                                  <Pencil size={16} /> Edit
-                                </button>
-                                <button onClick={() => archiveDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition">
-                                  <Archive size={16} /> Archive
-                                </button>
-                                <button onClick={() => deleteDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
-                                  <Trash2 size={16} /> Delete
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      )}
+                      </div>
+                    )}
 
                     {/* Primary file */}
-                    {currentAttachmentEntry?.kind !== 'attachment' && selection.fileUrl ?(
+                    {currentAttachmentEntry?.kind !== 'attachment' && selection.fileUrl ? (
                       <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
                         <FileText size={18} className="flex-shrink-0 text-blue-600" />
                         <div className="flex-1 min-w-0">
@@ -1220,11 +1214,11 @@ export default function MasterPage() {
                           {canModifyDocuments && (
                             <Button variant="primary" size="sm" disabled={!!uploadingId}
                               onClick={() => {
-                                  if (!selection) return
-                                  setAttachParentDocId(selection.id)
-                                  setAttachParentAttId(currentParentAttachment?.id ?? null)
-                                  setAttachModalOpen(true)
-                                }}>
+                                if (!selection) return
+                                setAttachParentDocId(selection.id)
+                                setAttachParentAttId(currentParentAttachment?.id ?? null)
+                                setAttachModalOpen(true)
+                              }}>
                               + Attach file
                             </Button>
                           )}
@@ -1284,7 +1278,7 @@ export default function MasterPage() {
                                 <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[90px]">Size</th>
                                 <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[140px]">Added</th>
                                 <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[95px]">Children</th>
-                                <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[260px]">Actions</th>
+                                <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[300px]">Actions</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1372,12 +1366,14 @@ export default function MasterPage() {
                                     </td>
                                     <td className="px-4 py-3">
                                       <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        {/* View */}
                                         <button
                                           onClick={() => window.open(att.gdrive_url, '_blank')}
                                           className="inline-flex items-center justify-center px-1.5 py-1.5 text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
                                           title="View file">
                                           <Eye size={14} strokeWidth={2} />
                                         </button>
+                                        {/* Download */}
                                         <button type="button"
                                           onClick={() => handleDownloadFile(att.gdrive_url, getSuggestedFileName(label, att.gdrive_url), `attachment-${att.id}`, att.master_document_id)}
                                           disabled={downloadingKey === `attachment-${att.id}`}
@@ -1385,25 +1381,38 @@ export default function MasterPage() {
                                           title="Download file">
                                           <Download size={14} />
                                         </button>
+                                        {/* Print */}
                                         <button type="button"
                                           onClick={() => handlePrintFile(att.gdrive_url, label, att.master_document_id)}
                                           className="inline-flex items-center justify-center px-1.5 py-1.5 text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition"
                                           title="Print file">
                                           <Printer size={14} />
                                         </button>
+                                        {/* Drill-down / explore */}
                                         <button onClick={() => handleDrillDown(att)}
                                           className="inline-flex items-center justify-center px-1.5 py-1.5 text-violet-600 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100 hover:border-violet-300 transition"
                                           title="Open & explore nested attachments">
                                           <FolderOpen size={14} />
                                         </button>
+                                        {/* Forward — new */}
+                                        {canModifyDocuments && (
+                                          <button
+                                            onClick={() => handleForwardAttachment(att)}
+                                            className="inline-flex items-center justify-center px-1.5 py-1.5 text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
+                                            title="Forward attachment">
+                                            <Send size={14} />
+                                          </button>
+                                        )}
                                         {canModifyDocuments && (
                                           <>
+                                            {/* Rename */}
                                             <button
                                               onClick={() => { setEditingAttachmentId(att.id); setEditingAttachmentName(att.title || att.file_name || '') }}
                                               className="inline-flex items-center justify-center px-1.5 py-1.5 text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 hover:border-emerald-300 transition"
                                               title="Rename attachment">
                                               <Pencil size={14} />
                                             </button>
+                                            {/* Delete */}
                                             <button onClick={() => deleteAttDisc.open(att)}
                                               className="inline-flex items-center justify-center px-1.5 py-1.5 text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 hover:border-red-300 transition"
                                               title="Delete attachment">
@@ -1441,8 +1450,7 @@ export default function MasterPage() {
         suggestedLevel={suggestedAttachmentLevel}
       />
 
-      
-
+      {/* Forward modal — root document */}
       {selection && (
         <ForwardDocumentModal
           open={forwardModalOpen}
@@ -1461,6 +1469,29 @@ export default function MasterPage() {
           }}
           attachmentsMap={attachmentsMap as any}
           onForwarded={() => setForwardModalOpen(false)}
+          senderRole={user?.role as AdminRole}
+        />
+      )}
+
+      {/* Forward modal — individual attachment */}
+      {forwardAttachment && (
+        <ForwardDocumentModal
+          open={forwardAttModalOpen}
+          onClose={() => { setForwardAttModalOpen(false); setForwardAttachment(null) }}
+          document={{
+            id:            forwardAttachment.id,
+            title:         displayName(forwardAttachment),
+            type:          'Master Document',
+            documentType:  'master_document',
+            gdriveFileId:  forwardAttachment.gdrive_file_id,
+            gdriveUrl:     forwardAttachment.gdrive_url,
+            poolAccountId: forwardAttachment.pool_account_id,
+            fileName:      forwardAttachment.file_name       ?? undefined,
+            fileSizeBytes: forwardAttachment.file_size_bytes ?? undefined,
+            mimeType:      forwardAttachment.mime_type       ?? undefined,
+          }}
+          attachmentsMap={attachmentsMap as any}
+          onForwarded={() => { setForwardAttModalOpen(false); setForwardAttachment(null) }}
           senderRole={user?.role as AdminRole}
         />
       )}
@@ -1492,28 +1523,27 @@ export default function MasterPage() {
         onCancel={archiveDisc.close}
       />
 
-     
-        <ConfirmDialog
-          open={deleteAttDisc.isOpen}
-          title="Delete Attachment"
-          message={`Delete "${deleteAttDisc.payload ? displayName(deleteAttDisc.payload) : ''}" permanently? This cannot be undone.`}
-          confirmLabel="Delete"
-          variant="danger"
-          isLoading={isDeleting}        // ← add
-          onConfirm={handleDeleteAttachment}
-          onCancel={deleteAttDisc.close}
-        />
+      <ConfirmDialog
+        open={deleteAttDisc.isOpen}
+        title="Delete Attachment"
+        message={`Delete "${deleteAttDisc.payload ? displayName(deleteAttDisc.payload) : ''}" permanently? This cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        isLoading={isDeleting}
+        onConfirm={handleDeleteAttachment}
+        onCancel={deleteAttDisc.close}
+      />
 
-        <ConfirmDialog
-          open={deleteDisc.isOpen}
-          title="Delete Document"
-          message={`Delete "${deleteDisc.payload}" permanently? This cannot be undone.`}
-          confirmLabel="Delete"
-          variant="danger"
-          isLoading={isDeleting}        // ← add
-          onConfirm={handleDeleteDoc}
-          onCancel={deleteDisc.close}
-        />
+      <ConfirmDialog
+        open={deleteDisc.isOpen}
+        title="Delete Document"
+        message={`Delete "${deleteDisc.payload}" permanently? This cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        isLoading={isDeleting}
+        onConfirm={handleDeleteDoc}
+        onCancel={deleteDisc.close}
+      />
     </>
   )
 }
