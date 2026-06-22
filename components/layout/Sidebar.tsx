@@ -48,11 +48,18 @@ const VIEWER_NAV: NavItem[] = [
 
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH for components/layout/Sidebar.tsx
+// Replace the existing ADMIN_NAV array with this one.
+// Everything else in Sidebar.tsx stays exactly the same.
+// ─────────────────────────────────────────────────────────────────────────────
+
 const ADMIN_NAV: NavItem[] = [
-  { label: 'Log History',     icon: '📊', href: '/admin/log-history' },
-  { label: 'User Management', icon: '👥', href: '/admin/user-management' },
-  { label: 'Drive Storage',   icon: '☁️', href: '/admin/gdrive' }, 
-  { label: 'Backup & Recovery', icon: '🛡️', href: '/admin/backup-recovery' },
+  { label: 'Log History',      icon: '📊', href: '/admin/log-history' },
+  { label: 'User Management',  icon: '👥', href: '/admin/user-management' },
+  { label: 'Drive Storage',    icon: '☁️', href: '/admin/gdrive' },
+  { label: 'Backup & Recovery',icon: '🛡️', href: '/admin/backup-recovery' },
+  { label: 'System Settings',  icon: '⚙️', href: '/admin/system-settings' },  // ← added
 ]
 
 const DPDA_NAV: NavItem[] = [

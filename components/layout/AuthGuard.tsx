@@ -8,7 +8,7 @@ import { isAllowedAdminPath } from '@/lib/adminRouteAccess'
 import type { SessionRole } from '@/lib/adminRouteAccess'
 import { getDefaultAdminRoute } from '@/lib/adminRouteAccess'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { clearLocalToken, isSessionValid } from '@/lib/sessionLock'
+import { clearLocalToken, checkSessionStatus } from '@/lib/sessionLock'
 import { createClient } from '@/lib/supabase/client'
 
 interface AuthGuardProps {
@@ -16,8 +16,8 @@ interface AuthGuardProps {
   children: React.ReactNode
 }
 
-const LOADING_TIMEOUT_MS        = 8_000
-const SESSION_CHECK_INTERVAL_MS = 30_000
+const LOADING_TIMEOUT_MS             = 8_000
+const SESSION_CHECK_INTERVAL_MS      = 30_000
 const INITIAL_SESSION_CHECK_DELAY_MS = 3_000
 
 export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
@@ -39,7 +39,9 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
     return () => { if (timerRef.current) clearTimeout(timerRef.current) }
   }, [isLoading])
 
-  // ── Session lock polling ───────────────────────────────────────────────────
+  // ── Session lock + expiry polling ─────────────────────────────────────────
+  // Runs every 30 seconds. Think of it like a security guard checking your
+  // badge — if it's been stolen or expired, you get escorted out.
   useEffect(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current)
@@ -50,25 +52,41 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
 
     let cancelled = false
 
-    const checkSessionLock = async () => {
+    const checkSession = async () => {
       if (cancelled) return
-      const valid = await isSessionValid(user.role)
-      if (cancelled || valid) return
 
-      // ── CRITICAL FIX ──────────────────────────────────────────────────────
-      // Use scope:'local' so we only clear THIS browser's Supabase session.
-      // The default (scope:'global') revokes the token server-side, which
-      // invalidates the JWT for ALL browsers logged in as this user — causing
-      // Browser 2 to also get logged out when it was the one that should stay.
+      const status = await checkSessionStatus(user.role)
+      if (cancelled) return
+
+      if (status === 'valid') return  // all good, nothing to do
+
+      // Clear the local token no matter why we're logging out
       clearLocalToken()
+
+      // ── Scope: 'local' ────────────────────────────────────────────────────
+      // We only clear THIS browser's Supabase session.
+      // Using 'global' would revoke the JWT server-side and log out ALL
+      // browsers, which is wrong for the 'taken' case (Browser 2 should stay).
       await createClient().auth.signOut({ scope: 'local' })
-      router.replace('/login?reason=session_taken')
+
+      if (cancelled) return
+
+      if (status === 'expired') {
+        // Session timed out — tell the login page to show an expiry message
+        router.replace('/login?reason=session_expired')
+      } else if (status === 'taken') {
+        // Another browser logged in with the same role
+        router.replace('/login?reason=session_taken')
+      } else {
+        // 'invalid' — no token or DB row; just send back to login
+        router.replace('/login')
+      }
     }
 
     const delayRef = setTimeout(() => {
-      void checkSessionLock()
+      void checkSession()
       intervalRef.current = setInterval(() => {
-        void checkSessionLock()
+        void checkSession()
       }, SESSION_CHECK_INTERVAL_MS)
     }, INITIAL_SESSION_CHECK_DELAY_MS)
 
@@ -97,10 +115,10 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
   }, [user, isLoading, timedOut, router, pathname])
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  if (isLoading && !timedOut)                                        return <LoadingSpinner fullPage />
-  if (timedOut && !user)                                             return <LoadingSpinner fullPage />
-  if (!user)                                                         return <LoadingSpinner fullPage />
-  if (pathname && !isAllowedAdminPath(pathname, user.role as SessionRole)) return <LoadingSpinner fullPage />
+  if (isLoading && !timedOut)                                                return <LoadingSpinner fullPage />
+  if (timedOut && !user)                                                     return <LoadingSpinner fullPage />
+  if (!user)                                                                 return <LoadingSpinner fullPage />
+  if (pathname && !isAllowedAdminPath(pathname, user.role as SessionRole))   return <LoadingSpinner fullPage />
 
   return <>{children}</>
 }

@@ -24,16 +24,17 @@ const P2_DOC_ROUTES = [
 ] as const
 
 const ADMIN_ROUTES = [
-  '/admin/log-history', '/admin/user-management',
-  '/admin/gdrive', '/admin/backup-recovery',
+  '/admin/log-history',
+  '/admin/user-management',
+  '/admin/gdrive',
+  '/admin/backup-recovery',
+  '/admin/system-settings',   // ← new: session expiry & system config
 ] as const
 
 const DPDA_ROUTES   = ['/admin/inbox'] as const
 
 // Roles that use the full docs nav (includes 201 files)
 const FULL_DOC_ROLES = ['P1', 'PD'] as const
-// Roles with their own special nav
-const SPECIAL_CASES  = ['admin', 'DPDA', 'DPDO', 'P2'] as const
 
 export function getDefaultAdminRoute(role: SessionRole): string {
   if (role === 'admin')               return '/admin/log-history'
