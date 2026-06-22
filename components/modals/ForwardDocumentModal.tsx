@@ -1,17 +1,27 @@
 'use client'
 // components/modals/ForwardDocumentModal.tsx
 //
-// FIX: Added pre-flight Drive metadata validation.
-//   Before this fix, forwarding a document that had no Drive metadata
+// FIX (this revision): recipient list is no longer hardcoded.
+//   Previously ALL_FORWARDABLE_ROLES was a fixed array and ROLE_LABELS was a
+//   fixed lookup object — adding a new role through the dynamic account
+//   system (the `role_registry` table) would NOT show up here until a
+//   developer manually edited this file and redeployed.
+//
+//   Now the modal calls the same `get_active_roles()` RPC that the login
+//   page and sidebar already use. Any role created through "Create Account"
+//   appears here automatically — no code change, no redeploy.
+//
+// PREVIOUS FIX (kept as-is): Added pre-flight Drive metadata validation.
+//   Before that fix, forwarding a document that had no Drive metadata
 //   (gdrive_file_id = "" or pool_account_id = "") would silently create a
 //   forwarded_documents row with empty strings. The recipient would then hit
 //   a 422 "missing Drive metadata" error when trying to save it.
 //
-//   Now the modal checks upfront whether the document has valid Drive fields.
+//   The modal checks upfront whether the document has valid Drive fields.
 //   If not, it shows a clear inline warning and blocks the forward entirely,
 //   telling the user to re-upload the document via the Drive pool first.
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { Modal }        from '@/components/ui/Modal'
 import { Button }       from '@/components/ui/Button'
 import { Badge }        from '@/components/ui/Badge'
@@ -45,14 +55,11 @@ interface ForwardDocumentModalProps {
   senderRole:   AdminRole
 }
 
-const ALL_FORWARDABLE_ROLES: AdminRole[] = [
-  'DPDA', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'WCPD', 'PPSMU'
-]
-
-const ROLE_LABELS: Partial<Record<AdminRole, string>> = {
-  DPDA: 'Deputy Director for Administration',
-  P1:   'Records Officer',
-  P2:   'Classified Documents',
+// ── Shape returned by the `get_active_roles` RPC ───────────────────────────
+// Matches the columns selected in supabase/migrations/011_dynamic_roles.sql.
+interface ActiveRole {
+  role:         string
+  display_name: string
 }
 
 // ── Helper: checks whether a string field actually has a usable value ─────────
@@ -74,15 +81,54 @@ export function ForwardDocumentModal({
   const [isForwarding, setIsForwarding]             = useState(false)
   const { toast } = useToast()
 
+  // ── Dynamic recipient list ──────────────────────────────────────────────
+  // Loaded from `role_registry` (via the `get_active_roles` RPC) instead of
+  // a hardcoded array. Same source the login page and sidebar already read
+  // from, so any role created through "Create Account" shows up here
+  // automatically.
+  //
+  // Fetched every time the modal opens (not once on page load) so a role
+  // created moments ago is available immediately, without a page refresh.
+  const [allRoles, setAllRoles]         = useState<ActiveRole[]>([])
+  const [rolesLoading, setRolesLoading] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+
+    let cancelled = false
+    setRolesLoading(true)
+
+    async function loadRoles() {
+      const { createClient } = await import('@/lib/supabase/client')
+      const supabase = createClient()
+      const { data, error } = await supabase.rpc('get_active_roles')
+
+      if (cancelled) return
+
+      if (error) {
+        console.error('[ForwardDocumentModal] Failed to load roles:', error.message)
+        toast.error('Could not load the recipient list. Please try again.')
+      } else if (data) {
+        setAllRoles(data as ActiveRole[])
+      }
+      setRolesLoading(false)
+    }
+
+    void loadRoles()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
   // ── Pre-flight: does this document have the Drive metadata needed for saving?
   // If either field is missing/empty the recipient will hit a 422 on save.
   // We surface this now so the sender knows to re-upload before forwarding.
   const missingDriveMetadata =
     !hasValue(document.gdriveFileId) || !hasValue(document.poolAccountId)
 
+  // Recipients = every active role except whoever is currently sending
   const availableRecipients = useMemo(
-    () => ALL_FORWARDABLE_ROLES.filter(r => r !== senderRole),
-    [senderRole]
+    () => allRoles.filter(r => r.role !== senderRole),
+    [allRoles, senderRole]
   )
 
   const attachments = useMemo(
@@ -94,7 +140,7 @@ export function ForwardDocumentModal({
     setSelectedRecipients(
       selectedRecipients.size === availableRecipients.length
         ? new Set()
-        : new Set(availableRecipients)
+        : new Set(availableRecipients.map(r => r.role))
     )
   }
 
@@ -177,15 +223,11 @@ export function ForwardDocumentModal({
         </div>
 
         {/*
-          ── FIX: Drive metadata warning banner ────────────────────────────────
+          ── Drive metadata warning banner ────────────────────────────────────
           Shown when the document has no gdrive_file_id or pool_account_id.
           This means it was uploaded before the Drive pool system was set up
           (or the upload failed silently). Forwarding it would create a row
           the recipient can never save.
-
-          The user needs to delete and re-upload the document through the
-          normal "+ Upload" / "+ New SO" / "+ Add Entry" flow so it gets
-          proper Drive metadata before it can be forwarded.
         */}
         {missingDriveMetadata && (
           <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-300 rounded-lg">
@@ -220,32 +262,46 @@ export function ForwardDocumentModal({
             <div className="flex items-center gap-2 mb-2.5">
               <Users className="w-3.5 h-3.5 text-slate-600" />
               <label className="text-sm font-medium text-slate-900">Select Recipients</label>
-              <Button variant="ghost" size="sm" onClick={handleSelectAll} className="ml-auto text-xs">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleSelectAll}
+                className="ml-auto text-xs"
+                disabled={rolesLoading || availableRecipients.length === 0}
+              >
                 {selectedRecipients.size === availableRecipients.length ? 'Deselect All' : 'Select All'}
               </Button>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              {availableRecipients.map(role => (
-                <label
-                  key={role}
-                  className="flex items-center gap-2 p-2.5 border rounded-lg hover:bg-slate-50 cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedRecipients.has(role)}
-                    onChange={() => handleToggle(role)}
-                    className="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
-                  />
-                  <div>
-                    <span className="text-sm font-medium text-slate-900">{role}</span>
-                    {ROLE_LABELS[role] && (
-                      <span className="text-xs text-slate-500 ml-1.5">{ROLE_LABELS[role]}</span>
-                    )}
-                  </div>
-                </label>
-              ))}
-            </div>
+            {rolesLoading ? (
+              <p className="text-xs text-slate-500 py-4 text-center">Loading recipients…</p>
+            ) : availableRecipients.length === 0 ? (
+              <p className="text-xs text-slate-500 py-4 text-center">
+                No other active accounts to forward to.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {availableRecipients.map(({ role, display_name }) => (
+                  <label
+                    key={role}
+                    className="flex items-center gap-2 p-2.5 border rounded-lg hover:bg-slate-50 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedRecipients.has(role)}
+                      onChange={() => handleToggle(role)}
+                      className="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-slate-900">{role}</span>
+                      {display_name && (
+                        <span className="text-xs text-slate-500 ml-1.5">{display_name}</span>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
 
             {selectedRecipients.size > 0 && (
               <div className="mt-3">
