@@ -165,7 +165,7 @@ export async function createAccount(input: {
   title:        string
   initials:     string
   avatar_color: string
-  nav_group:    'documents' | 'admin' | 'dpda'
+  nav_group:    'documents' | 'admin' | 'dpda-dpdo'
   can_upload:   boolean
   is_viewer_only: boolean
 }) {

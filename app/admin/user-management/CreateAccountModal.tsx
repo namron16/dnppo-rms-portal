@@ -21,7 +21,7 @@ export function CreateAccountModal({ onClose, onSuccess }: Props) {
     title:         '',
     initials:      '',
     avatar_color:  '#2563eb',
-    nav_group:     'documents' as 'documents' | 'admin' | 'dpda',
+    nav_group:     'documents' as 'documents' | 'admin' | 'dpda-dpdo',
     can_upload:    true,
     is_viewer_only: true,
   })
@@ -137,11 +137,11 @@ export function CreateAccountModal({ onClose, onSuccess }: Props) {
           <div>
             <label className={labelCls}>Navigation Group</label>
             <select value={form.nav_group}
-              onChange={e => set('nav_group', e.target.value as 'documents' | 'admin' | 'dpda')}
+              onChange={e => set('nav_group', e.target.value as 'documents' | 'admin' | 'dpda-dpdo')}
               className={inputCls}>
-              <option value="documents">Documents (P1–P10 style nav)</option>
-              <option value="dpda">DPDA Inbox nav</option>
-              <option value="admin">Admin-only nav (log history, user management)</option>
+              <option value="documents">Documents (P1–P10, etc.)</option>
+              <option value="dpda-dpdo">DPDA/DPDO</option>
+              <option value="admin">Admin-only (log history, user management, etc.)</option>
             </select>
             <p className="text-[10px] text-slate-400 mt-1">
               Controls which sidebar menu items the account sees.
