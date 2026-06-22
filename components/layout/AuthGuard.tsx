@@ -4,9 +4,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
-import { isAllowedAdminPath } from '@/lib/adminRouteAccess'
-import type { SessionRole } from '@/lib/adminRouteAccess'
-import { getDefaultAdminRoute } from '@/lib/adminRouteAccess'
+import { isAllowedAdminPath, getDefaultAdminRoute } from '@/lib/adminRouteAccess'
+import type { RoleInfo } from '@/lib/adminRouteAccess'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { clearLocalToken, checkSessionStatus } from '@/lib/sessionLock'
 import { createClient } from '@/lib/supabase/client'
@@ -40,8 +39,6 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
   }, [isLoading])
 
   // ── Session lock + expiry polling ─────────────────────────────────────────
-  // Runs every 30 seconds. Think of it like a security guard checking your
-  // badge — if it's been stolen or expired, you get escorted out.
   useEffect(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current)
@@ -58,27 +55,18 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
       const status = await checkSessionStatus(user.role)
       if (cancelled) return
 
-      if (status === 'valid') return  // all good, nothing to do
+      if (status === 'valid') return
 
-      // Clear the local token no matter why we're logging out
       clearLocalToken()
-
-      // ── Scope: 'local' ────────────────────────────────────────────────────
-      // We only clear THIS browser's Supabase session.
-      // Using 'global' would revoke the JWT server-side and log out ALL
-      // browsers, which is wrong for the 'taken' case (Browser 2 should stay).
       await createClient().auth.signOut({ scope: 'local' })
 
       if (cancelled) return
 
       if (status === 'expired') {
-        // Session timed out — tell the login page to show an expiry message
         router.replace('/login?reason=session_expired')
       } else if (status === 'taken') {
-        // Another browser logged in with the same role
         router.replace('/login?reason=session_taken')
       } else {
-        // 'invalid' — no token or DB row; just send back to login
         router.replace('/login')
       }
     }
@@ -103,22 +91,38 @@ export function AuthGuard({ requiredRole = 'any', children }: AuthGuardProps) {
   // ── Route guard ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (isLoading && !timedOut) return
-
     if (!user) {
       router.replace('/login')
       return
     }
 
-    if (pathname && !isAllowedAdminPath(pathname, user.role as SessionRole)) {
-      router.replace(getDefaultAdminRoute(user.role as SessionRole))
+    // FIX: build a RoleInfo object from the user so the route checker uses
+    // nav_group instead of matching on the hardcoded role name string.
+    // Without this, dynamically created roles (e.g. 'TESTACCOUNT') are not
+    // recognized and the guard redirects in a loop → infinite loading spinner.
+    const roleInfo: RoleInfo = {
+      role:           user.role,
+      nav_group:      user.nav_group,
+      is_viewer_only: user.is_viewer_only,
+    }
+
+    if (pathname && !isAllowedAdminPath(pathname, roleInfo)) {
+      router.replace(getDefaultAdminRoute(roleInfo))
     }
   }, [user, isLoading, timedOut, router, pathname])
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  if (isLoading && !timedOut)                                                return <LoadingSpinner fullPage />
-  if (timedOut && !user)                                                     return <LoadingSpinner fullPage />
-  if (!user)                                                                 return <LoadingSpinner fullPage />
-  if (pathname && !isAllowedAdminPath(pathname, user.role as SessionRole))   return <LoadingSpinner fullPage />
+  if (isLoading && !timedOut)  return <LoadingSpinner fullPage />
+  if (timedOut && !user)       return <LoadingSpinner fullPage />
+  if (!user)                   return <LoadingSpinner fullPage />
+
+  // FIX: same RoleInfo check here — don't block render for valid routes
+  const roleInfo: RoleInfo = {
+    role:           user.role,
+    nav_group:      user.nav_group,
+    is_viewer_only: user.is_viewer_only,
+  }
+  if (pathname && !isAllowedAdminPath(pathname, roleInfo)) return <LoadingSpinner fullPage />
 
   return <>{children}</>
 }
