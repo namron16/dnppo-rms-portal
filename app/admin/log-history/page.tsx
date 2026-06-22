@@ -81,7 +81,7 @@ const ACTION_CONFIG: Record<string, { label: string; icon: string; badgeCls: str
   reject_request:         { label: 'Reject Request',  icon: '🚫', badgeCls: 'bg-red-100 text-red-700 border-red-200' },
   forward_document:       { label: 'Forward',         icon: '➡️', badgeCls: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
   forward_attachment:     { label: 'Forward',         icon: '➡️', badgeCls: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
-  add_attachment:         { label: 'Create',          icon: '📎', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
+  add_attachment:         { label: 'Attach',          icon: '📎', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
   create_journal:         { label: 'Create',          icon: '📒', badgeCls: 'bg-amber-100 text-amber-700 border-amber-200' },
   create_personnel:       { label: 'Create',          icon: '👤', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
   create_special_order:   { label: 'Create',          icon: '📋', badgeCls: 'bg-blue-100 text-blue-700 border-blue-200' },
@@ -103,9 +103,9 @@ const ACTION_CONFIG: Record<string, { label: string; icon: string; badgeCls: str
   reset_password:         { label: 'Reset Password',  icon: '🔐', badgeCls: 'bg-orange-100 text-orange-800 border-orange-300' },
 
   // ── NEW: Google Drive management ───────────────────────────────────────────
-  gdrive_connect:         { label: 'Drive Connect',   icon: '🔗', badgeCls: 'bg-blue-100 text-blue-800 border-blue-300' },
+  gdrive_connect:         { label: 'Drive Connect',   icon: '🔌', badgeCls: 'bg-blue-100 text-blue-800 border-blue-300' },
   gdrive_reconnect:       { label: 'Drive Reconnect', icon: '🔄', badgeCls: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
-  gdrive_disconnect:      { label: 'Drive Disconnect',icon: '🔌', badgeCls: 'bg-red-100 text-red-800 border-red-300' },
+  gdrive_disconnect:      { label: 'Drive Disconnect',icon: '⛓️‍💥', badgeCls: 'bg-red-100 text-red-800 border-red-300' },
   trigger_backup: { label: 'Backup',  icon: '💾', badgeCls: 'bg-slate-100 text-slate-700 border-slate-200' },
   restore_backup: { label: 'Restore', icon: '↩️', badgeCls: 'bg-teal-100 text-teal-700 border-teal-200' },
 }
