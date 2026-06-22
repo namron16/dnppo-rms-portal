@@ -21,6 +21,7 @@ import { ToolbarSelect }        from '@/components/ui/Toolbar'
 import { Modal }                from '@/components/ui/Modal'
 import { Pagination }           from '@/components/ui/Pagination'
 import { AddSpecialOrderModal } from '@/components/modals/AddSpecialOrderModal'
+import { AddSpecialOrderAttachmentModal, type SOAttachmentUploadResult } from '@/components/modals/AddSpecialOrderAttachmentModal'
 import { ForwardDocumentModal } from '@/components/modals/ForwardDocumentModal'
 import { useModal, useDisclosure, usePagination } from '@/hooks'
 import { useToast }             from '@/components/ui/Toast'
@@ -37,7 +38,7 @@ import {
 } from '@/lib/data'
 import { supabase }             from '@/lib/supabase'
 import { statusBadgeClass }     from '@/lib/utils'
-import { logAction, logDeleteDocument, logRenameAttachment, logArchiveDocument } from '@/lib/adminLogger'
+import { logAction, logDeleteDocument, logRenameAttachment, logArchiveDocument, logAddAttachment } from '@/lib/adminLogger'
 import { useAuth } from '@/lib/auth'
 import type { AdminRole } from '@/lib/auth'
 import { canUploadDocuments } from '@/lib/permissions'
@@ -481,7 +482,8 @@ function AttachmentsTablePanel({
   navStack, currentEntry, attachments, allAttachments,
   onUpload, uploadingId, onForwardOrder, onArchiveOrder, onDeleteOrder,
   canEditOrder, onEditOrder, onViewFile, onDownloadFile, onPrintFile,
-  onDeleteAttachment, onDrillDown, onNavigateTo, onRenameAttachment,
+  onDeleteAttachment, onDrillDown, onNavigateTo, onRenameAttachment,onRequestAttach,
+  
 }: {
   navStack: NavEntry[]
   currentEntry: NavEntry
@@ -501,6 +503,7 @@ function AttachmentsTablePanel({
   onDrillDown: (att: SOAttachment) => void
   onNavigateTo: (index: number) => void
   onRenameAttachment: (att: SOAttachment, newTitle: string) => Promise<boolean>
+  onRequestAttach: () => void
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [editingId,   setEditingId]   = useState<string | null>(null)
@@ -655,7 +658,7 @@ function AttachmentsTablePanel({
             )}
             {canEditOrder && (
               <Button variant="primary" size="sm" disabled={!!uploadingId}
-                onClick={() => fileInputRef.current?.click()}>
+                onClick={onRequestAttach}>
                 + Attach file
               </Button>
             )}
@@ -675,7 +678,7 @@ function AttachmentsTablePanel({
               {canEditOrder ? 'Click + Attach file to upload supporting documents.' : 'View-only access — no attachments yet.'}
             </p>
             {canEditOrder && (
-              <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+              <Button variant="outline" size="sm" onClick={onRequestAttach}>
                 + Attach file
               </Button>
             )}
@@ -894,6 +897,9 @@ export default function AdminOrdersPage() {
   const deleteDisc     = useDisclosure<SOWithUrl>()
   const editOrderDisc  = useDisclosure<SOWithUrl>()
   const [forwardModalOpen, setForwardModalOpen] = useState(false)
+  const [soAttachModalOpen,    setSoAttachModalOpen]    = useState(false)
+  const [soAttachParentOrderId, setSoAttachParentOrderId] = useState<string>('')
+  const [soAttachParentAttId,  setSoAttachParentAttId]  = useState<string | null>(null)
 
   const currentEntry: NavEntry | null = navStack.length > 0 ? navStack[navStack.length - 1] : null
 
@@ -1139,6 +1145,63 @@ async function handleAdd(newSO: SOWithUrl) {
     editOrderDisc.close()
   }
 
+
+  async function handleSOAttachmentModalResult(result: SOAttachmentUploadResult) {
+  if (!user || !selectedOrder) return
+
+  const parentAttId = soAttachParentAttId
+  setUploadingId(parentAttId ?? soAttachParentOrderId)
+
+  const parentDepth = parentAttId
+    ? (() => {
+        for (const list of attachmentsMap.values()) {
+          const parent = list.find(a => a.id === parentAttId)
+          if (parent) return parent.depth + 1
+        }
+        return 1
+      })()
+    : 0
+
+  const { supabase: sb } = await import('@/lib/supabase')
+  const { data: newAtt, error } = await sb
+    .from('special_order_attachments')
+    .insert({
+      special_order_id: soAttachParentOrderId,
+      parent_id:        parentAttId,
+      depth:            parentDepth,
+      // Rich title: "reference – subject" so the attachment is self-describing
+      title:            `${result.reference} – ${result.subject}`,
+      file_name:        result.fileName,
+      file_size_bytes:  result.fileSizeBytes,
+      mime_type:        result.mimeType,
+      gdrive_file_id:   result.gdriveFileId,
+      gdrive_url:       result.gdriveUrl,
+      pool_account_id:  result.poolAccountId,
+    })
+    .select()
+    .single()
+
+  if (error || !newAtt) {
+    toast.error('Attachment uploaded to Drive but could not save metadata. Please try again.')
+  } else {
+    const mapKey = parentAttId ?? soAttachParentOrderId
+    setAttachmentsMap(prev => {
+      const next = new Map(prev)
+      const existing = next.get(mapKey) ?? []
+      if (existing.some(a => a.id === newAtt.id)) return prev
+      next.set(mapKey, [...existing, newAtt])
+      return next
+    })
+
+    await logAddAttachment(
+        `${result.reference} – ${result.subject}`,
+        selectedOrder.reference
+      )
+  }
+
+  setUploadingId(null)
+}
+
   async function handleDeleteAttachment() {
   const att = deleteAttDisc.payload
   if (!att) return
@@ -1336,6 +1399,15 @@ async function handleAdd(newSO: SOWithUrl) {
                     onDrillDown={handleDrillDown}
                     onNavigateTo={handleNavigateTo}
                     onRenameAttachment={handleRenameAttachment}
+                    onRequestAttach={() => {
+                         if (!selectedOrder) return
+                         const parentAttId = currentEntry?.kind === 'attachment'
+                           ? currentEntry.att.id
+                           : null
+                         setSoAttachParentOrderId(selectedOrder.id)
+                        setSoAttachParentAttId(parentAttId)
+                        setSoAttachModalOpen(true)
+                       }}
                   />
                 </div>
               )}
@@ -1352,6 +1424,14 @@ async function handleAdd(newSO: SOWithUrl) {
         order={editOrderDisc.payload ?? null}
         onClose={editOrderDisc.close}
         onSave={handleSaveOrder}
+      />
+
+      <AddSpecialOrderAttachmentModal
+        open={soAttachModalOpen}
+        onClose={() => setSoAttachModalOpen(false)}
+        onAttached={handleSOAttachmentModalResult}
+        parentOrderId={soAttachParentOrderId}
+        parentAttId={soAttachParentAttId}
       />
 
       {selectedOrder && (

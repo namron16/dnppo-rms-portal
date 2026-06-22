@@ -27,6 +27,7 @@ import { ToolbarSelect }    from '@/components/ui/Toolbar'
 import { Modal }            from '@/components/ui/Modal'
 import { Pagination }       from '@/components/ui/Pagination'
 import { AddDocumentModal } from '@/components/modals/AddDocumentModal'
+import {AddMasterDocAttachmentModal, type AttachmentUploadResult} from '@/components/modals/AddMasterDocAttachmentModal'
 import { ApprovalWorkflowModal }  from '@/components/modals/ApprovalWorkflowModal'
 import { ForwardDocumentModal } from '@/components/modals/ForwardDocumentModal'
 import { useModal, useDisclosure, usePagination } from '@/hooks'
@@ -46,7 +47,7 @@ import {
   createApproval,
   type DocumentApproval,
 } from '@/lib/rbac'
-import { logDeleteDocument, logEditDocument, logRenameAttachment, logArchiveDocument } from '@/lib/adminLogger'
+import { logDeleteDocument, logEditDocument, logRenameAttachment, logArchiveDocument, logAddAttachment } from '@/lib/adminLogger'
 import { hasFullDocumentAccess, canUploadDocuments } from '@/lib/permissions'
 import type { MasterDocument, DocLevel } from '@/types'
 import type { AdminRole } from '@/lib/auth'
@@ -493,6 +494,9 @@ export default function MasterPage() {
   const [renamingAttachmentId,  setRenamingAttachmentId]  = useState<string | null>(null)
   const [isArchiving,           setIsArchiving]           = useState(false)
   const [isDeleting,            setIsDeleting]            = useState(false)
+  const [attachModalOpen,   setAttachModalOpen]   = useState(false)
+  const [attachParentAttId, setAttachParentAttId] = useState<string | null>(null)
+  const [attachParentDocId, setAttachParentDocId] = useState<string>('')
 
   const deleteAttDisc  = useDisclosure<DocAttachment>()
   const uploadModal    = useModal()
@@ -790,6 +794,60 @@ export default function MasterPage() {
     return true
   }
 
+  async function handleAttachmentModalResult(result: AttachmentUploadResult) {
+  if (!user || !selection) return
+
+  setUploadingId(attachParentAttId ?? attachParentDocId)
+
+  // Build a synthetic File-like object isn't needed — we already have
+  // the Drive result.  We insert the attachment row directly.
+  const parentDepth = attachParentAttId
+    ? (() => {
+        for (const list of attachmentsMap.values()) {
+          const parent = list.find(a => a.id === attachParentAttId)
+          if (parent) return parent.depth + 1
+        }
+        return 1
+      })()
+    : 0
+
+  const { data: newAtt, error } = await (await import('@/lib/supabase')).supabase
+    .from('master_document_attachments')
+    .insert({
+      master_document_id: attachParentDocId,
+      parent_id:          attachParentAttId,
+      depth:              parentDepth,
+      // Use the rich title from the modal, not just the file name
+      title:              result.title,
+      file_name:          result.fileName,
+      file_size_bytes:    result.fileSizeBytes,
+      mime_type:          result.mimeType,
+      gdrive_file_id:     result.gdriveFileId,
+      gdrive_url:         result.gdriveUrl,
+      pool_account_id:    result.poolAccountId,
+    })
+    .select()
+    .single()
+
+  if (error || !newAtt) {
+    toast.error('Attachment uploaded to Drive but could not save metadata. Please try again.')
+  } else {
+    const mapKey = attachParentAttId ?? attachParentDocId
+    setAttachmentsMap(prev => {
+      const next = new Map(prev)
+      const existing = next.get(mapKey) ?? []
+      if (existing.some(a => a.id === newAtt.id)) return prev
+      next.set(mapKey, [...existing, newAtt])
+      return next
+    })
+    // toast already shown by modal
+
+    await logAddAttachment(result.title, selection.title)
+  }
+
+  setUploadingId(null)
+}
+
   const countActiveAttachments = useCallback((parentId: string): number => {
     const children = attachmentsMap.get(parentId) ?? []
     return children.reduce((total, att) => total + 1 + countActiveAttachments(att.id), 0)
@@ -876,6 +934,18 @@ export default function MasterPage() {
   function handleNavigateTo(index: number) {
     setAttachmentNavStack(prev => prev.slice(0, index + 1))
   }
+
+  const suggestedAttachmentLevel: 'REGIONAL' | 'PROVINCIAL' | 'STATION' = (() => {
+      if (!currentAttachmentEntry) return 'PROVINCIAL'
+      if (currentAttachmentEntry.kind === 'attachment') {
+        // We're one level deep — suggest next level down
+        const att = currentAttachmentEntry.att as any
+        if (att.level === 'REGIONAL') return 'PROVINCIAL'
+        if (att.level === 'PROVINCIAL') return 'STATION'
+        return 'STATION'
+      }
+      return 'PROVINCIAL'
+    })()
 
   return (
     <>
@@ -984,49 +1054,116 @@ export default function MasterPage() {
                     <Breadcrumb navStack={attachmentNavStack} onNavigateTo={handleNavigateTo} />
 
                     {/* Document header */}
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                          <h2 className="text-lg font-extrabold text-slate-800">{selection.title}</h2>
-                          <Badge className={levelBadgeClass(selection.level)}>{selection.level}</Badge>
+                      {/* Document / attachment header */}
+                      {currentAttachmentEntry?.kind === 'attachment' ? (
+                        // ── Drilled into an attachment — mirror Admin Orders style ──
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xl flex-shrink-0">
+                                {fileInfoFromMime(currentAttachmentEntry.att.mime_type, currentAttachmentEntry.att.file_name).icon}
+                              </span>
+                              <h2 className="text-lg font-extrabold text-slate-800 leading-tight truncate">
+                                {displayName(currentAttachmentEntry.att)}
+                              </h2>
+                              <span className="flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
+                                Nested File
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap mt-1">
+                              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
+                                {fileInfoFromMime(currentAttachmentEntry.att.mime_type, currentAttachmentEntry.att.file_name).label}
+                              </span>
+                              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
+                                {formatBytes(currentAttachmentEntry.att.file_size_bytes)}
+                              </span>
+                              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
+                                📅 {new Date(currentAttachmentEntry.att.created_at).toLocaleString('en-PH', {
+                                  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex gap-1.5 flex-shrink-0">
+                            <button
+                              onClick={() => window.open(currentAttachmentEntry.att.gdrive_url, '_blank')}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition">
+                              <Eye size={14} /> View File
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadFile(
+                                currentAttachmentEntry.att.gdrive_url,
+                                getSuggestedFileName(displayName(currentAttachmentEntry.att), currentAttachmentEntry.att.gdrive_url),
+                                `attachment-${currentAttachmentEntry.att.id}`,
+                                currentAttachmentEntry.att.master_document_id
+                              )}
+                              disabled={downloadingKey === `attachment-${currentAttachmentEntry.att.id}`}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition disabled:opacity-60">
+                              <Download size={14} />
+                              {downloadingKey === `attachment-${currentAttachmentEntry.att.id}` ? 'Downloading…' : 'Download'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePrintFile(
+                                currentAttachmentEntry.att.gdrive_url,
+                                displayName(currentAttachmentEntry.att),
+                                currentAttachmentEntry.att.master_document_id
+                              )}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition">
+                              <Printer size={14} /> Print
+                            </button>
+                            {canModifyDocuments && (
+                              <button
+                                onClick={() => deleteAttDisc.open(currentAttachmentEntry.att)}
+                                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
+                                <Trash2 size={14} /> Delete
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500">
-                          {selection.created_at && (
-                            <span className="bg-slate-100 px-2 py-0.5 rounded-full">
-                              📅 {new Date(selection.created_at).toLocaleString('en-PH', {
-                                year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                              })}
-                            </span>
-                          )}
-                          <span className="bg-slate-100 px-2 py-0.5 rounded-full">{selection.type} · {selection.size}</span>
+                      ) : (
+                        // ── Root document header (unchanged) ──
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                              <h2 className="text-lg font-extrabold text-slate-800">{selection.title}</h2>
+                              <Badge className={levelBadgeClass(selection.level)}>{selection.level}</Badge>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500">
+                              {selection.created_at && (
+                                <span className="bg-slate-100 px-2 py-0.5 rounded-full">
+                                  📅 {new Date(selection.created_at).toLocaleString('en-PH', {
+                                    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                                  })}
+                                </span>
+                              )}
+                              <span className="bg-slate-100 px-2 py-0.5 rounded-full">{selection.type} · {selection.size}</span>
+                            </div>
+                          </div>
+                          <div className="flex gap-2 flex-shrink-0 flex-wrap">
+                            {canModifyDocuments && (
+                              <>
+                                <button onClick={() => setForwardModalOpen(true)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition">
+                                  <Send size={16} /> Forward
+                                </button>
+                                <button onClick={editModal.open} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
+                                  <Pencil size={16} /> Edit
+                                </button>
+                                <button onClick={() => archiveDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition">
+                                  <Archive size={16} /> Archive
+                                </button>
+                                <button onClick={() => deleteDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
+                                  <Trash2 size={16} /> Delete
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex gap-2 flex-shrink-0 flex-wrap">
-                        {canModifyDocuments && (
-                          <>
-                            <button onClick={() => setForwardModalOpen(true)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition">
-                              <Send size={16} />
-                              Forward
-                            </button>
-                            <button onClick={editModal.open} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
-                              <Pencil size={16} />
-                              Edit
-                            </button>
-                            <button onClick={() => archiveDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition">
-                              <Archive size={16} />
-                              Archive
-                            </button>
-                            <button onClick={() => deleteDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
-                              <Trash2 size={16} />
-                              Delete
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
+                      )}
 
                     {/* Primary file */}
-                    {selection.fileUrl ? (
+                    {currentAttachmentEntry?.kind !== 'attachment' && selection.fileUrl ?(
                       <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
                         <FileText size={18} className="flex-shrink-0 text-blue-600" />
                         <div className="flex-1 min-w-0">
@@ -1082,7 +1219,12 @@ export default function MasterPage() {
                           />
                           {canModifyDocuments && (
                             <Button variant="primary" size="sm" disabled={!!uploadingId}
-                              onClick={() => attachmentInputRef.current?.click()}>
+                              onClick={() => {
+                                  if (!selection) return
+                                  setAttachParentDocId(selection.id)
+                                  setAttachParentAttId(currentParentAttachment?.id ?? null)
+                                  setAttachModalOpen(true)
+                                }}>
                               + Attach file
                             </Button>
                           )}
@@ -1290,6 +1432,14 @@ export default function MasterPage() {
       {/* Modals */}
       <AddDocumentModal open={uploadModal.isOpen} onClose={uploadModal.close} onAdd={handleAdd} />
       <EditModal doc={selection} open={editModal.isOpen} onClose={editModal.close} onSave={handleSave} />
+      <AddMasterDocAttachmentModal
+        open={attachModalOpen}
+        onClose={() => setAttachModalOpen(false)}
+        onAttached={handleAttachmentModalResult}
+        parentDocId={attachParentDocId}
+        parentAttId={attachParentAttId}
+        suggestedLevel={suggestedAttachmentLevel}
+      />
 
       
 
