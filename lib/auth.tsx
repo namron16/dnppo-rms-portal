@@ -8,8 +8,7 @@ import { clearSession, registerSession }        from './sessionLock'
 import { setAdminActive, setAdminInactive }     from './accessRequests'
 import type { Session, User }                   from '@supabase/supabase-js'
 
-export type AdminRole = string // e.g. 'admin', 'P1', 'PD', 'DPDA', 'DPDO' — defined in DB
-
+export type AdminRole = string
 export type RoleLevel = 'head' | 'deputy' | 'super_admin' | 'viewer' | 'admin'
 
 export interface AdminUser {
@@ -22,6 +21,9 @@ export interface AdminUser {
   initials:    string
   avatarColor: string
   avatarUrl?:  string
+  // FIX: added so AuthGuard can build a RoleInfo object for route checks
+  nav_group:     string
+  is_viewer_only: boolean
   permissions: {
     canUpload:           boolean
     canApproveReview:    boolean
@@ -49,16 +51,23 @@ function permissionsForRole(role: AdminRole): AdminUser['permissions'] {
       return { canUpload: true, canApproveReview: false, canApproveFinal: false,
                canManageUsers: true, canManageVisibility: true, canViewAll: true }
     default:
-      // Any new role gets standard officer permissions
       return { canUpload: true, canApproveReview: false, canApproveFinal: false,
                canManageUsers: false, canManageVisibility: false, canViewAll: true }
   }
 }
 
 function levelForRole(role: AdminRole): RoleLevel {
-  if (role === 'admin')               return 'super_admin'
+  if (role === 'admin')                   return 'super_admin'
   if (role === 'DPDA' || role === 'DPDO') return 'deputy'
   return 'admin'
+}
+
+// FIX: infer nav_group from hardcoded role names as a fallback for accounts
+// that pre-date the dynamic role system (no nav_group in user_metadata yet).
+function inferNavGroup(role: AdminRole): string {
+  if (role === 'admin')                   return 'admin'
+  if (role === 'DPDA' || role === 'DPDO') return 'dpda-dpdo'
+  return 'documents'
 }
 
 interface ProfileRow {
@@ -71,19 +80,28 @@ interface ProfileRow {
   is_active:    boolean
 }
 
-function buildAdminUser(user: User, profile: ProfileRow): AdminUser {
+// FIX: buildAdminUser now accepts user_metadata so it can read nav_group
+// and is_viewer_only from the JWT instead of guessing from the role name.
+function buildAdminUser(
+  user: User,
+  profile: ProfileRow,
+  metadata?: Record<string, unknown>,
+): AdminUser {
   const role = profile.role as AdminRole
   return {
-    id:          user.id,
+    id:             user.id,
     role,
-    email:       user.email ?? '',
-    name:        profile.display_name ?? role,
-    title:       profile.title        ?? role,
-    level:       levelForRole(role),
-    initials:    profile.initials     ?? role.slice(0, 2).toUpperCase(),
-    avatarColor: profile.avatar_color ?? '#6b7280',
-    avatarUrl:   profile.avatar_url   ?? undefined,
-    permissions: permissionsForRole(role),
+    email:          user.email ?? '',
+    name:           profile.display_name ?? role,
+    title:          profile.title        ?? role,
+    level:          levelForRole(role),
+    initials:       profile.initials     ?? role.slice(0, 2).toUpperCase(),
+    avatarColor:    profile.avatar_color ?? '#6b7280',
+    avatarUrl:      profile.avatar_url   ?? undefined,
+    // Read from JWT metadata first, fall back to inference for old accounts
+    nav_group:      (metadata?.nav_group     as string  | undefined) ?? inferNavGroup(role),
+    is_viewer_only: (metadata?.is_viewer_only as boolean | undefined) ?? true,
+    permissions:    permissionsForRole(role),
   }
 }
 
@@ -100,7 +118,8 @@ async function fetchProfile(
       .eq('id', user.id)
       .single()
     if (error || !data) return null
-    return buildAdminUser(user, data as ProfileRow)
+    // FIX: pass user_metadata so nav_group is read from the JWT
+    return buildAdminUser(user, data as ProfileRow, user.user_metadata)
   } catch {
     return null
   }
@@ -118,16 +137,11 @@ export function maskEmail(email: string): string {
 
 // ── Safe sign-out helpers ─────────────────────────────────────────────────────
 
-// LOCAL sign-out: clears this browser's session only.
-// Use this when THIS browser is being kicked by another session taking over.
-// Does NOT revoke the token server-side, so the other browser stays logged in.
 async function safeSignOutLocal(supabase: ReturnType<typeof createClient>): Promise<void> {
   await supabase.auth.signOut({ scope: 'local' })
   await new Promise<void>(r => setTimeout(r, 200))
 }
 
-// GLOBAL sign-out: revokes the token server-side, logs out all browsers.
-// Use this for intentional logouts (disabled account, explicit logout button).
 async function safeSignOutGlobal(supabase: ReturnType<typeof createClient>): Promise<void> {
   await supabase.auth.signOut({ scope: 'global' })
   await new Promise<void>(r => setTimeout(r, 200))
@@ -173,8 +187,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .single()
 
           if (profileRow?.is_active === false) {
-            // Account disabled — global sign-out is correct here because
-            // a disabled account should not be active anywhere.
             await safeSignOutGlobal(supabase)
             if (!cancelled) setIsLoading(false)
             return
@@ -188,13 +200,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setCurrentLogger(adminUser.role, adminUser.id)
             setUser(adminUser)
             setSession(s)
-          } else {
-            if (process.env.NODE_ENV === 'development') {
-              console.warn(
-                '[auth] Session restored but profile fetch returned null. ' +
-                'setCurrentLogger() was NOT called — log calls will be dropped until re-login.'
-              )
-            }
           }
         }
       } catch {
@@ -236,8 +241,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .single()
 
     if (profileRow?.is_active === false) {
-      // Disabled account — global sign-out is correct: they should not be
-      // logged in anywhere.
       await safeSignOutGlobal(supabase)
       return { error: 'Your account has been disabled. Contact your administrator.' }
     }
@@ -259,7 +262,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: null }
   }, [supabase, resolveEmailByRole]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Logout (intentional — clears all devices) ─────────────────────────────
+  // ── Logout ────────────────────────────────────────────────────────────────
 
   const logout = useCallback(async () => {
     const roleForLog   = user?.role ?? null
@@ -284,8 +287,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setCurrentLogger(null)
     setUser(null)
     setSession(null)
-    // Intentional logout → global scope is correct here: we want all devices
-    // signed out when a user explicitly logs out.
     await supabase.auth.signOut({ scope: 'global' })
     window.location.href = '/login'
   }, [supabase, user])

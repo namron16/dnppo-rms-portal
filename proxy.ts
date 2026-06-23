@@ -1,33 +1,51 @@
+// proxy.ts (middleware entry point)
+//
+// FIX: now reads `nav_group` and `is_viewer_only` from user_metadata (JWT),
+// so route access works for any dynamically created role without a DB call.
+//
+// When a new account is created via createAccount() in actions.ts, those
+// fields are written into user_metadata. The JWT carries them on every request,
+// so the middleware can enforce the correct routes instantly.
+
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { updateSession } from './lib/supabase/middleware'
-import { getDefaultAdminRoute, isAllowedAdminPath } from './lib/adminRouteAccess'
-import type { SessionRole } from './lib/adminRouteAccess'
+import {
+  getDefaultAdminRoute,
+  isAllowedAdminPath,
+  type RoleInfo,
+} from './lib/adminRouteAccess'
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
   const { supabaseResponse, user } = await updateSession(request)
 
   const isLoggedIn = !!user
-  // Role is stored in user_metadata by Supabase when the profile is created.
-  // Fall back to app_metadata for service-role inserts.
-  const role = (
-    user?.user_metadata?.role ?? user?.app_metadata?.role
-  ) as SessionRole | undefined
+
+  // ── Read role info from JWT user_metadata ─────────────────────────────────
+  // user_metadata is embedded in the JWT — no extra DB round-trip needed.
+  // nav_group and is_viewer_only are written at account creation (actions.ts)
+  // and also synced into user_metadata via register_role / createAccount.
+  const meta = user?.user_metadata ?? {}
+
+  const role: string | undefined =
+    meta.role ?? user?.app_metadata?.role
+
+  // Build a RoleInfo object so the route helpers can use nav_group.
+  // Fall back gracefully if metadata is missing (e.g. old accounts).
+  const roleInfo: RoleInfo | undefined = role
+    ? {
+        role,
+        nav_group:     meta.nav_group     ?? inferNavGroup(role),
+        is_viewer_only: meta.is_viewer_only ?? true,
+      }
+    : undefined
 
   function redirectTo(path: string) {
     const url = new URL(path, request.url)
-    // 303 See Other — tells the browser to GET the new URL and
-    // replace the current history entry, so Back won't return here.
     return NextResponse.redirect(url, { status: 303 })
   }
 
-  // ── Helper: build a redirect that nukes ALL session cookies ───────────────
-  // We collect cookie names from both the incoming request (what the browser
-  // sent) AND from supabaseResponse (what Supabase may have set/refreshed
-  // during updateSession). This ensures no stale token survives the redirect
-  // and prevents the "Failed to fetch RSC payload" error caused by the
-  // middleware letting a half-cleared session through to /admin/* routes.
   function redirectAndClearSession(path: string) {
     const url = new URL(path, request.url)
     const response = NextResponse.redirect(url, { status: 303 })
@@ -43,7 +61,6 @@ export async function proxy(request: NextRequest) {
         path:     '/',
         httpOnly: true,
         sameSite: 'lax',
-        // Mirror the secure flag used in lib/supabase/middleware.ts
         secure:   process.env.NODE_ENV === 'production',
       })
     })
@@ -51,41 +68,32 @@ export async function proxy(request: NextRequest) {
     return response
   }
 
-  // ── Root ────────────────────────────────────
+  // ── Root ──────────────────────────────────────────────────────────────────
   if (pathname === '/') {
-    return isLoggedIn && role
-      ? redirectTo(getDefaultAdminRoute(role))
+    return isLoggedIn && roleInfo
+      ? redirectTo(getDefaultAdminRoute(roleInfo))
       : redirectTo('/login')
   }
 
-  // ── Login page ──────────────────────────────
+  // ── Login page ────────────────────────────────────────────────────────────
   if (pathname.startsWith('/login')) {
-    if (isLoggedIn && role) {
-      // If the account is disabled, don't redirect to admin — let the login
-      // page handle the ?disabled=1 message instead.
-      const isActive = user?.user_metadata?.is_active ?? true
-      if (!isActive) {
-        return supabaseResponse
-      }
-      return redirectTo(getDefaultAdminRoute(role))
+    if (isLoggedIn && roleInfo) {
+      const isActive = meta.is_active ?? true
+      if (!isActive) return supabaseResponse
+      return redirectTo(getDefaultAdminRoute(roleInfo))
     }
     return supabaseResponse
   }
 
-  // ── Admin routes ────────────────────────────
+  // ── Admin routes ──────────────────────────────────────────────────────────
   if (pathname.startsWith('/admin')) {
-    // Not authenticated
-    if (!isLoggedIn || !role) {
+    if (!isLoggedIn || !roleInfo) {
       const loginUrl = new URL('/login', request.url)
       loginUrl.searchParams.set('from', pathname)
       return NextResponse.redirect(loginUrl, { status: 303 })
     }
 
-    // Account disabled check (reads from JWT user_metadata — no DB call needed)
-    // Redirect to /login?disabled=1 and nuke all session cookies so the browser
-    // cannot replay the old session on the next request, which would cause the
-    // middleware to grant access again before the client-side signOut resolves.
-    const isActive = user?.user_metadata?.is_active ?? true
+    const isActive = meta.is_active ?? true
     if (!isActive) {
       const loginUrl = new URL('/login', request.url)
       loginUrl.searchParams.set('reason', 'account_disabled')
@@ -93,17 +101,26 @@ export async function proxy(request: NextRequest) {
     }
 
     if (pathname === '/admin') {
-      return redirectTo(getDefaultAdminRoute(role))
+      return redirectTo(getDefaultAdminRoute(roleInfo))
     }
 
-    if (!isAllowedAdminPath(pathname, role)) {
-      return redirectTo(getDefaultAdminRoute(role))
+    if (!isAllowedAdminPath(pathname, roleInfo)) {
+      return redirectTo(getDefaultAdminRoute(roleInfo))
     }
 
     return supabaseResponse
   }
 
   return supabaseResponse
+}
+
+// ── Fallback: infer nav_group from legacy hardcoded role names ────────────────
+// Only used if nav_group is missing from user_metadata (accounts created before
+// this fix). New accounts always have nav_group in user_metadata.
+function inferNavGroup(role: string): string {
+  if (role === 'admin')               return 'admin'
+  if (role === 'DPDA' || role === 'DPDO') return 'dpda-dpdo'
+  return 'documents'
 }
 
 export const config = {

@@ -1,8 +1,7 @@
+// app/admin/user-management/actions.ts
 'use server'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient }  from '@supabase/supabase-js'
-
-// ── Admin client (service role — bypasses RLS) ────────────────────────────
 
 function getAdminClient() {
   return createAdminClient(
@@ -12,23 +11,42 @@ function getAdminClient() {
   )
 }
 
-// ── Guard: only 'admin' role may call these actions ───────────────────────
+// ── Guard: only accounts with nav_group='admin' in role_registry may call these
+// FIX: no longer checks role === 'admin' (hardcoded string).
+// Instead checks nav_group from role_registry, so any dynamically created
+// admin-group account (e.g. 'DN', 'SYSADMIN') can manage users too.
 
 async function assertSuperAdmin() {
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Unauthenticated')
 
+  // Read the role from the profile
   const { data: profile } = await supabase
     .from('profiles')
     .select('role')
     .eq('id', user.id)
     .single()
 
-  if (profile?.role !== 'admin') throw new Error('Forbidden')
+  if (!profile?.role) throw new Error('Forbidden')
+
+  // Use the admin client (service role) to read role_registry without RLS
+  // restrictions — the anon client can only read is_active=TRUE rows.
+  const admin = getAdminClient()
+  const { data: registry } = await admin
+    .from('role_registry')
+    .select('nav_group')
+    .eq('role', profile.role)
+    .single()
+
+  // Allow if nav_group is 'admin' OR if the role is literally 'admin' (legacy)
+  const isAdmin =
+    registry?.nav_group === 'admin' || profile.role === 'admin'
+
+  if (!isAdmin) throw new Error('Forbidden')
 }
 
-// ── List ALL users (initial load only) ───────────────────────────────────
+// ── List ALL users ─────────────────────────────────────────────────────────────
 
 export async function listAllUsers() {
   await assertSuperAdmin()
@@ -56,7 +74,7 @@ export async function listAllUsers() {
   }))
 }
 
-// ── Fetch a single user by ID ─────────────────────────────────────────────
+// ── Fetch a single user by ID ──────────────────────────────────────────────────
 
 export async function getSingleUser(userId: string) {
   await assertSuperAdmin()
@@ -87,14 +105,13 @@ export async function getSingleUser(userId: string) {
   }
 }
 
-// ── Toggle active/inactive ─────────────────────────────────────────────────
+// ── Toggle active/inactive ─────────────────────────────────────────────────────
 
 export async function setUserActive(userId: string, isActive: boolean) {
   await assertSuperAdmin()
 
   const admin = getAdminClient()
 
-  // 1. Source of truth: profiles table (must use admin client to bypass RLS)
   const { error: profileError } = await admin
     .from('profiles')
     .update({ is_active: isActive })
@@ -102,7 +119,6 @@ export async function setUserActive(userId: string, isActive: boolean) {
 
   if (profileError) throw profileError
 
-  // 2. Sync into user_metadata for middleware checks
   const { data: authUser, error: fetchError } = await admin.auth.admin.getUserById(userId)
   if (fetchError) throw fetchError
 
@@ -116,14 +132,13 @@ export async function setUserActive(userId: string, isActive: boolean) {
   })
   if (metaError) throw metaError
 
-  // 3. Invalidate all sessions when deactivating
   if (!isActive) {
     await new Promise(r => setTimeout(r, 150))
     await admin.auth.admin.signOut(userId, 'global')
   }
 }
 
-// ── Reset password ─────────────────────────────────────────────────────────
+// ── Reset password ─────────────────────────────────────────────────────────────
 
 export async function adminResetPassword(userId: string, newPassword: string) {
   await assertSuperAdmin()
@@ -135,7 +150,7 @@ export async function adminResetPassword(userId: string, newPassword: string) {
   if (error) throw error
 }
 
-// ── Update email address ───────────────────────────────────────────────────
+// ── Update email address ───────────────────────────────────────────────────────
 
 export async function adminUpdateEmail(
   userId: string,
@@ -155,31 +170,33 @@ export async function adminUpdateEmail(
   if (error) throw error
 }
 
-// ── Create a brand-new account ────────────────────────────────────────────
+// ── Create a brand-new account ─────────────────────────────────────────────────
+// FIX: nav_group and is_viewer_only are written into user_metadata so the
+// JWT carries them — the middleware can enforce routes without a DB call.
 
 export async function createAccount(input: {
-  email:        string
-  password:     string
-  role:         string
-  display_name: string
-  title:        string
-  initials:     string
-  avatar_color: string
-  nav_group:    'documents' | 'admin' | 'dpda-dpdo'
-  can_upload:   boolean
+  email:          string
+  password:       string
+  role:           string
+  display_name:   string
+  title:          string
+  initials:       string
+  avatar_color:   string
+  nav_group:      'documents' | 'admin' | 'dpda-dpdo'
+  can_upload:     boolean
   is_viewer_only: boolean
 }) {
   await assertSuperAdmin()
 
   const admin = getAdminClient()
 
-  // 1. Register the role in role_registry
+  // 1. Register in role_registry
   const { error: roleError } = await admin.rpc('register_role', {
     p_role:           input.role,
     p_display_name:   input.display_name,
     p_title:          input.title,
     p_nav_group:      input.nav_group,
-    p_default_route:  '/admin/master',
+    p_default_route:  input.nav_group === 'admin' ? '/admin/log-history' : '/admin/master',
     p_can_upload:     input.can_upload,
     p_is_viewer_only: input.is_viewer_only,
     p_sort_order:     100,
@@ -187,12 +204,17 @@ export async function createAccount(input: {
   })
   if (roleError) throw new Error(`Role registration failed: ${roleError.message}`)
 
-  // 2. Create the Supabase auth user
+  // 2. Create auth user — include nav_group in user_metadata for JWT
   const { data: authData, error: authError } = await admin.auth.admin.createUser({
     email:         input.email,
     password:      input.password,
     email_confirm: true,
-    user_metadata: { role: input.role, is_active: true },
+    user_metadata: {
+      role:           input.role,
+      nav_group:      input.nav_group,
+      is_viewer_only: input.is_viewer_only,
+      is_active:      true,
+    },
   })
   if (authError) throw new Error(`Auth user creation failed: ${authError.message}`)
 
@@ -212,7 +234,7 @@ export async function createAccount(input: {
     })
   if (profileError) throw new Error(`Profile creation failed: ${profileError.message}`)
 
-  // 4. Seed Drive pool users table
+  // 4. Seed Drive pool
   await admin
     .from('users')
     .upsert({ username: input.role, role: 'USER' }, { onConflict: 'username' })
@@ -220,27 +242,18 @@ export async function createAccount(input: {
   return { userId }
 }
 
-// ── Delete account ────────────────────────────────────────────────────────
-//
-// Logging note: this runs server-side with the service role key, so the
-// browser-side adminLogger (which relies on auth.getUser()) cannot be used.
-// Instead we write directly to admin_logs using the admin client, using
-// 'admin' as the role (the only role that can reach this action).
-// The log entry is written AFTER all destructive steps succeed so a failed
-// deletion is never recorded as complete.
+// ── Delete account ─────────────────────────────────────────────────────────────
 
 export async function deleteAccount(userId: string, role: string) {
   await assertSuperAdmin()
 
   const admin = getAdminClient()
 
-  // Guard: never allow deleting built-in protected accounts
   const PROTECTED_ROLES = ['admin', 'PD']
   if (PROTECTED_ROLES.includes(role)) {
     throw new Error(`The "${role}" account is protected and cannot be deleted.`)
   }
 
-  // 1. Fetch the profile first so we have the display name for the log
   const { data: profile } = await admin
     .from('profiles')
     .select('role, display_name')
@@ -249,30 +262,19 @@ export async function deleteAccount(userId: string, role: string) {
 
   const displayName = profile?.display_name ?? role
 
-  // 2. Delete from Supabase Auth (cascades to profile row if trigger exists)
   const { error: authDeleteError } = await admin.auth.admin.deleteUser(userId)
   if (authDeleteError) throw new Error(`Auth deletion failed: ${authDeleteError.message}`)
 
-  // 3. Delete profile row (safe even if cascade already removed it)
   await admin.from('profiles').delete().eq('id', userId)
-
-  // 4. Remove from Drive pool users table
   await admin.from('users').delete().eq('username', role)
 
-  // 5. Soft-delete the role in registry (preserves display names in log history)
   const { error: registryError } = await admin.rpc('deactivate_role', { p_role: role })
   if (registryError) throw new Error(`Registry deactivation failed: ${registryError.message}`)
 
-  // 6. Write audit log — only after all destructive steps succeed.
-  //    We resolve the acting admin's user_id from the current session so the
-  //    log row satisfies the RLS policy (user_id must match auth.uid()).
-  //    The service role client bypasses RLS, so this insert always lands.
   const supabase = await createServerClient()
   const { data: { user: actingUser } } = await supabase.auth.getUser()
 
   await admin.from('admin_logs').insert({
-    // Use the acting admin's real user_id so the log is attributable.
-    // Fall back to the deleted user's id only as a last resort (should never happen).
     user_id:     actingUser?.id ?? userId,
     role:        'admin',
     action:      'delete_account',
