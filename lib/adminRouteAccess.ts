@@ -66,7 +66,7 @@ export function getDefaultAdminRoute(roleOrInfo: SessionRole | RoleInfo): string
   if (typeof roleOrInfo === 'object') {
     const { nav_group, role } = roleOrInfo
     if (nav_group === 'admin')     return '/admin/log-history'
-    if (nav_group === 'dpda-dpdo') return '/admin/master'
+    if (nav_group === 'dpda-dpdo') return '/admin/inbox'
     // 'documents' group — same default for all, PD included
     return '/admin/master'
   }
@@ -74,7 +74,7 @@ export function getDefaultAdminRoute(roleOrInfo: SessionRole | RoleInfo): string
   // Legacy path: plain role string (used by proxy.ts before metadata is available)
   const role = roleOrInfo
   if (role === 'admin')               return '/admin/log-history'
-  if (role === 'DPDA' || role === 'DPDO') return '/admin/master'
+  if (role === 'DPDA' || role === 'DPDO') return '/admin/inbox'
   return '/admin/master'
 }
 
