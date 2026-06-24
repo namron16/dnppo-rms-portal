@@ -61,7 +61,7 @@ export default function SystemSettingsPage() {
 
   // ── Guard: only admin may see this page ────────────────────────────────────
   useEffect(() => {
-    if (user && user.role !== 'admin') {
+    if (user && user?.nav_group !== 'admin') {
       router.replace('/admin/log-history')
     }
   }, [user, router])

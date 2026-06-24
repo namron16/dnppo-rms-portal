@@ -193,7 +193,7 @@ export default function BackupRecoveryPage() {
 
   // Guard: admin only
   useEffect(() => {
-    if (user && user.role !== 'admin') router.replace('/admin')
+    if (user && user?.nav_group !== 'admin') router.replace('/admin')
   }, [user, router])
 
   // ── Load local storage config ──────────────────────────────────────────────
@@ -297,7 +297,7 @@ export default function BackupRecoveryPage() {
     setRecoverOpen(true)
   }
 
-  if (user?.role !== 'admin') return null
+  if (user?.nav_group !== 'admin') return null
 
   const score       = health?.summary.health_score ?? 0
   const scoreColor  = score >= 90 ? '#34d399' : score >= 70 ? '#fbbf24' : '#f87171'
