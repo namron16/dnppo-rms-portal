@@ -109,5 +109,3 @@ main().catch(err => { console.error(err); process.exit(1) })
 
 
 
-//run in terminal
-//$env:SUPABASE_URL="https://jbjulzwqrgwglvimqtns.supabase.co"; $env:SUPABASE_SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpianVsendxcmd3Z2x2aW1xdG5zIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Mzk4Njk5OSwiZXhwIjoyMDg5NTYyOTk5fQ.dEa_R3osJIlwGjsuRVzLOieMxsQS9SdtGFHJLLE78Ks"; node sync-is-active.mjs  
