@@ -217,11 +217,11 @@ export function Sidebar() {
 
   // Nav group flags — derived from navGroup state which is seeded from JWT
   const isAdmin       = navGroup === 'admin'
-  // FIX: also handle 'dpda-dpdo' value used by CreateAccountModal
-  const isDPDA        = navGroup === 'dpda' || navGroup === 'dpda-dpdo'
+  const isDPDAorDPDO = navGroup === 'dpda-dpdo'
   const isViewerNo201 = navGroup === 'documents' && user?.role !== 'P1' && user?.role !== 'P2'
   const isP1          = user?.role === 'P1'
   const canSeeP2      = user?.role === 'P2'
+
 
   // Display values
   const displayName = localDisplayName ?? user?.name ?? user?.role ?? ''
@@ -296,7 +296,7 @@ export function Sidebar() {
         )}
 
         {/* Documents nav */}
-        {!isAdmin && !isDPDA && (
+        {!isAdmin && !isDPDAorDPDO && (
           <div className="px-3 pt-5 pb-2">
             <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">Documents</div>
             {canSeeP2
@@ -324,14 +324,21 @@ export function Sidebar() {
         )}
 
         {/* DPDA nav */}
-        {isDPDA && (
+        {isDPDAorDPDO && (
           <div className="px-3 pt-5 pb-2">
-            <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">Management</div>
+            <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">
+              Management
+            </div>
             {DPDA_NAV.map(item => (
-              <NavLink key={item.href} item={item}
+              <NavLink
+                key={item.href}
+                item={item}
                 active={pathname === item.href || pendingHref === item.href}
                 onNavigate={setPendingHref}
-                badgeCount={item.href === '/admin/dpda-inbox' ? unreadInboxCount : undefined} />
+                badgeCount={
+                  item.href === '/admin/inbox' ? unreadInboxCount : undefined
+                }
+              />
             ))}
           </div>
         )}

@@ -41,7 +41,8 @@ const ADMIN_ROUTES = [
   '/admin/system-settings',
 ] as const
 
-const DPDA_ROUTES = [
+// Both share the same pages but are now separate nav_group values
+const DPDA_DPDO_ROUTES = [
   '/admin/master', '/admin/admin-orders', '/admin/daily-journals',
   '/admin/organization', '/admin/e-library', '/admin/forwarded',
   '/admin/archive', '/admin/dpda-inbox', '/admin/inbox',
@@ -66,7 +67,10 @@ export function getDefaultAdminRoute(roleOrInfo: SessionRole | RoleInfo): string
   if (typeof roleOrInfo === 'object') {
     const { nav_group, role } = roleOrInfo
     if (nav_group === 'admin')     return '/admin/log-history'
-    if (nav_group === 'dpda-dpdo') return '/admin/inbox'
+    if (nav_group === 'dpda-dpdo') {
+      return '/admin/inbox'
+    }
+    
     // 'documents' group — same default for all, PD included
     return '/admin/master'
   }
@@ -86,7 +90,7 @@ export function getAllowedAdminRoutes(roleOrInfo: SessionRole | RoleInfo): strin
     const { nav_group, role, is_viewer_only } = roleOrInfo
 
     if (nav_group === 'admin')     return [...ADMIN_ROUTES]
-    if (nav_group === 'dpda-dpdo') return [...DPDA_ROUTES]
+    if (nav_group === 'dpda-dpdo') return [...DPDA_DPDO_ROUTES]
 
     // 'documents' group — check special roles first, then viewer flag
     if (role === 'P1')             return [...DOC_ROUTES]
@@ -98,7 +102,7 @@ export function getAllowedAdminRoutes(roleOrInfo: SessionRole | RoleInfo): strin
   // Legacy path: plain role string
   const role = roleOrInfo
   if (role === 'admin')               return [...ADMIN_ROUTES]
-  if (role === 'DPDA' || role === 'DPDO') return [...DPDA_ROUTES]
+  if (role === 'DPDA' || role === 'DPDO') return [...DPDA_DPDO_ROUTES]
   if (role === 'P1' || role === 'PD') return [...DOC_ROUTES]
   if (role === 'P2')                  return [...P2_DOC_ROUTES]
   return [...VIEWER_DOC_ROUTES]

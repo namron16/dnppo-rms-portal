@@ -58,7 +58,9 @@ interface StatusCounts {
 const ITEMS_PER_PAGE = 12
 
 export default function DPDAInboxPage() {
+  
   const { user } = useAuth()
+  const inboxApiPath = user?.role === 'DPDO' ? '/api/dpdo-inbox' : '/api/dpda-inbox'
   const [documents, setDocuments] = useState<ForwardedDocument[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -91,7 +93,7 @@ export default function DPDAInboxPage() {
   // ── FIX 5: Dedicated status-counts fetcher ────────────────────────────────
   const fetchStatusCounts = useCallback(async () => {
     try {
-      const res = await fetch(`/api/dpda-inbox?limit=1&offset=0&status=all`)
+      const res = await fetch(`${inboxApiPath}?limit=1&offset=0&status=all`)
       if (!res.ok) return
       const data = await res.json()
       if (data.statusCounts) {
@@ -126,7 +128,7 @@ export default function DPDAInboxPage() {
         offset: String((currentPage - 1) * ITEMS_PER_PAGE),
       })
 
-      const res = await fetch(`/api/dpda-inbox?${params}`)
+      const res = await fetch(`${inboxApiPath}?${params}`)
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}))
