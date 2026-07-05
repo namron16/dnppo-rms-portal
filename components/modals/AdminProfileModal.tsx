@@ -112,13 +112,8 @@ export function AdminProfileModal({ open, onClose, user }: AdminProfileModalProp
       {/* Modal — positioned near bottom-left (sidebar area) */}
       <div
         ref={modalRef}
-        className="fixed z-[1060] animate-fade-up"
-        style={{
-          left: '248px',
-          bottom: '16px',
-          width: '340px',
-          maxHeight: '90vh',
-        }}
+        className="fixed z-[1060] animate-fade-up inset-x-4 bottom-4 md:inset-x-auto md:left-[248px] md:w-[340px]"
+        style={{ maxHeight: '90vh' }}
         onClick={e => e.stopPropagation()}
       >
         <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">

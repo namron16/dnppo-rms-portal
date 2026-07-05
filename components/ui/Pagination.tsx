@@ -28,8 +28,7 @@ export function Pagination({
   const endItem   = Math.min(currentPage * pageSize, totalItems)
 
   return (
-    <div className="flex items-center justify-between px-6 py-3 border-t border-slate-100 bg-slate-50">
-
+<div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-4 md:px-6 py-3 border-t border-slate-100 bg-slate-50">
       {/* Left: item count */}
       <p className="text-xs text-slate-500 flex-shrink-0 min-w-fit">
         {totalItems === 0

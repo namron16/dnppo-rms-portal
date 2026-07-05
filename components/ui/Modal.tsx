@@ -76,7 +76,7 @@ export function Modal({ open, onClose, title, children, width = 'max-w-2xl', hei
           onClick={e => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="relative flex items-center justify-center px-6 py-1.5 border-b border-slate-100">
+          <div className="relative flex items-center justify-center px-4 md:px-6 py-1.5 border-b border-slate-100">
             <h2 className="text-sm font-semibold text-slate-600 tracking-wide">{title}</h2>
             <button
               onClick={onClose}

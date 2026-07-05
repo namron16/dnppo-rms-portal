@@ -1,178 +1,216 @@
-'use client'
+"use client";
 // components/modals/AddSpecialOrderModal.tsx
 //
 // FIX (error message): uploadToDrive now returns { result, error } so the
 //      exact server error (e.g. "No Google Drive account connected") is shown
 //      instead of the generic fallback from stale uploadError state.
 
-import { useRef, useState } from 'react'
-import { Modal }    from '@/components/ui/Modal'
-import { Button }   from '@/components/ui/Button'
-import { useToast } from '@/components/ui/Toast'
-import { AddSpecialOrderSchema, zodErrors } from '@/lib/validations'
-import { assertCanUpload } from '@/lib/rbac'
-import { useDriveUpload } from '@/hooks/useGDriveTool'
-import { useAuth } from '@/lib/auth'
-import type { SpecialOrder } from '@/types'
-import type { AdminRole } from '@/lib/auth'
-import { FileText, Image as ImageIcon, Paperclip } from 'lucide-react'
-import { logUploadDocument } from '@/lib/adminLogger'
+import { useRef, useState } from "react";
+import { Modal } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
+import { AddSpecialOrderSchema, zodErrors } from "@/lib/validations";
+import { assertCanUpload } from "@/lib/rbac";
+import { useDriveUpload } from "@/hooks/useGDriveTool";
+import { useAuth } from "@/lib/auth";
+import type { SpecialOrder } from "@/types";
+import type { AdminRole } from "@/lib/auth";
+import { FileText, Image as ImageIcon, Paperclip } from "lucide-react";
+import { logUploadDocument } from "@/lib/adminLogger";
 
 type SOWithUrl = SpecialOrder & {
-  fileUrl?:         string
-  gdrive_file_id?:  string
-  gdrive_url?:      string
-  pool_account_id?: string
-  download_url?:    string
-  uploaded_by?:     string
-  file_name?:       string
-  file_size_bytes?: number
-  mime_type?:       string | null
-}
+  fileUrl?: string;
+  gdrive_file_id?: string;
+  gdrive_url?: string;
+  pool_account_id?: string;
+  download_url?: string;
+  uploaded_by?: string;
+  file_name?: string;
+  file_size_bytes?: number;
+  mime_type?: string | null;
+};
 
 interface Props {
-  open: boolean
-  onClose: () => void
-  onAdd?: (newSO: SOWithUrl) => Promise<void>
+  open: boolean;
+  onClose: () => void;
+  onAdd?: (newSO: SOWithUrl) => Promise<void>;
 }
 
 export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
-  const { toast } = useToast()
-  const { user }  = useAuth()
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const today = new Date().toISOString().split('T')[0]
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const today = new Date().toISOString().split("T")[0];
 
-  const { uploadToDrive, uploading } = useDriveUpload()
+  const { uploadToDrive, uploading } = useDriveUpload();
 
-  const [form, setForm]         = useState({ reference: '', subject: '', date: today, status: 'ACTIVE' })
-  const [errors, setErrors]     = useState<Record<string, string>>({})
-  const [file, setFile]         = useState<File | null>(null)
-  const [dragging, setDragging] = useState(false)
+  const [form, setForm] = useState({
+    reference: "",
+    subject: "",
+    date: today,
+    status: "ACTIVE",
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   function field(key: string, value: string) {
-    setForm(p => ({ ...p, [key]: value }))
-    setErrors(p => ({ ...p, [key]: '' }))
+    setForm((p) => ({ ...p, [key]: value }));
+    setErrors((p) => ({ ...p, [key]: "" }));
   }
 
   function handleFileChange(incoming: File | null) {
-    if (!incoming) return
-    setFile(incoming)
-    setErrors(prev => ({ ...prev, file: '' }))
+    if (!incoming) return;
+    setFile(incoming);
+    setErrors((prev) => ({ ...prev, file: "" }));
   }
 
   function resetAndClose() {
-    setForm({ reference: '', subject: '', date: today, status: 'ACTIVE' })
-    setErrors({})
-    setFile(null)
-    setDragging(false)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-    onClose()
+    setForm({ reference: "", subject: "", date: today, status: "ACTIVE" });
+    setErrors({});
+    setFile(null);
+    setDragging(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    onClose();
   }
 
   async function submit() {
-    if (!user) { toast.error('Not authenticated.'); return }
-
-    try {
-      assertCanUpload(user.role as AdminRole)
-    } catch (err: any) {
-      toast.error(err.message ?? 'Upload denied.')
-      return
+    if (!user) {
+      toast.error("Not authenticated.");
+      return;
     }
 
-    const result = AddSpecialOrderSchema.safeParse(form)
+    try {
+      assertCanUpload(user.role as AdminRole);
+    } catch (err: any) {
+      toast.error(err.message ?? "Upload denied.");
+      return;
+    }
+
+    const result = AddSpecialOrderSchema.safeParse(form);
     if (!result.success) {
-      setErrors(zodErrors(result.error))
-      return
+      setErrors(zodErrors(result.error));
+      return;
     }
 
     if (!file) {
-      setErrors(prev => ({ ...prev, file: 'Attachment is required.' }))
-      return
+      setErrors((prev) => ({ ...prev, file: "Attachment is required." }));
+      return;
     }
 
-    setErrors({})
+    setErrors({});
 
     try {
-      const soId = `so-${Date.now()}`
+      const soId = `so-${Date.now()}`;
 
       // FIX: destructure { result, error } — error is always the real server
       // message, never stale state from a previous render cycle.
       const { result: driveResult, error: driveError } = await uploadToDrive(
         file,
-        'special_orders',
+        "special_orders",
         {
           uploadedBy: user.role,
-          entityId:   soId,
-          entityType: 'special_order',
+          entityId: soId,
+          entityType: "special_order",
         }
-      )
+      );
 
       if (!driveResult) {
-        toast.error(driveError)
-        return
+        toast.error(driveError);
+        return;
       }
 
       const newSO: SOWithUrl = {
-        id:          soId,
-        reference:   result.data.reference,
-        subject:     result.data.subject,
-        date:        result.data.date,
+        id: soId,
+        reference: result.data.reference,
+        subject: result.data.subject,
+        date: result.data.date,
         attachments: 0,
-        status:      result.data.status,
+        status: result.data.status,
 
-        fileUrl:          driveResult.fileUrl,
-        gdrive_file_id:   driveResult.gdriveFileId,
-        gdrive_url:       driveResult.fileUrl,
-        pool_account_id:  driveResult.poolAccountId,
-        download_url:     driveResult.downloadUrl,
+        fileUrl: driveResult.fileUrl,
+        gdrive_file_id: driveResult.gdriveFileId,
+        gdrive_url: driveResult.fileUrl,
+        pool_account_id: driveResult.poolAccountId,
+        download_url: driveResult.downloadUrl,
 
-        uploaded_by:     user.role,
-        file_name:       file.name,
+        uploaded_by: user.role,
+        file_name: file.name,
         file_size_bytes: file.size,
-        mime_type:       file.type || null,
-      }
+        mime_type: file.type || null,
+      };
 
-      if (onAdd) await onAdd(newSO)
-      await logUploadDocument(result.data.subject)
-      toast.success(`Special Order "${result.data.reference}" created.`)
-      resetAndClose()
+      if (onAdd) await onAdd(newSO);
+      await logUploadDocument(result.data.subject);
+      toast.success(`Special Order "${result.data.reference}" created.`);
+      resetAndClose();
     } catch (err) {
-      console.error('[AddSpecialOrderModal] submit error:', err)
-      const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
-      toast.error(message)
+      console.error("[AddSpecialOrderModal] submit error:", err);
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again.";
+      toast.error(message);
     }
   }
 
   const cls = (f: string) =>
     `w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-slate-50 focus:outline-none focus:bg-white transition ${
-      errors[f] ? 'border-red-400 focus:border-red-400' : 'border-slate-200 focus:border-blue-500'
-    }`
+      errors[f]
+        ? "border-red-400 focus:border-red-400"
+        : "border-slate-200 focus:border-blue-500"
+    }`;
 
-  const fileIcon =
-    file?.name.endsWith('.pdf') ? <FileText size={28} className="text-red-600" />
-    : file?.name.match(/\.(jpg|jpeg|png|webp)$/i) ? <ImageIcon size={28} className="text-violet-600" />
-    : <FileText size={28} className="text-slate-600" />
+  const fileIcon = file?.name.endsWith(".pdf") ? (
+    <FileText size={28} className="text-red-600" />
+  ) : file?.name.match(/\.(jpg|jpeg|png|webp)$/i) ? (
+    <ImageIcon size={28} className="text-violet-600" />
+  ) : (
+    <FileText size={28} className="text-slate-600" />
+  );
 
   return (
-    <Modal open={open} onClose={uploading ? () => {} : resetAndClose} title="New Special Order" width="max-w-lg">
+    <Modal
+      open={open}
+      onClose={uploading ? () => {} : resetAndClose}
+      title="New Special Order"
+      width="max-w-lg"
+    >
       <div className="p-6 space-y-4">
-
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
               SO Reference <span className="text-red-500">*</span>
             </label>
-            <input className={cls('reference')} placeholder="e.g. SO No. 2024-102"
-              value={form.reference} onChange={e => field('reference', e.target.value)} disabled={uploading} />
-            {errors.reference && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.reference}</p>}
+            <input
+              className={cls("reference")}
+              placeholder="e.g. SO No. 2024-102"
+              value={form.reference}
+              onChange={(e) => field("reference", e.target.value)}
+              disabled={uploading}
+            />
+            {errors.reference && (
+              <p className="text-xs text-red-500 mt-1 font-medium">
+                ⚠ {errors.reference}
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
               Date <span className="text-red-500">*</span>
             </label>
-            <input type="date" className={cls('date')}
-              value={form.date} onChange={e => field('date', e.target.value)} disabled={uploading} />
-            {errors.date && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.date}</p>}
+            <input
+              type="date"
+              className={cls("date")}
+              value={form.date}
+              onChange={(e) => field("date", e.target.value)}
+              disabled={uploading}
+            />
+            {errors.date && (
+              <p className="text-xs text-red-500 mt-1 font-medium">
+                ⚠ {errors.date}
+              </p>
+            )}
           </div>
         </div>
 
@@ -180,9 +218,18 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
             Subject <span className="text-red-500">*</span>
           </label>
-          <input className={cls('subject')} placeholder="e.g. Designation of Officers – Q2"
-            value={form.subject} onChange={e => field('subject', e.target.value)} disabled={uploading} />
-          {errors.subject && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.subject}</p>}
+          <input
+            className={cls("subject")}
+            placeholder="e.g. Designation of Officers – Q2"
+            value={form.subject}
+            onChange={(e) => field("subject", e.target.value)}
+            disabled={uploading}
+          />
+          {errors.subject && (
+            <p className="text-xs text-red-500 mt-1 font-medium">
+              ⚠ {errors.subject}
+            </p>
+          )}
         </div>
 
         <input
@@ -190,7 +237,7 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
           type="file"
           accept=".pdf"
           className="hidden"
-          onChange={e => handleFileChange(e.target.files?.[0] ?? null)}
+          onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
         />
 
         {file ? (
@@ -198,55 +245,89 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
             <div className="flex items-center gap-3 min-w-0">
               <span className="flex-shrink-0">{fileIcon}</span>
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-800 truncate">{file.name}</p>
-                <p className="text-xs text-slate-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                <p className="text-sm font-semibold text-slate-800 truncate">
+                  {file.name}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {(file.size / 1024 / 1024).toFixed(2)} MB
+                </p>
               </div>
             </div>
             {!uploading && (
               <button
-                onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
+                onClick={() => {
+                  setFile(null);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
                 className="text-slate-400 hover:text-red-500 font-bold text-sm ml-3 flex-shrink-0 transition"
-              >✕</button>
+              >
+                ✕
+              </button>
             )}
           </div>
         ) : (
           <div
-            onDragOver={e => { e.preventDefault(); setDragging(true) }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
             onDragLeave={() => setDragging(false)}
-            onDrop={e => { e.preventDefault(); setDragging(false); handleFileChange(e.dataTransfer.files?.[0] ?? null) }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              handleFileChange(e.dataTransfer.files?.[0] ?? null);
+            }}
             onClick={() => !uploading && fileInputRef.current?.click()}
             className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition select-none ${
               errors.file
-                ? 'border-red-400 bg-red-50'
+                ? "border-red-400 bg-red-50"
                 : dragging
-                  ? 'border-blue-400 bg-blue-50'
-                  : 'border-slate-200 hover:border-blue-400 hover:bg-blue-50'
-            } ${uploading ? 'pointer-events-none opacity-50' : ''}`}
+                ? "border-blue-400 bg-blue-50"
+                : "border-slate-200 hover:border-blue-400 hover:bg-blue-50"
+            } ${uploading ? "pointer-events-none opacity-50" : ""}`}
           >
             <div className="mb-2 flex justify-center text-blue-600">
               <Paperclip size={30} strokeWidth={2.1} />
             </div>
-            <p className="text-sm font-medium text-slate-600 mb-1">Click to browse or drag &amp; drop</p>
+            <p className="text-sm font-medium text-slate-600 mb-1">
+              Click to browse or drag &amp; drop
+            </p>
             <p className="text-xs text-slate-400">PDF — max 50 MB</p>
           </div>
         )}
 
-        {errors.file && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.file}</p>}
+        {errors.file && (
+          <p className="text-xs text-red-500 mt-1 font-medium">
+            ⚠ {errors.file}
+          </p>
+        )}
 
         {uploading && (
           <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
             <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-            <p className="text-sm text-blue-700 font-medium">Uploading to Google Drive…</p>
+            <p className="text-sm text-blue-700 font-medium">
+              Uploading to Google Drive…
+            </p>
           </div>
         )}
 
         <div className="flex justify-end gap-2.5 pt-1">
-          <Button variant="outline" onClick={resetAndClose} disabled={uploading}>Cancel</Button>
-          <Button variant="primary" onClick={submit} disabled={uploading || !file}>
-            {uploading ? 'Uploading…' : '✅ Create SO'}
+          <Button
+            variant="outline"
+            onClick={resetAndClose}
+            disabled={uploading}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={submit}
+            disabled={uploading || !file}
+          >
+            {uploading ? "Uploading…" : "✅ Create SO"}
           </Button>
         </div>
       </div>
     </Modal>
-  )
+  );
 }

@@ -1,4 +1,4 @@
-'use client'
+"use client";
 // app/admin/master/page.tsx
 //
 // FIX (upload access):
@@ -19,137 +19,175 @@
 // UPDATE: Added Forward action to attachment table rows and nested file header.
 //         Added Print action to attachment table rows (already existed on header).
 
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
-import { PageHeader }       from '@/components/ui/PageHeader'
-import { Badge }            from '@/components/ui/Badge'
-import { Button }           from '@/components/ui/Button'
-import { SearchInput }      from '@/components/ui/SearchInput'
-import { ConfirmDialog }    from '@/components/ui/ConfirmDialog'
-import { EmptyState }       from '@/components/ui/EmptyState'
-import { ToolbarSelect }    from '@/components/ui/Toolbar'
-import { Modal }            from '@/components/ui/Modal'
-import { Pagination }       from '@/components/ui/Pagination'
-import { AddDocumentModal } from '@/components/modals/AddDocumentModal'
-import {AddMasterDocAttachmentModal, type AttachmentUploadResult} from '@/components/modals/AddMasterDocAttachmentModal'
-import { ApprovalWorkflowModal }  from '@/components/modals/ApprovalWorkflowModal'
-import { ForwardDocumentModal } from '@/components/modals/ForwardDocumentModal'
-import { useModal, useDisclosure, usePagination } from '@/hooks'
-import { useToast }         from '@/components/ui/Toast'
-import { useAuth }          from '@/lib/auth'
-import { levelBadgeClass }  from '@/lib/utils'
-import { supabase }         from '@/lib/supabase'
-import { useRealtimeMasterDocs } from './useRealtimeMasterDocs'
-import { FileText, Paperclip, Eye, Download, FolderOpen, Pencil, Trash2, Printer, Send, Archive, ChevronRight, X } from 'lucide-react'
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ToolbarSelect } from "@/components/ui/Toolbar";
+import { Modal } from "@/components/ui/Modal";
+import { Pagination } from "@/components/ui/Pagination";
+import { AddDocumentModal } from "@/components/modals/AddDocumentModal";
 import {
-  getMasterDocuments, addMasterDocument, updateMasterDocument,
-  archiveMasterDocument, deleteMasterDocument, addArchivedDoc, getArchivedDocs,
+  AddMasterDocAttachmentModal,
+  type AttachmentUploadResult,
+} from "@/components/modals/AddMasterDocAttachmentModal";
+import { ApprovalWorkflowModal } from "@/components/modals/ApprovalWorkflowModal";
+import { ForwardDocumentModal } from "@/components/modals/ForwardDocumentModal";
+import { useModal, useDisclosure, usePagination } from "@/hooks";
+import { useToast } from "@/components/ui/Toast";
+import { useAuth } from "@/lib/auth";
+import { levelBadgeClass } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
+import { useRealtimeMasterDocs } from "./useRealtimeMasterDocs";
+import {
+  FileText,
+  Paperclip,
+  Eye,
+  Download,
+  FolderOpen,
+  Pencil,
+  Trash2,
+  Printer,
+  Send,
+  Archive,
+  ChevronRight,
+  X,
+} from "lucide-react";
+import {
+  getMasterDocuments,
+  addMasterDocument,
+  updateMasterDocument,
+  archiveMasterDocument,
+  deleteMasterDocument,
+  addArchivedDoc,
+  getArchivedDocs,
   deleteDriveFile,
-} from '@/lib/data'
+} from "@/lib/data";
+import { getApproval, createApproval, type DocumentApproval } from "@/lib/rbac";
 import {
-  getApproval,
-  createApproval,
-  type DocumentApproval,
-} from '@/lib/rbac'
-import { logDeleteDocument, logEditDocument, logRenameAttachment, logArchiveDocument, logAddAttachment } from '@/lib/adminLogger'
-import { hasFullDocumentAccess, canUploadDocuments } from '@/lib/permissions'
-import type { MasterDocument, DocLevel } from '@/types'
-import type { AdminRole } from '@/lib/auth'
+  logDeleteDocument,
+  logEditDocument,
+  logRenameAttachment,
+  logArchiveDocument,
+  logAddAttachment,
+} from "@/lib/adminLogger";
+import { hasFullDocumentAccess, canUploadDocuments } from "@/lib/permissions";
+import type { MasterDocument, DocLevel } from "@/types";
+import type { AdminRole } from "@/lib/auth";
 
-type DocWithUrl = MasterDocument & { fileUrl?: string; uploaded_by?: string }
+type DocWithUrl = MasterDocument & { fileUrl?: string; uploaded_by?: string };
 type DocEnriched = DocWithUrl & {
-  approval?: DocumentApproval | null
-  created_at?: string
-  children?: DocEnriched[]
-}
+  approval?: DocumentApproval | null;
+  created_at?: string;
+  children?: DocEnriched[];
+};
 
 type AttachmentNavEntry =
-  | { kind: 'document';   doc: DocEnriched }
-  | { kind: 'attachment'; att: DocAttachment }
+  | { kind: "document"; doc: DocEnriched }
+  | { kind: "attachment"; att: DocAttachment };
 
 export interface DocAttachment {
-  id: string
-  master_document_id: string
-  parent_id: string | null
-  depth: number
-  title: string
-  file_name: string | null
-  file_size_bytes: number | null
-  mime_type: string | null
-  gdrive_file_id: string
-  gdrive_url: string
-  pool_account_id: string
-  created_at: string
+  id: string;
+  master_document_id: string;
+  parent_id: string | null;
+  depth: number;
+  title: string;
+  file_name: string | null;
+  file_size_bytes: number | null;
+  mime_type: string | null;
+  gdrive_file_id: string;
+  gdrive_url: string;
+  pool_account_id: string;
+  created_at: string;
 }
 
 // ── Drive attachment upload result ────────────────────────────────────────────
 interface DriveAttachmentResult {
-  gdriveFileId:  string
-  gdrive_url:    string
-  poolAccountId: string
-  fileSizeBytes: number
+  gdriveFileId: string;
+  gdrive_url: string;
+  poolAccountId: string;
+  fileSizeBytes: number;
 }
 
 // ── Privileged roles that see ALL documents regardless of uploader ────────────
-const PRIVILEGED_ROLES = ['admin', 'DPDA', 'DPDO']
+const PRIVILEGED_ROLES = ["admin", "DPDA", "DPDO"];
 function canSeeAllDocuments(role: string): boolean {
-  return PRIVILEGED_ROLES.includes(role)
+  return PRIVILEGED_ROLES.includes(role);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatBytes(bytes: number | null): string {
-  if (bytes === null || bytes === undefined) return '—'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  if (bytes === null || bytes === undefined) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function displayName(att: DocAttachment): string {
-  return att.title || att.file_name || att.gdrive_file_id
+  return att.title || att.file_name || att.gdrive_file_id;
 }
 
 function normaliseAttachment(row: any): DocAttachment {
   return {
-    id:                  row.id,
-    master_document_id:  row.master_document_id,
-    parent_id:           row.parent_id ?? null,
-    depth:               row.depth ?? 0,
-    title:               row.title ?? '',
-    file_name:           row.file_name ?? null,
-    file_size_bytes:     row.file_size_bytes ?? null,
-    mime_type:           row.mime_type ?? null,
-    gdrive_file_id:      row.gdrive_file_id,
-    gdrive_url:          row.gdrive_url,
-    pool_account_id:     row.pool_account_id,
-    created_at:          row.created_at,
-  }
+    id: row.id,
+    master_document_id: row.master_document_id,
+    parent_id: row.parent_id ?? null,
+    depth: row.depth ?? 0,
+    title: row.title ?? "",
+    file_name: row.file_name ?? null,
+    file_size_bytes: row.file_size_bytes ?? null,
+    mime_type: row.mime_type ?? null,
+    gdrive_file_id: row.gdrive_file_id,
+    gdrive_url: row.gdrive_url,
+    pool_account_id: row.pool_account_id,
+    created_at: row.created_at,
+  };
 }
 
-async function dbAddAttachment(att: Omit<DocAttachment, 'id' | 'created_at'>): Promise<DocAttachment | null> {
+async function dbAddAttachment(
+  att: Omit<DocAttachment, "id" | "created_at">
+): Promise<DocAttachment | null> {
   const { data, error } = await supabase
-    .from('master_document_attachments')
+    .from("master_document_attachments")
     .insert(att)
-    .select().single()
-  if (error) { console.error('addAttachment error:', error.message); return null }
-  return normaliseAttachment(data)
+    .select()
+    .single();
+  if (error) {
+    console.error("addAttachment error:", error.message);
+    return null;
+  }
+  return normaliseAttachment(data);
 }
 
 async function dbDeleteAttachment(id: string): Promise<boolean> {
   const { error } = await supabase
-    .from('master_document_attachments')
+    .from("master_document_attachments")
     .delete()
-    .eq('id', id)
-  if (error) { console.error('deleteAttachment error:', error.message); return false }
-  return true
+    .eq("id", id);
+  if (error) {
+    console.error("deleteAttachment error:", error.message);
+    return false;
+  }
+  return true;
 }
 
-async function dbRenameAttachment(id: string, newTitle: string): Promise<boolean> {
+async function dbRenameAttachment(
+  id: string,
+  newTitle: string
+): Promise<boolean> {
   const { error } = await supabase
-    .from('master_document_attachments')
+    .from("master_document_attachments")
     .update({ title: newTitle })
-    .eq('id', id)
-  if (error) { console.error('renameAttachment error:', error.message); return false }
-  return true
+    .eq("id", id);
+  if (error) {
+    console.error("renameAttachment error:", error.message);
+    return false;
+  }
+  return true;
 }
 
 // ── Drive pool upload helper ───────────────────────────────────────────────────
@@ -157,276 +195,458 @@ async function uploadAttachmentToDrive(
   file: File,
   uploadedBy: string,
   parentDocId: string,
-  parentAttId: string | null,
+  parentAttId: string | null
 ): Promise<DriveAttachmentResult> {
-  const formData = new FormData()
-  formData.append('file',        file)
-  formData.append('category',    'master_documents')
-  formData.append('uploadedBy',  uploadedBy)
-  formData.append('entityType',  parentAttId ? 'master_document_attachment' : 'master_document')
-  formData.append('entityId',    parentAttId ?? parentDocId)
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("category", "master_documents");
+  formData.append("uploadedBy", uploadedBy);
+  formData.append(
+    "entityType",
+    parentAttId ? "master_document_attachment" : "master_document"
+  );
+  formData.append("entityId", parentAttId ?? parentDocId);
 
-  const res = await fetch('/api/gdrive/upload', { method: 'POST', body: formData })
+  const res = await fetch("/api/gdrive/upload", {
+    method: "POST",
+    body: formData,
+  });
 
   if (!res.ok) {
-    const json = await res.json().catch(() => ({}))
-    throw new Error(json.error ?? `Upload failed (HTTP ${res.status}). Please try again.`)
+    const json = await res.json().catch(() => ({}));
+    throw new Error(
+      json.error ?? `Upload failed (HTTP ${res.status}). Please try again.`
+    );
   }
 
-  const json = await res.json()
-  const r    = json.data
+  const json = await res.json();
+  const r = json.data;
 
   if (!r?.gdriveFileId && !r?.gdrive_file_id) {
-    throw new Error('Upload succeeded but no file ID was returned. Please try again.')
+    throw new Error(
+      "Upload succeeded but no file ID was returned. Please try again."
+    );
   }
 
   return {
-    gdriveFileId:  r.gdriveFileId  ?? r.gdrive_file_id,
-    gdrive_url:    r.fileUrl       ?? r.drive_url ?? `https://drive.google.com/file/d/${r.gdriveFileId}/view`,
+    gdriveFileId: r.gdriveFileId ?? r.gdrive_file_id,
+    gdrive_url:
+      r.fileUrl ??
+      r.drive_url ??
+      `https://drive.google.com/file/d/${r.gdriveFileId}/view`,
     poolAccountId: r.poolAccountId ?? r.pool_account_id,
-    fileSizeBytes: r.sizeBytes     ?? file.size,
-  }
+    fileSizeBytes: r.sizeBytes ?? file.size,
+  };
 }
 
 function fileInfoFromMime(mimeType: string | null, fileName: string | null) {
-  const name = fileName ?? ''
-  const mime = mimeType ?? ''
-  if (mime === 'application/pdf' || name.match(/\.pdf$/i))
-    return { icon: '📕', label: 'PDF',  badgeCls: 'bg-red-100 text-red-700' }
-  if (mime.includes('wordprocessingml') || name.match(/\.docx?$/i))
-    return { icon: '📘', label: 'DOCX', badgeCls: 'bg-blue-100 text-blue-700' }
-  if (mime.includes('spreadsheetml') || name.match(/\.xlsx?$/i))
-    return { icon: '📗', label: 'XLSX', badgeCls: 'bg-green-100 text-green-700' }
-  if (mime.startsWith('image/') || name.match(/\.(jpg|jpeg|png|webp)$/i))
-    return { icon: '🖼️', label: 'IMG',  badgeCls: 'bg-violet-100 text-violet-700' }
-  return { icon: '📄', label: 'FILE', badgeCls: 'bg-slate-100 text-slate-600' }
+  const name = fileName ?? "";
+  const mime = mimeType ?? "";
+  if (mime === "application/pdf" || name.match(/\.pdf$/i))
+    return { icon: "📕", label: "PDF", badgeCls: "bg-red-100 text-red-700" };
+  if (mime.includes("wordprocessingml") || name.match(/\.docx?$/i))
+    return { icon: "📘", label: "DOCX", badgeCls: "bg-blue-100 text-blue-700" };
+  if (mime.includes("spreadsheetml") || name.match(/\.xlsx?$/i))
+    return {
+      icon: "📗",
+      label: "XLSX",
+      badgeCls: "bg-green-100 text-green-700",
+    };
+  if (mime.startsWith("image/") || name.match(/\.(jpg|jpeg|png|webp)$/i))
+    return {
+      icon: "🖼️",
+      label: "IMG",
+      badgeCls: "bg-violet-100 text-violet-700",
+    };
+  return { icon: "📄", label: "FILE", badgeCls: "bg-slate-100 text-slate-600" };
 }
 
 function Breadcrumb({
-  navStack, onNavigateTo,
+  navStack,
+  onNavigateTo,
 }: {
-  navStack: AttachmentNavEntry[]
-  onNavigateTo: (index: number) => void
+  navStack: AttachmentNavEntry[];
+  onNavigateTo: (index: number) => void;
 }) {
-  if (navStack.length <= 1) return null
+  if (navStack.length <= 1) return null;
   return (
-    <div className="flex items-center gap-0 flex-wrap mb-4 px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl">
+    <div className="flex items-center gap-1 flex-wrap mb-4 px-2.5 md:px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl">
       <span className="text-slate-400 mr-1 text-sm">🗂</span>
       {navStack.map((entry, i) => {
-        const label = entry.kind === 'document' ? `${entry.doc.tag} – ${entry.doc.title}` : displayName(entry.att)
-        const isLast = i === navStack.length - 1
-        const fi = entry.kind === 'attachment' ? fileInfoFromMime(entry.att.mime_type, entry.att.file_name) : null
+        const label =
+          entry.kind === "document"
+            ? `${entry.doc.tag} – ${entry.doc.title}`
+            : displayName(entry.att);
+        const isLast = i === navStack.length - 1;
+        const fi =
+          entry.kind === "attachment"
+            ? fileInfoFromMime(entry.att.mime_type, entry.att.file_name)
+            : null;
         return (
           <span key={i} className="flex items-center">
-            {i > 0 && <span className="mx-1.5 text-slate-400 font-bold text-sm select-none">›</span>}
+            {i > 0 && (
+              <span className="mx-1.5 text-slate-400 font-bold text-sm select-none">
+                ›
+              </span>
+            )}
             {isLast ? (
-              <span className="flex items-center gap-1 text-[13px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg" title={label}>
-                {fi && <Paperclip size={14} className="flex-shrink-0 text-blue-600" />}
-                <span className="truncate max-w-[180px]">{label.length > 28 ? label.slice(0, 27) + '…' : label}</span>
+              <span
+                className="flex items-center gap-1 text-[13px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg"
+                title={label}
+              >
+                {fi && (
+                  <Paperclip
+                    size={14}
+                    className="flex-shrink-0 text-blue-600"
+                  />
+                )}
+                <span className="truncate max-w-[180px]">
+                  {label.length > 28 ? label.slice(0, 27) + "…" : label}
+                </span>
               </span>
             ) : (
-              <button onClick={() => onNavigateTo(i)}
+              <button
+                onClick={() => onNavigateTo(i)}
                 className="flex items-center gap-1 text-[13px] font-semibold text-slate-600 hover:text-blue-700 hover:bg-white border border-transparent hover:border-blue-200 px-2 py-1 rounded-lg transition-all"
-                title={`Go back to ${label}`}>
-                {fi && <Paperclip size={14} className="flex-shrink-0 text-blue-600" />}
-                <span className="truncate max-w-[140px]">{label.length > 20 ? label.slice(0, 19) + '…' : label}</span>
+                title={`Go back to ${label}`}
+              >
+                {fi && (
+                  <Paperclip
+                    size={14}
+                    className="flex-shrink-0 text-blue-600"
+                  />
+                )}
+                <span className="truncate max-w-[140px]">
+                  {label.length > 20 ? label.slice(0, 19) + "…" : label}
+                </span>
               </button>
             )}
           </span>
-        )
+        );
       })}
     </div>
-  )
+  );
 }
 
 function getExtensionFromUrl(fileUrl: string) {
-  const cleanUrl = fileUrl.split('?')[0].split('#')[0]
-  const match = cleanUrl.match(/\.([a-z0-9]+)$/i)
-  return match?.[1]?.toLowerCase() ?? ''
+  const cleanUrl = fileUrl.split("?")[0].split("#")[0];
+  const match = cleanUrl.match(/\.([a-z0-9]+)$/i);
+  return match?.[1]?.toLowerCase() ?? "";
 }
 
 function getSuggestedFileName(baseName: string, fileUrl: string) {
-  if (/\.[a-z0-9]+$/i.test(baseName)) return baseName
-  const ext = getExtensionFromUrl(fileUrl)
-  return ext ? `${baseName}.${ext}` : baseName
+  if (/\.[a-z0-9]+$/i.test(baseName)) return baseName;
+  const ext = getExtensionFromUrl(fileUrl);
+  return ext ? `${baseName}.${ext}` : baseName;
 }
 
-async function saveFileFromUrl(fileUrl: string, suggestedName: string): Promise<boolean> {
-  const response = await fetch(fileUrl)
-  if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`)
-  const blob = await response.blob()
+async function saveFileFromUrl(
+  fileUrl: string,
+  suggestedName: string
+): Promise<boolean> {
+  const response = await fetch(fileUrl);
+  if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`);
+  const blob = await response.blob();
   const picker = window as Window & {
-    showSaveFilePicker?: (options?: { suggestedName?: string }) => Promise<FileSystemFileHandle>
-  }
+    showSaveFilePicker?: (options?: {
+      suggestedName?: string;
+    }) => Promise<FileSystemFileHandle>;
+  };
   if (picker.showSaveFilePicker) {
-    const handle = await picker.showSaveFilePicker({ suggestedName })
-    const writable = await handle.createWritable()
-    await writable.write(blob)
-    await writable.close()
-    return true
+    const handle = await picker.showSaveFilePicker({ suggestedName });
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return true;
   }
-  const objectUrl = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = objectUrl
-  anchor.download = suggestedName
-  anchor.rel = 'noopener'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(objectUrl)
-  return false
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = suggestedName;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+  return false;
 }
 
 async function printFileFromUrl(fileUrl: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const iframe = document.createElement('iframe')
-    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0'
-    let settled = false
-    let blobUrl: string | null = null
+    const iframe = document.createElement("iframe");
+    iframe.style.cssText =
+      "position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0";
+    let settled = false;
+    let blobUrl: string | null = null;
     const cleanup = () => {
-      if (blobUrl) URL.revokeObjectURL(blobUrl)
-      if (iframe.parentNode) iframe.parentNode.removeChild(iframe)
-    }
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    };
     const finish = (fn: () => void) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      fn()
-    }
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      fn();
+    };
     const timeout = window.setTimeout(() => {
-      finish(() => { cleanup(); reject(new Error('Print timed out.')) })
-    }, 15000)
+      finish(() => {
+        cleanup();
+        reject(new Error("Print timed out."));
+      });
+    }, 15000);
     fetch(fileUrl)
-      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob() })
-      .then(blob => {
-        blobUrl = URL.createObjectURL(blob)
-        iframe.src = blobUrl
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.blob();
+      })
+      .then((blob) => {
+        blobUrl = URL.createObjectURL(blob);
+        iframe.src = blobUrl;
         iframe.onload = () => {
-          const target = iframe.contentWindow
-          if (!target) { finish(() => { cleanup(); reject(new Error('Unable to load printable content.')) }); return }
+          const target = iframe.contentWindow;
+          if (!target) {
+            finish(() => {
+              cleanup();
+              reject(new Error("Unable to load printable content."));
+            });
+            return;
+          }
           window.setTimeout(() => {
             finish(() => {
-              try { target.focus(); target.print(); resolve() }
-              catch (e) { reject(e instanceof Error ? e : new Error('Print failed.')) }
-              finally { window.setTimeout(cleanup, 1200) }
-            })
-          }, 500)
-        }
-        iframe.onerror = () => finish(() => { cleanup(); reject(new Error('Could not load file for printing.')) })
-        document.body.appendChild(iframe)
+              try {
+                target.focus();
+                target.print();
+                resolve();
+              } catch (e) {
+                reject(e instanceof Error ? e : new Error("Print failed."));
+              } finally {
+                window.setTimeout(cleanup, 1200);
+              }
+            });
+          }, 500);
+        };
+        iframe.onerror = () =>
+          finish(() => {
+            cleanup();
+            reject(new Error("Could not load file for printing."));
+          });
+        document.body.appendChild(iframe);
       })
-      .catch(e => finish(() => { cleanup(); reject(e instanceof Error ? e : new Error('Failed to prepare file for printing.')) }))
-  })
+      .catch((e) =>
+        finish(() => {
+          cleanup();
+          reject(
+            e instanceof Error
+              ? e
+              : new Error("Failed to prepare file for printing.")
+          );
+        })
+      );
+  });
 }
 
 // ── Inline File Viewer ──────────────────────────────────────────────────────
-function InlineFileViewerModal({ fileUrl, fileName, open, onClose, onDownload, onPrint }: {
-  fileUrl: string; fileName: string; open: boolean; onClose: () => void
-  onDownload?: (fileUrl: string, fileName: string) => Promise<void>
-  onPrint?: (fileUrl: string, fileName: string) => Promise<void>
+function InlineFileViewerModal({
+  fileUrl,
+  fileName,
+  open,
+  onClose,
+  onDownload,
+  onPrint,
+}: {
+  fileUrl: string;
+  fileName: string;
+  open: boolean;
+  onClose: () => void;
+  onDownload?: (fileUrl: string, fileName: string) => Promise<void>;
+  onPrint?: (fileUrl: string, fileName: string) => Promise<void>;
 }) {
-  const { toast } = useToast()
-  const [isDownloading, setIsDownloading] = useState(false)
-  const isPDF   = !!fileUrl.match(/\.pdf(\?|$)/i)
-  const isImage = !!fileUrl.match(/\.(jpg|jpeg|png|webp)(\?|$)/i)
-  const fi      = fileInfoFromMime(null, fileName)
+  const { toast } = useToast();
+  const [isDownloading, setIsDownloading] = useState(false);
+  const isPDF = !!fileUrl.match(/\.pdf(\?|$)/i);
+  const isImage = !!fileUrl.match(/\.(jpg|jpeg|png|webp)(\?|$)/i);
+  const fi = fileInfoFromMime(null, fileName);
 
   async function handleDownload() {
     try {
-      setIsDownloading(true)
-      if (onDownload) { await onDownload(fileUrl, fileName) }
-      else { await saveFileFromUrl(fileUrl, getSuggestedFileName(fileName, fileUrl)); toast.success(`Downloaded "${fileName}" successfully.`) }
-    } catch { toast.error('Could not download the file.') }
-    finally { setIsDownloading(false) }
+      setIsDownloading(true);
+      if (onDownload) {
+        await onDownload(fileUrl, fileName);
+      } else {
+        await saveFileFromUrl(fileUrl, getSuggestedFileName(fileName, fileUrl));
+        toast.success(`Downloaded "${fileName}" successfully.`);
+      }
+    } catch {
+      toast.error("Could not download the file.");
+    } finally {
+      setIsDownloading(false);
+    }
   }
 
   async function handlePrint() {
     try {
-      setIsDownloading(true)
-      if (onPrint) { await onPrint(fileUrl, fileName); return }
-      await printFileFromUrl(fileUrl)
-      toast.success('Opened print dialog.')
-    } catch { toast.error('Could not print the file.') }
-    finally { setIsDownloading(false) }
+      setIsDownloading(true);
+      if (onPrint) {
+        await onPrint(fileUrl, fileName);
+        return;
+      }
+      await printFileFromUrl(fileUrl);
+      toast.success("Opened print dialog.");
+    } catch {
+      toast.error("Could not print the file.");
+    } finally {
+      setIsDownloading(false);
+    }
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={`Viewing: ${fileName}`} width="max-w-5xl">
-      <div className="flex flex-col" style={{ maxHeight: '85vh' }}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Viewing: ${fileName}`}
+      width="max-w-5xl"
+    >
+      <div className="flex flex-col" style={{ maxHeight: "85vh" }}>
         <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-100 bg-slate-50 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-lg flex-shrink-0">{fi.icon}</span>
-            <p className="text-xs font-semibold text-slate-700 truncate max-w-sm">{fileName}</p>
+            <p className="text-xs font-semibold text-slate-700 truncate max-w-sm">
+              {fileName}
+            </p>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0 ml-3">
-            <button type="button" onClick={handleDownload} disabled={isDownloading}
-              className="text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition disabled:opacity-60">
-              {isDownloading ? '⬇ Saving…' : '⬇ Download'}
+            <button
+              type="button"
+              onClick={handleDownload}
+              disabled={isDownloading}
+              className="text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition disabled:opacity-60"
+            >
+              {isDownloading ? "⬇ Saving…" : "⬇ Download"}
             </button>
-            <button type="button" onClick={handlePrint} disabled={isDownloading}
-              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition disabled:opacity-60">
+            <button
+              type="button"
+              onClick={handlePrint}
+              disabled={isDownloading}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition disabled:opacity-60"
+            >
               <Printer size={13} /> Print
             </button>
-            <Button variant="outline" size="sm" onClick={onClose} className="inline-flex items-center gap-1.5"><X size={16} />Close</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onClose}
+              className="inline-flex items-center gap-1.5"
+            >
+              <X size={16} />
+              Close
+            </Button>
           </div>
         </div>
-        <div className="flex-1 overflow-auto bg-slate-100 min-h-0" style={{ minHeight: 400 }}>
+        <div
+          className="flex-1 overflow-auto bg-slate-100 min-h-0"
+          style={{ minHeight: 400 }}
+        >
           {isPDF ? (
-            <iframe src={fileUrl} title={fileName} className="w-full border-0" style={{ height: '75vh', minHeight: 400 }} />
+            <iframe
+              src={fileUrl}
+              title={fileName}
+              className="w-full border-0"
+              style={{ height: "75vh", minHeight: 400 }}
+            />
           ) : isImage ? (
             <div className="flex items-center justify-center p-6 min-h-96">
-              <img src={fileUrl} alt={fileName} className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-md border border-slate-200 bg-white" />
+              <img
+                src={fileUrl}
+                alt={fileName}
+                className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-md border border-slate-200 bg-white"
+              />
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-20 px-8 text-center">
               <span className="text-6xl mb-4">{fi.icon}</span>
-              <p className="text-sm font-semibold text-slate-700 mb-1 break-all">{fileName}</p>
-              <p className="text-xs text-slate-400 mb-5 max-w-xs">Preview not available. Download to view the file.</p>
-              <button type="button" onClick={handleDownload} disabled={isDownloading}
-                className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-blue-700 transition disabled:opacity-60">
-                {isDownloading ? '⬇ Saving…' : '⬇ Download to view'}
+              <p className="text-sm font-semibold text-slate-700 mb-1 break-all">
+                {fileName}
+              </p>
+              <p className="text-xs text-slate-400 mb-5 max-w-xs">
+                Preview not available. Download to view the file.
+              </p>
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={isDownloading}
+                className="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-blue-700 transition disabled:opacity-60"
+              >
+                {isDownloading ? "⬇ Saving…" : "⬇ Download to view"}
               </button>
             </div>
           )}
         </div>
       </div>
     </Modal>
-  )
+  );
 }
 
 // ── Edit Modal ──────────────────────────────────────────────────────────────
-function EditModal({ doc, open, onClose, onSave }: {
-  doc: DocEnriched | null; open: boolean; onClose: () => void
-  onSave: (updated: DocWithUrl) => void
+function EditModal({
+  doc,
+  open,
+  onClose,
+  onSave,
+}: {
+  doc: DocEnriched | null;
+  open: boolean;
+  onClose: () => void;
+  onSave: (updated: DocWithUrl) => void;
 }) {
-  const { toast } = useToast()
-  const [title, setTitle] = useState('')
-  const [level, setLevel] = useState<DocLevel>('REGIONAL')
-  const [date,  setDate]  = useState('')
-  const [type,  setType]  = useState('PDF')
+  const { toast } = useToast();
+  const [title, setTitle] = useState("");
+  const [level, setLevel] = useState<DocLevel>("REGIONAL");
+  const [date, setDate] = useState("");
+  const [type, setType] = useState("PDF");
 
   useEffect(() => {
-    if (doc) { setTitle(doc.title); setLevel(doc.level); setDate(doc.date); setType(doc.type) }
-  }, [doc])
+    if (doc) {
+      setTitle(doc.title);
+      setLevel(doc.level);
+      setDate(doc.date);
+      setType(doc.type);
+    }
+  }, [doc]);
 
   function submit() {
-    if (!title.trim()) { toast.error('Title is required.'); return }
-    if (!doc) return
-    onSave({ ...doc, title: title.trim(), level, date, type })
+    if (!title.trim()) {
+      toast.error("Title is required.");
+      return;
+    }
+    if (!doc) return;
+    onSave({ ...doc, title: title.trim(), level, date, type });
   }
 
-  const cls = 'w-full px-3 py-2.5 border-[1.5px] border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition'
+  const cls =
+    "w-full px-3 py-2.5 border-[1.5px] border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition";
   return (
     <Modal open={open} onClose={onClose} title="Edit Document" width="max-w-lg">
       <div className="p-6 space-y-4">
         <div>
-          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Title <span className="text-red-500">*</span></label>
-          <input className={cls} value={title} onChange={e => setTitle(e.target.value)} />
+          <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+            Title <span className="text-red-500">*</span>
+          </label>
+          <input
+            className={cls}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Level</label>
-            <select className={cls} value={level} onChange={e => setLevel(e.target.value as DocLevel)}>
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+              Level
+            </label>
+            <select
+              className={cls}
+              value={level}
+              onChange={(e) => setLevel(e.target.value as DocLevel)}
+            >
               <option value="REGIONAL">Regional</option>
               <option value="PROVINCIAL">Provincial</option>
               <option value="STATION">Station</option>
@@ -435,31 +655,53 @@ function EditModal({ doc, open, onClose, onSave }: {
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">Date</label>
-            <input type="date" className={cls} value={date} onChange={e => setDate(e.target.value)} />
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+              Date
+            </label>
+            <input
+              type="date"
+              className={cls}
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
           </div>
           <div>
-            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">File Type</label>
-            <select className={cls} value={type} onChange={e => setType(e.target.value)}>
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+              File Type
+            </label>
+            <select
+              className={cls}
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+            >
               <option value="PDF">PDF</option>
             </select>
           </div>
         </div>
         <div className="flex justify-end gap-2.5">
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={submit}>💾 Save</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={submit}>
+            💾 Save
+          </Button>
         </div>
       </div>
     </Modal>
-  )
+  );
 }
 
-interface FlatNode { doc: DocEnriched; depth: number }
+interface FlatNode {
+  doc: DocEnriched;
+  depth: number;
+}
 function flattenDocs(docs: DocEnriched[], depth = 0): FlatNode[] {
-  return docs.flatMap(doc => [
+  return docs.flatMap((doc) => [
     { doc, depth },
-    ...(doc.children ? flattenDocs(doc.children as DocEnriched[], depth + 1) : []),
-  ])
+    ...(doc.children
+      ? flattenDocs(doc.children as DocEnriched[], depth + 1)
+      : []),
+  ]);
 }
 
 // ══════════════════════════════════════════════
@@ -467,397 +709,518 @@ function flattenDocs(docs: DocEnriched[], depth = 0): FlatNode[] {
 // ══════════════════════════════════════════════
 
 export default function MasterPage() {
-  const { toast } = useToast()
-  const { user }  = useAuth()
+  const { toast } = useToast();
+  const { user } = useAuth();
 
-  const canUpload          = user?.role ? canUploadDocuments(user.role as AdminRole) : false
-  const isP1               = user?.role === 'P1'
-  const isPrivileged       = user ? hasFullDocumentAccess(user.role as AdminRole) : false
-  const canModifyDocuments = user ? !['DPDA', 'DPDO'].includes(user.role) : false
+  const canUpload = user?.role
+    ? canUploadDocuments(user.role as AdminRole)
+    : false;
+  const isP1 = user?.role === "P1";
+  const isPrivileged = user
+    ? hasFullDocumentAccess(user.role as AdminRole)
+    : false;
+  const canModifyDocuments = user
+    ? !["DPDA", "DPDO"].includes(user.role)
+    : false;
 
-  const [documents,      setDocuments]      = useState<DocEnriched[]>([])
-  const [query,          setQuery]          = useState('')
-  const [levelFilter,    setLevel]          = useState<DocLevel | 'ALL'>('ALL')
-  const [loading,        setLoading]        = useState(true)
-  const [attachmentsMap, setAttachmentsMap] = useState<Map<string, DocAttachment[]>>(new Map())
-  const [selection,      setSelection]      = useState<DocEnriched | null>(null)
-  const [uploadingId,    setUploadingId]    = useState<string | null>(null)
-  const [activeApproval, setActiveApproval] = useState<DocumentApproval | null>(null)
-  const [forwardModalOpen, setForwardModalOpen] = useState(false)
-  const [downloadingKey, setDownloadingKey] = useState<string | null>(null)
-  const attachmentInputRef = useRef<HTMLInputElement>(null)
-  const [editingAttachmentId,   setEditingAttachmentId]   = useState<string | null>(null)
-  const [editingAttachmentName, setEditingAttachmentName] = useState('')
-  const [renamingAttachmentId,  setRenamingAttachmentId]  = useState<string | null>(null)
-  const [isArchiving,           setIsArchiving]           = useState(false)
-  const [isDeleting,            setIsDeleting]            = useState(false)
-  const [attachModalOpen,   setAttachModalOpen]   = useState(false)
-  const [attachParentAttId, setAttachParentAttId] = useState<string | null>(null)
-  const [attachParentDocId, setAttachParentDocId] = useState<string>('')
+  const [documents, setDocuments] = useState<DocEnriched[]>([]);
+  const [query, setQuery] = useState("");
+  const [levelFilter, setLevel] = useState<DocLevel | "ALL">("ALL");
+  const [loading, setLoading] = useState(true);
+  const [attachmentsMap, setAttachmentsMap] = useState<
+    Map<string, DocAttachment[]>
+  >(new Map());
+  const [selection, setSelection] = useState<DocEnriched | null>(null);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [activeApproval, setActiveApproval] = useState<DocumentApproval | null>(
+    null
+  );
+  const [forwardModalOpen, setForwardModalOpen] = useState(false);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const [editingAttachmentId, setEditingAttachmentId] = useState<string | null>(
+    null
+  );
+  const [editingAttachmentName, setEditingAttachmentName] = useState("");
+  const [renamingAttachmentId, setRenamingAttachmentId] = useState<
+    string | null
+  >(null);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [attachModalOpen, setAttachModalOpen] = useState(false);
+  const [attachParentAttId, setAttachParentAttId] = useState<string | null>(
+    null
+  );
+  const [attachParentDocId, setAttachParentDocId] = useState<string>("");
 
   // ── Forward attachment state ───────────────────────────────────────────────
   // Tracks which specific attachment is being forwarded (table row or nested header)
-  const [forwardAttachment,    setForwardAttachment]    = useState<DocAttachment | null>(null)
-  const [forwardAttModalOpen,  setForwardAttModalOpen]  = useState(false)
+  const [forwardAttachment, setForwardAttachment] =
+    useState<DocAttachment | null>(null);
+  const [forwardAttModalOpen, setForwardAttModalOpen] = useState(false);
 
-  const deleteAttDisc  = useDisclosure<DocAttachment>()
-  const uploadModal    = useModal()
-  const editModal      = useModal()
-  const archiveDisc    = useDisclosure<string>()
-  const deleteDisc     = useDisclosure<string>()
-  const approvalModal  = useModal()
-  const [attachmentNavStack, setAttachmentNavStack] = useState<AttachmentNavEntry[]>([])
+  const deleteAttDisc = useDisclosure<DocAttachment>();
+  const uploadModal = useModal();
+  const editModal = useModal();
+  const archiveDisc = useDisclosure<string>();
+  const deleteDisc = useDisclosure<string>();
+  const approvalModal = useModal();
+  const [attachmentNavStack, setAttachmentNavStack] = useState<
+    AttachmentNavEntry[]
+  >([]);
 
-  useRealtimeMasterDocs({ setDocuments, setAttachmentsMap, user, isPrivileged, isP1 })
+  useRealtimeMasterDocs({
+    setDocuments,
+    setAttachmentsMap,
+    user,
+    isPrivileged,
+    isP1,
+  });
 
-  const handleDownloadFile = useCallback(async (
-    fileUrl: string, suggestedName: string, downloadKey: string, sourceDocumentId?: string,
-  ) => {
-    try {
-      setDownloadingKey(downloadKey)
-      await saveFileFromUrl(fileUrl, suggestedName)
-      toast.success(`Downloaded "${suggestedName}" successfully.`)
-    } catch { toast.error('Could not download the file.') }
-    finally { setDownloadingKey(current => current === downloadKey ? null : current) }
-  }, [toast])
+  const handleDownloadFile = useCallback(
+    async (
+      fileUrl: string,
+      suggestedName: string,
+      downloadKey: string,
+      sourceDocumentId?: string
+    ) => {
+      try {
+        setDownloadingKey(downloadKey);
+        await saveFileFromUrl(fileUrl, suggestedName);
+        toast.success(`Downloaded "${suggestedName}" successfully.`);
+      } catch {
+        toast.error("Could not download the file.");
+      } finally {
+        setDownloadingKey((current) =>
+          current === downloadKey ? null : current
+        );
+      }
+    },
+    [toast]
+  );
 
-  const handlePrintFile = useCallback(async (fileUrl: string, fileName: string, _sourceDocumentId?: string) => {
-    try {
-      await printFileFromUrl(fileUrl)
-      toast.success(`Opened print preview for "${fileName}".`)
-    } catch { toast.error('Could not print the file.') }
-  }, [toast])
+  const handlePrintFile = useCallback(
+    async (fileUrl: string, fileName: string, _sourceDocumentId?: string) => {
+      try {
+        await printFileFromUrl(fileUrl);
+        toast.success(`Opened print preview for "${fileName}".`);
+      } catch {
+        toast.error("Could not print the file.");
+      }
+    },
+    [toast]
+  );
 
   // Load — filter by uploaded_by unless user is privileged
   useEffect(() => {
     async function loadAll() {
-      if (!user) return
+      if (!user) return;
       try {
-        const [docs, archived] = await Promise.all([getMasterDocuments(), getArchivedDocs()])
+        const [docs, archived] = await Promise.all([
+          getMasterDocuments(),
+          getArchivedDocs(),
+        ]);
         const archivedIds = new Set(
           (archived ?? [])
-            .map((a: any) => String(a.id ?? ''))
-            .filter((id: string) => id.startsWith('arc-md-'))
-            .map((id: string) => id.replace('arc-md-', ''))
-        )
+            .map((a: any) => String(a.id ?? ""))
+            .filter((id: string) => id.startsWith("arc-md-"))
+            .map((id: string) => id.replace("arc-md-", ""))
+        );
 
         const activeDocs = docs.filter((d: DocWithUrl) => {
-          if (archivedIds.has(d.id)) return false
-          if (canSeeAllDocuments(user.role)) return true
-          return d.uploaded_by === user.role
-        })
+          if (archivedIds.has(d.id)) return false;
+          if (canSeeAllDocuments(user.role)) return true;
+          return d.uploaded_by === user.role;
+        });
 
         const enriched: DocEnriched[] = await Promise.all(
           activeDocs.map(async (doc: DocWithUrl) => {
-            const approval = await getApproval(doc.id, 'master')
-            return { ...doc, approval }
+            const approval = await getApproval(doc.id, "master");
+            return { ...doc, approval };
           })
-        )
-        setDocuments(enriched)
+        );
+        setDocuments(enriched);
 
         if (docs.length > 0) {
           const { data: allAtts } = await supabase
-            .from('master_document_attachments')
-            .select('*')
-            .in('master_document_id', docs.map((d: DocWithUrl) => d.id))
-            .order('created_at', { ascending: true })
+            .from("master_document_attachments")
+            .select("*")
+            .in(
+              "master_document_id",
+              docs.map((d: DocWithUrl) => d.id)
+            )
+            .order("created_at", { ascending: true });
 
-          const map = new Map<string, DocAttachment[]>()
-          for (const row of (allAtts ?? [])) {
-            const att = normaliseAttachment(row)
-            const key = att.parent_id ?? att.master_document_id
-            const list = map.get(key) ?? []
-            list.push(att)
-            map.set(key, list)
+          const map = new Map<string, DocAttachment[]>();
+          for (const row of allAtts ?? []) {
+            const att = normaliseAttachment(row);
+            const key = att.parent_id ?? att.master_document_id;
+            const list = map.get(key) ?? [];
+            list.push(att);
+            map.set(key, list);
           }
-          setAttachmentsMap(map)
+          setAttachmentsMap(map);
         }
 
-        if (enriched.length > 0) setSelection(enriched[0])
+        if (enriched.length > 0) setSelection(enriched[0]);
       } catch (err) {
-        console.error('loadAll error:', err)
+        console.error("loadAll error:", err);
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     }
-    loadAll()
-  }, [user, isPrivileged, isP1])
+    loadAll();
+  }, [user, isPrivileged, isP1]);
 
   useEffect(() => {
     if (selection) {
-      setAttachmentNavStack([{ kind: 'document', doc: selection }])
+      setAttachmentNavStack([{ kind: "document", doc: selection }]);
     } else {
-      setAttachmentNavStack([])
+      setAttachmentNavStack([]);
     }
-  }, [selection?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selection?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleAdd(newDoc: DocWithUrl) {
-    await addMasterDocument(newDoc)
-    await createApproval(newDoc.id, 'master', newDoc.title)
-    const enriched: DocEnriched = { ...newDoc, approval: null }
-    setDocuments(prev => {
-      if (prev.some(d => d.id === enriched.id)) return prev.map(d => d.id === enriched.id ? { ...d, ...enriched } : d)
-      return [...prev, enriched]
-    })
-    setAttachmentsMap(prev => { const next = new Map(prev); next.set(newDoc.id, []); return next })
-    setSelection(enriched)
+    await addMasterDocument(newDoc);
+    await createApproval(newDoc.id, "master", newDoc.title);
+    const enriched: DocEnriched = { ...newDoc, approval: null };
+    setDocuments((prev) => {
+      if (prev.some((d) => d.id === enriched.id))
+        return prev.map((d) =>
+          d.id === enriched.id ? { ...d, ...enriched } : d
+        );
+      return [...prev, enriched];
+    });
+    setAttachmentsMap((prev) => {
+      const next = new Map(prev);
+      next.set(newDoc.id, []);
+      return next;
+    });
+    setSelection(enriched);
   }
 
   async function handleSave(updated: DocWithUrl) {
-    await updateMasterDocument(updated)
-    await logEditDocument(updated.title)
-    setDocuments(prev => prev.map(d => d.id === updated.id ? { ...d, ...updated } : d))
-    if (selection?.id === updated.id) setSelection(prev => prev ? { ...prev, ...updated } : prev)
-    toast.success('Document updated.')
-    editModal.close()
+    await updateMasterDocument(updated);
+    await logEditDocument(updated.title);
+    setDocuments((prev) =>
+      prev.map((d) => (d.id === updated.id ? { ...d, ...updated } : d))
+    );
+    if (selection?.id === updated.id)
+      setSelection((prev) => (prev ? { ...prev, ...updated } : prev));
+    toast.success("Document updated.");
+    editModal.close();
   }
 
   async function handleArchiveDoc() {
-    if (!selection) return
-    setIsArchiving(true)
+    if (!selection) return;
+    setIsArchiving(true);
     try {
-      const doc  = selection
-      const date = new Date().toISOString().split('T')[0]
+      const doc = selection;
+      const date = new Date().toISOString().split("T")[0];
 
-      const gdriveFileId  = (doc as any).gdrive_file_id
-      const poolAccountId = (doc as any).pool_account_id
+      const gdriveFileId = (doc as any).gdrive_file_id;
+      const poolAccountId = (doc as any).pool_account_id;
 
       if (gdriveFileId && poolAccountId) {
-        const res = await fetch('/api/gdrive/archive', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
+        const res = await fetch("/api/gdrive/archive", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
             gdriveFileId,
             poolAccountId,
-            category: 'master_documents',
+            category: "master_documents",
           }),
-        })
+        });
 
         if (!res.ok) {
-          const json = await res.json().catch(() => ({}))
-          toast.error(json.error ?? 'Could not move file to the archive. Please try again.')
+          const json = await res.json().catch(() => ({}));
+          toast.error(
+            json.error ??
+              "Could not move file to the archive. Please try again."
+          );
         }
       }
 
       await addArchivedDoc({
-        id:          `arc-md-${doc.id}`,
-        title:       doc.title,
-        type:        'Master Document',
+        id: `arc-md-${doc.id}`,
+        title: doc.title,
+        type: "Master Document",
         archivedDate: date,
-        archivedBy:  user?.role ?? 'P1',
-      })
+        archivedBy: user?.role ?? "P1",
+      });
 
-      await archiveMasterDocument(doc.id)
-      await logArchiveDocument(doc.title, 'master document')
+      await archiveMasterDocument(doc.id);
+      await logArchiveDocument(doc.title, "master document");
 
-      setDocuments(prev => prev.filter(d => d.id !== doc.id))
-      setSelection(null)
-      toast.success('Document archived.')
-      archiveDisc.close()
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+      setSelection(null);
+      toast.success("Document archived.");
+      archiveDisc.close();
     } finally {
-      setIsArchiving(false)
+      setIsArchiving(false);
     }
   }
 
   async function handleDeleteDoc() {
-    if (!selection) return
-    const doc = selection
-    setIsDeleting(true)
+    if (!selection) return;
+    const doc = selection;
+    setIsDeleting(true);
     try {
       await deleteDriveFile(
         (doc as any).gdrive_file_id,
         (doc as any).pool_account_id
-      )
-      await deleteMasterDocument(doc.id)
-      await logDeleteDocument(doc.title, 'master document')
-      setDocuments(prev => prev.filter(d => d.id !== doc.id))
-      setSelection(null)
-      toast.success('Document deleted permanently.')
-      deleteDisc.close()
-    }
-    catch (err: any) {
-      toast.error(err?.message ?? 'Could not delete file from Google Drive. Please try again.')
-      return
-    }
-    finally {
-      setIsDeleting(false)
+      );
+      await deleteMasterDocument(doc.id);
+      await logDeleteDocument(doc.title, "master document");
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+      setSelection(null);
+      toast.success("Document deleted permanently.");
+      deleteDisc.close();
+    } catch (err: any) {
+      toast.error(
+        err?.message ??
+          "Could not delete file from Google Drive. Please try again."
+      );
+      return;
+    } finally {
+      setIsDeleting(false);
     }
   }
 
-  async function handleUpload(parentDocId: string, parentAttId: string | null, files: FileList) {
-    if (!user) { toast.error('Not authenticated.'); return }
+  async function handleUpload(
+    parentDocId: string,
+    parentAttId: string | null,
+    files: FileList
+  ) {
+    if (!user) {
+      toast.error("Not authenticated.");
+      return;
+    }
 
-    setUploadingId(parentAttId ?? parentDocId)
-    let count = 0
+    setUploadingId(parentAttId ?? parentDocId);
+    let count = 0;
 
     for (const file of Array.from(files)) {
-      let driveResult: DriveAttachmentResult
+      let driveResult: DriveAttachmentResult;
       try {
-        driveResult = await uploadAttachmentToDrive(file, user.role, parentDocId, parentAttId)
+        driveResult = await uploadAttachmentToDrive(
+          file,
+          user.role,
+          parentDocId,
+          parentAttId
+        );
       } catch (err: any) {
-        toast.error(err?.message ?? `Failed to upload "${file.name}" to Google Drive.`)
-        continue
+        toast.error(
+          err?.message ?? `Failed to upload "${file.name}" to Google Drive.`
+        );
+        continue;
       }
 
       const parentDepth = parentAttId
         ? (() => {
             for (const list of attachmentsMap.values()) {
-              const parent = list.find(a => a.id === parentAttId)
-              if (parent) return parent.depth + 1
+              const parent = list.find((a) => a.id === parentAttId);
+              if (parent) return parent.depth + 1;
             }
-            return 1
+            return 1;
           })()
-        : 0
+        : 0;
 
       const newAtt = await dbAddAttachment({
         master_document_id: parentDocId,
-        parent_id:          parentAttId,
-        depth:              parentDepth,
-        title:              file.name,
-        file_name:          file.name,
-        file_size_bytes:    driveResult.fileSizeBytes,
-        mime_type:          file.type || null,
-        gdrive_file_id:     driveResult.gdriveFileId,
-        gdrive_url:         driveResult.gdrive_url,
-        pool_account_id:    driveResult.poolAccountId,
-      })
+        parent_id: parentAttId,
+        depth: parentDepth,
+        title: file.name,
+        file_name: file.name,
+        file_size_bytes: driveResult.fileSizeBytes,
+        mime_type: file.type || null,
+        gdrive_file_id: driveResult.gdriveFileId,
+        gdrive_url: driveResult.gdrive_url,
+        pool_account_id: driveResult.poolAccountId,
+      });
 
       if (newAtt) {
-        const mapKey = parentAttId ?? parentDocId
-        setAttachmentsMap(prev => {
-          const next = new Map(prev)
-          const existing = next.get(mapKey) ?? []
-          if (existing.some(a => a.id === newAtt.id)) return prev
-          next.set(mapKey, [...existing, newAtt])
-          return next
-        })
-        count++
+        const mapKey = parentAttId ?? parentDocId;
+        setAttachmentsMap((prev) => {
+          const next = new Map(prev);
+          const existing = next.get(mapKey) ?? [];
+          if (existing.some((a) => a.id === newAtt.id)) return prev;
+          next.set(mapKey, [...existing, newAtt]);
+          return next;
+        });
+        count++;
       }
     }
 
-    if (count > 0) toast.success(`${count} file${count > 1 ? 's' : ''} attached.`)
-    setUploadingId(null)
+    if (count > 0)
+      toast.success(`${count} file${count > 1 ? "s" : ""} attached.`);
+    setUploadingId(null);
   }
 
   async function handleDeleteAttachment() {
-    const att = deleteAttDisc.payload
-    if (!att) return
-    setIsDeleting(true)
+    const att = deleteAttDisc.payload;
+    if (!att) return;
+    setIsDeleting(true);
     try {
-      await deleteDriveFile(att.gdrive_file_id, att.pool_account_id)
-      const ok = await dbDeleteAttachment(att.id)
-      if (!ok) { toast.error('Could not delete attachment.'); return }
-      const mapKey = att.parent_id ?? att.master_document_id
-      setAttachmentsMap(prev => {
-        const next = new Map(prev)
-        next.set(mapKey, (next.get(mapKey) ?? []).filter(a => a.id !== att.id))
-        return next
-      })
-      setAttachmentNavStack(prev => {
-        const idx = prev.findIndex(entry => entry.kind === 'attachment' && entry.att.id === att.id)
-        return idx === -1 ? prev : prev.slice(0, idx)
-      })
-      toast.success(`"${displayName(att)}" deleted.`)
-      deleteAttDisc.close()
+      await deleteDriveFile(att.gdrive_file_id, att.pool_account_id);
+      const ok = await dbDeleteAttachment(att.id);
+      if (!ok) {
+        toast.error("Could not delete attachment.");
+        return;
+      }
+      const mapKey = att.parent_id ?? att.master_document_id;
+      setAttachmentsMap((prev) => {
+        const next = new Map(prev);
+        next.set(
+          mapKey,
+          (next.get(mapKey) ?? []).filter((a) => a.id !== att.id)
+        );
+        return next;
+      });
+      setAttachmentNavStack((prev) => {
+        const idx = prev.findIndex(
+          (entry) => entry.kind === "attachment" && entry.att.id === att.id
+        );
+        return idx === -1 ? prev : prev.slice(0, idx);
+      });
+      toast.success(`"${displayName(att)}" deleted.`);
+      deleteAttDisc.close();
     } finally {
-      setIsDeleting(false)
+      setIsDeleting(false);
     }
   }
 
-  async function handleRenameAttachment(att: DocAttachment, newTitle: string): Promise<boolean> {
-    const trimmed = newTitle.trim()
-    if (!trimmed) { toast.error('Title cannot be empty.'); return false }
-    if (trimmed === att.title) return true
-    const ok = await dbRenameAttachment(att.id, trimmed)
-    if (!ok) { toast.error('Failed to rename attachment.'); return false }
-    const mapKey = att.parent_id ?? att.master_document_id
-    setAttachmentsMap(prev => {
-      const next = new Map(prev)
-      next.set(mapKey, (next.get(mapKey) ?? []).map(a => a.id === att.id ? { ...a, title: trimmed } : a))
-      return next
-    })
-    await logRenameAttachment(att.title, trimmed)
-    toast.success('Attachment renamed.')
-    return true
+  async function handleRenameAttachment(
+    att: DocAttachment,
+    newTitle: string
+  ): Promise<boolean> {
+    const trimmed = newTitle.trim();
+    if (!trimmed) {
+      toast.error("Title cannot be empty.");
+      return false;
+    }
+    if (trimmed === att.title) return true;
+    const ok = await dbRenameAttachment(att.id, trimmed);
+    if (!ok) {
+      toast.error("Failed to rename attachment.");
+      return false;
+    }
+    const mapKey = att.parent_id ?? att.master_document_id;
+    setAttachmentsMap((prev) => {
+      const next = new Map(prev);
+      next.set(
+        mapKey,
+        (next.get(mapKey) ?? []).map((a) =>
+          a.id === att.id ? { ...a, title: trimmed } : a
+        )
+      );
+      return next;
+    });
+    await logRenameAttachment(att.title, trimmed);
+    toast.success("Attachment renamed.");
+    return true;
   }
 
   async function handleAttachmentModalResult(result: AttachmentUploadResult) {
-    if (!user || !selection) return
+    if (!user || !selection) return;
 
-    setUploadingId(attachParentAttId ?? attachParentDocId)
+    setUploadingId(attachParentAttId ?? attachParentDocId);
 
     const parentDepth = attachParentAttId
       ? (() => {
           for (const list of attachmentsMap.values()) {
-            const parent = list.find(a => a.id === attachParentAttId)
-            if (parent) return parent.depth + 1
+            const parent = list.find((a) => a.id === attachParentAttId);
+            if (parent) return parent.depth + 1;
           }
-          return 1
+          return 1;
         })()
-      : 0
+      : 0;
 
-    const { data: newAtt, error } = await (await import('@/lib/supabase')).supabase
-      .from('master_document_attachments')
+    const { data: newAtt, error } = await (
+      await import("@/lib/supabase")
+    ).supabase
+      .from("master_document_attachments")
       .insert({
         master_document_id: attachParentDocId,
-        parent_id:          attachParentAttId,
-        depth:              parentDepth,
-        title:              result.title,
-        file_name:          result.fileName,
-        file_size_bytes:    result.fileSizeBytes,
-        mime_type:          result.mimeType,
-        gdrive_file_id:     result.gdriveFileId,
-        gdrive_url:         result.gdriveUrl,
-        pool_account_id:    result.poolAccountId,
+        parent_id: attachParentAttId,
+        depth: parentDepth,
+        title: result.title,
+        file_name: result.fileName,
+        file_size_bytes: result.fileSizeBytes,
+        mime_type: result.mimeType,
+        gdrive_file_id: result.gdriveFileId,
+        gdrive_url: result.gdriveUrl,
+        pool_account_id: result.poolAccountId,
       })
       .select()
-      .single()
+      .single();
 
     if (error || !newAtt) {
-      toast.error('Attachment uploaded to Drive but could not save metadata. Please try again.')
+      toast.error(
+        "Attachment uploaded to Drive but could not save metadata. Please try again."
+      );
     } else {
-      const mapKey = attachParentAttId ?? attachParentDocId
-      setAttachmentsMap(prev => {
-        const next = new Map(prev)
-        const existing = next.get(mapKey) ?? []
-        if (existing.some(a => a.id === newAtt.id)) return prev
-        next.set(mapKey, [...existing, newAtt])
-        return next
-      })
+      const mapKey = attachParentAttId ?? attachParentDocId;
+      setAttachmentsMap((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(mapKey) ?? [];
+        if (existing.some((a) => a.id === newAtt.id)) return prev;
+        next.set(mapKey, [...existing, newAtt]);
+        return next;
+      });
 
-      await logAddAttachment(result.title, selection.title)
+      await logAddAttachment(result.title, selection.title);
     }
 
-    setUploadingId(null)
+    setUploadingId(null);
   }
 
-  const countActiveAttachments = useCallback((parentId: string): number => {
-    const children = attachmentsMap.get(parentId) ?? []
-    return children.reduce((total, att) => total + 1 + countActiveAttachments(att.id), 0)
-  }, [attachmentsMap])
+  const countActiveAttachments = useCallback(
+    (parentId: string): number => {
+      const children = attachmentsMap.get(parentId) ?? [];
+      return children.reduce(
+        (total, att) => total + 1 + countActiveAttachments(att.id),
+        0
+      );
+    },
+    [attachmentsMap]
+  );
 
-  const childCount = useCallback((attId: string): number => {
-    const children = attachmentsMap.get(attId) ?? []
-    return children.reduce((total, att) => total + 1 + childCount(att.id), 0)
-  }, [attachmentsMap])
+  const childCount = useCallback(
+    (attId: string): number => {
+      const children = attachmentsMap.get(attId) ?? [];
+      return children.reduce((total, att) => total + 1 + childCount(att.id), 0);
+    },
+    [attachmentsMap]
+  );
 
-  const allFlat  = useMemo(() => flattenDocs(documents), [documents])
-  const filtered = useMemo(() => allFlat.filter(({ doc }) => {
-    const q = query.trim().toLowerCase()
-    const matchesDocument = !q || doc.title.toLowerCase().includes(q)
-    const matchesAttachment = q ? (() => {
-      const searchNested = (parentId: string): boolean => {
-        const items = attachmentsMap.get(parentId) ?? []
-        return items.some(att =>
-          (att.title.toLowerCase().includes(q) || (att.file_name ?? '').toLowerCase().includes(q)) ||
-          searchNested(att.id)
-        )
-      }
-      return searchNested(doc.id)
-    })() : false
-    return (matchesDocument || matchesAttachment) &&
-           (levelFilter === 'ALL' || doc.level === levelFilter)
-  }), [allFlat, query, levelFilter, attachmentsMap])
+  const allFlat = useMemo(() => flattenDocs(documents), [documents]);
+  const filtered = useMemo(
+    () =>
+      allFlat.filter(({ doc }) => {
+        const q = query.trim().toLowerCase();
+        const matchesDocument = !q || doc.title.toLowerCase().includes(q);
+        const matchesAttachment = q
+          ? (() => {
+              const searchNested = (parentId: string): boolean => {
+                const items = attachmentsMap.get(parentId) ?? [];
+                return items.some(
+                  (att) =>
+                    att.title.toLowerCase().includes(q) ||
+                    (att.file_name ?? "").toLowerCase().includes(q) ||
+                    searchNested(att.id)
+                );
+              };
+              return searchNested(doc.id);
+            })()
+          : false;
+        return (
+          (matchesDocument || matchesAttachment) &&
+          (levelFilter === "ALL" || doc.level === levelFilter)
+        );
+      }),
+    [allFlat, query, levelFilter, attachmentsMap]
+  );
 
   const {
     currentPage,
@@ -870,104 +1233,128 @@ export default function MasterPage() {
     items: filtered,
     defaultPageSize: 25,
     resetDeps: [query, levelFilter],
-  })
+  });
 
-  const currentAttachmentEntry = attachmentNavStack.length > 0
-    ? attachmentNavStack[attachmentNavStack.length - 1]
-    : null
+  const currentAttachmentEntry =
+    attachmentNavStack.length > 0
+      ? attachmentNavStack[attachmentNavStack.length - 1]
+      : null;
 
   const currentAttachments = useMemo((): DocAttachment[] => {
-    if (!selection) return []
-    if (currentAttachmentEntry?.kind === 'attachment') {
-      return attachmentsMap.get(currentAttachmentEntry.att.id) ?? []
+    if (!selection) return [];
+    if (currentAttachmentEntry?.kind === "attachment") {
+      return attachmentsMap.get(currentAttachmentEntry.att.id) ?? [];
     }
-    return (attachmentsMap.get(selection.id) ?? []).filter(a => !a.parent_id)
-  }, [selection, attachmentsMap, currentAttachmentEntry])
+    return (attachmentsMap.get(selection.id) ?? []).filter((a) => !a.parent_id);
+  }, [selection, attachmentsMap, currentAttachmentEntry]);
 
   const filteredCurrentAttachments = useMemo((): DocAttachment[] => {
-    const q = query.trim().toLowerCase()
-    if (!q) return currentAttachments
+    const q = query.trim().toLowerCase();
+    if (!q) return currentAttachments;
     const searchNested = (parentId: string): boolean => {
-      const items = attachmentsMap.get(parentId) ?? []
-      return items.some(att =>
-        (att.title.toLowerCase().includes(q) || (att.file_name ?? '').toLowerCase().includes(q)) ||
+      const items = attachmentsMap.get(parentId) ?? [];
+      return items.some(
+        (att) =>
+          att.title.toLowerCase().includes(q) ||
+          (att.file_name ?? "").toLowerCase().includes(q) ||
+          searchNested(att.id)
+      );
+    };
+    return currentAttachments.filter(
+      (att) =>
+        att.title.toLowerCase().includes(q) ||
+        (att.file_name ?? "").toLowerCase().includes(q) ||
         searchNested(att.id)
-      )
-    }
-    return currentAttachments.filter(att =>
-      att.title.toLowerCase().includes(q) ||
-      (att.file_name ?? '').toLowerCase().includes(q) ||
-      searchNested(att.id)
-    )
-  }, [currentAttachments, query, attachmentsMap])
+    );
+  }, [currentAttachments, query, attachmentsMap]);
 
-  const currentParentAttachment = currentAttachmentEntry?.kind === 'attachment'
-    ? currentAttachmentEntry.att
-    : null
+  const currentParentAttachment =
+    currentAttachmentEntry?.kind === "attachment"
+      ? currentAttachmentEntry.att
+      : null;
 
   function handleSelectDocument(doc: DocEnriched) {
-    setSelection(doc)
-    setAttachmentNavStack([{ kind: 'document', doc }])
+    setSelection(doc);
+    setAttachmentNavStack([{ kind: "document", doc }]);
   }
 
   function handleDrillDown(att: DocAttachment) {
-    setAttachmentNavStack(prev => [...prev, { kind: 'attachment', att }])
+    setAttachmentNavStack((prev) => [...prev, { kind: "attachment", att }]);
   }
 
   function handleNavigateTo(index: number) {
-    setAttachmentNavStack(prev => prev.slice(0, index + 1))
+    setAttachmentNavStack((prev) => prev.slice(0, index + 1));
   }
 
   // ── Open forward modal for a specific attachment ──────────────────────────
   function handleForwardAttachment(att: DocAttachment) {
-    setForwardAttachment(att)
-    setForwardAttModalOpen(true)
+    setForwardAttachment(att);
+    setForwardAttModalOpen(true);
   }
 
-  const suggestedAttachmentLevel: 'REGIONAL' | 'PROVINCIAL' | 'STATION' = (() => {
-    if (!currentAttachmentEntry) return 'PROVINCIAL'
-    if (currentAttachmentEntry.kind === 'attachment') {
-      const att = currentAttachmentEntry.att as any
-      if (att.level === 'REGIONAL') return 'PROVINCIAL'
-      if (att.level === 'PROVINCIAL') return 'STATION'
-      return 'STATION'
-    }
-    return 'PROVINCIAL'
-  })()
+  const suggestedAttachmentLevel: "REGIONAL" | "PROVINCIAL" | "STATION" =
+    (() => {
+      if (!currentAttachmentEntry) return "PROVINCIAL";
+      if (currentAttachmentEntry.kind === "attachment") {
+        const att = currentAttachmentEntry.att as any;
+        if (att.level === "REGIONAL") return "PROVINCIAL";
+        if (att.level === "PROVINCIAL") return "STATION";
+        return "STATION";
+      }
+      return "PROVINCIAL";
+    })();
 
   return (
     <>
       <PageHeader title="Master Documents" />
 
-      <div className="p-6 flex flex-col gap-5 flex-1" style={{ height: 'calc(100vh - 56px)' }}>
+      <div
+        className="p-6 flex flex-col gap-5 flex-1"
+        style={{ height: "calc(100vh - 56px)" }}
+      >
         <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-hidden flex flex-col flex-1 min-h-0">
-
           {/* Toolbar */}
           <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50 flex-shrink-0">
-            <SearchInput value={query} onChange={setQuery} placeholder="Search documents and attachments…" className="max-w-xs flex-1" />
-            <ToolbarSelect defaultValue="ALL" onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setLevel(e.target.value as DocLevel | 'ALL')}>
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              placeholder="Search documents and attachments…"
+              className="max-w-xs flex-1"
+            />
+            <ToolbarSelect
+              defaultValue="ALL"
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                setLevel(e.target.value as DocLevel | "ALL")
+              }
+            >
               <option value="ALL">All Levels</option>
               <option value="REGIONAL">Regional</option>
               <option value="PROVINCIAL">Provincial</option>
               <option value="STATION">Station</option>
             </ToolbarSelect>
             {canUpload && (
-              <Button variant="primary" size="sm" className="ml-auto" onClick={uploadModal.open}>
+              <Button
+                variant="primary"
+                size="sm"
+                className="ml-auto"
+                onClick={uploadModal.open}
+              >
                 + Upload
               </Button>
             )}
           </div>
 
           {/* Split view */}
-          <div className="flex flex-1 min-h-0 overflow-hidden">
-
+          <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
             {/* Left: document list */}
-            <div className="flex-shrink-0 border-r border-slate-200 flex flex-col overflow-hidden" style={{ width: 280 }}>
+            <div className="flex-shrink-0 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col overflow-hidden w-full md:w-[280px] max-h-[40vh] md:max-h-none">
               <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex-shrink-0">
                 <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 leading-none">
                   Documents · {filtered.length}
                 </p>
-                <p className="text-[10px] text-slate-400 mt-1">Click to view details</p>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Click to view details
+                </p>
               </div>
 
               <div className="flex-1 overflow-y-auto py-2 px-2">
@@ -976,33 +1363,53 @@ export default function MasterPage() {
                     <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
                   </div>
                 ) : filtered.length === 0 ? (
-                  <EmptyState icon="📁" title="No documents" description="No active master documents." />
+                  <EmptyState
+                    icon="📁"
+                    title="No documents"
+                    description="No active master documents."
+                  />
                 ) : (
                   paginatedDocs.map(({ doc, depth }) => {
-                    const activeCount = countActiveAttachments(doc.id)
-                    const levelColor = doc.level === 'REGIONAL' ? '#3b63b8' : doc.level === 'PROVINCIAL' ? '#f59e0b' : '#10b981'
-                    const indentPx = depth * 16 + 8
-                    const rowWidth = `calc(100% - ${indentPx + 8}px)`
+                    const activeCount = countActiveAttachments(doc.id);
+                    const levelColor =
+                      doc.level === "REGIONAL"
+                        ? "#3b63b8"
+                        : doc.level === "PROVINCIAL"
+                        ? "#f59e0b"
+                        : "#10b981";
+                    const indentPx = depth * 16 + 8;
+                    const rowWidth = `calc(100% - ${indentPx + 8}px)`;
                     return (
                       <div
                         key={doc.id}
                         style={{ marginLeft: indentPx, width: rowWidth }}
                         className={`flex items-center gap-1.5 pr-2 pl-2.5 py-2.5 rounded-lg mb-0.5 cursor-pointer transition ${
-                          selection?.id === doc.id ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-700 hover:bg-slate-100'
+                          selection?.id === doc.id
+                            ? "bg-blue-600 text-white shadow-sm"
+                            : "text-slate-700 hover:bg-slate-100"
                         }`}
                         onClick={() => handleSelectDocument(doc)}
                       >
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: levelColor }} />
-                        <span className="flex-1 truncate text-[13px] font-medium">{doc.title}</span>
+                        <span
+                          className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{ background: levelColor }}
+                        />
+                        <span className="flex-1 truncate text-[13px] font-medium">
+                          {doc.title}
+                        </span>
                         {activeCount > 0 && (
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${
-                            selection?.id === doc.id ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-500'
-                          }`}>
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${
+                              selection?.id === doc.id
+                                ? "bg-white/20 text-white"
+                                : "bg-slate-200 text-slate-500"
+                            }`}
+                          >
                             <Paperclip size={11} /> {activeCount}
                           </span>
                         )}
                       </div>
-                    )
+                    );
                   })
                 )}
               </div>
@@ -1019,10 +1426,19 @@ export default function MasterPage() {
 
               {/* Legend */}
               <div className="px-4 py-3 border-t border-slate-100 space-y-1.5 flex-shrink-0">
-                {[{ color: '#3b63b8', label: 'Regional' }, { color: '#f59e0b', label: 'Provincial' }, { color: '#10b981', label: 'Station' }].map(l => (
+                {[
+                  { color: "#3b63b8", label: "Regional" },
+                  { color: "#f59e0b", label: "Provincial" },
+                  { color: "#10b981", label: "Station" },
+                ].map((l) => (
                   <div key={l.label} className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full" style={{ background: l.color }} />
-                    <span className="text-[11px] text-slate-400">{l.label}</span>
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ background: l.color }}
+                    />
+                    <span className="text-[11px] text-slate-400">
+                      {l.label}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -1033,21 +1449,32 @@ export default function MasterPage() {
               <div className="h-full overflow-y-auto p-6 transition-all duration-200">
                 {!selection ? (
                   <div className="h-full flex items-center justify-center">
-                    <EmptyState icon="📄" title="Select a document" description="Click any document from the list to view its details." />
+                    <EmptyState
+                      icon="📄"
+                      title="Select a document"
+                      description="Click any document from the list to view its details."
+                    />
                   </div>
                 ) : (
                   <div className="animate-fade-up space-y-5">
-
-                    <Breadcrumb navStack={attachmentNavStack} onNavigateTo={handleNavigateTo} />
+                    <Breadcrumb
+                      navStack={attachmentNavStack}
+                      onNavigateTo={handleNavigateTo}
+                    />
 
                     {/* Document / attachment header */}
-                    {currentAttachmentEntry?.kind === 'attachment' ? (
+                    {currentAttachmentEntry?.kind === "attachment" ? (
                       // ── Drilled into an attachment ──
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-xl flex-shrink-0">
-                              {fileInfoFromMime(currentAttachmentEntry.att.mime_type, currentAttachmentEntry.att.file_name).icon}
+                              {
+                                fileInfoFromMime(
+                                  currentAttachmentEntry.att.mime_type,
+                                  currentAttachmentEntry.att.file_name
+                                ).icon
+                              }
                             </span>
                             <h2 className="text-lg font-extrabold text-slate-800 leading-tight truncate">
                               {displayName(currentAttachmentEntry.att)}
@@ -1058,59 +1485,102 @@ export default function MasterPage() {
                           </div>
                           <div className="flex items-center gap-2 flex-wrap mt-1">
                             <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
-                              {fileInfoFromMime(currentAttachmentEntry.att.mime_type, currentAttachmentEntry.att.file_name).label}
+                              {
+                                fileInfoFromMime(
+                                  currentAttachmentEntry.att.mime_type,
+                                  currentAttachmentEntry.att.file_name
+                                ).label
+                              }
                             </span>
                             <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
-                              {formatBytes(currentAttachmentEntry.att.file_size_bytes)}
+                              {formatBytes(
+                                currentAttachmentEntry.att.file_size_bytes
+                              )}
                             </span>
                             <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
-                              📅 {new Date(currentAttachmentEntry.att.created_at).toLocaleString('en-PH', {
-                                year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                              📅{" "}
+                              {new Date(
+                                currentAttachmentEntry.att.created_at
+                              ).toLocaleString("en-PH", {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
                               })}
                             </span>
                           </div>
                         </div>
                         <div className="flex gap-1.5 flex-shrink-0 flex-wrap justify-end">
                           <button
-                            onClick={() => window.open(currentAttachmentEntry.att.gdrive_url, '_blank')}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition">
+                            onClick={() =>
+                              window.open(
+                                currentAttachmentEntry.att.gdrive_url,
+                                "_blank"
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
+                          >
                             <Eye size={14} /> View File
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDownloadFile(
-                              currentAttachmentEntry.att.gdrive_url,
-                              getSuggestedFileName(displayName(currentAttachmentEntry.att), currentAttachmentEntry.att.gdrive_url),
-                              `attachment-${currentAttachmentEntry.att.id}`,
-                              currentAttachmentEntry.att.master_document_id
-                            )}
-                            disabled={downloadingKey === `attachment-${currentAttachmentEntry.att.id}`}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition disabled:opacity-60">
+                            onClick={() =>
+                              handleDownloadFile(
+                                currentAttachmentEntry.att.gdrive_url,
+                                getSuggestedFileName(
+                                  displayName(currentAttachmentEntry.att),
+                                  currentAttachmentEntry.att.gdrive_url
+                                ),
+                                `attachment-${currentAttachmentEntry.att.id}`,
+                                currentAttachmentEntry.att.master_document_id
+                              )
+                            }
+                            disabled={
+                              downloadingKey ===
+                              `attachment-${currentAttachmentEntry.att.id}`
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition disabled:opacity-60"
+                          >
                             <Download size={14} />
-                            {downloadingKey === `attachment-${currentAttachmentEntry.att.id}` ? 'Downloading…' : 'Download'}
+                            {downloadingKey ===
+                            `attachment-${currentAttachmentEntry.att.id}`
+                              ? "Downloading…"
+                              : "Download"}
                           </button>
                           <button
                             type="button"
-                            onClick={() => handlePrintFile(
-                              currentAttachmentEntry.att.gdrive_url,
-                              displayName(currentAttachmentEntry.att),
-                              currentAttachmentEntry.att.master_document_id
-                            )}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition">
+                            onClick={() =>
+                              handlePrintFile(
+                                currentAttachmentEntry.att.gdrive_url,
+                                displayName(currentAttachmentEntry.att),
+                                currentAttachmentEntry.att.master_document_id
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition"
+                          >
                             <Printer size={14} /> Print
                           </button>
                           {/* ── Forward button for drilled-down attachment ── */}
                           {canModifyDocuments && (
                             <button
-                              onClick={() => handleForwardAttachment(currentAttachmentEntry.att)}
-                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition">
+                              onClick={() =>
+                                handleForwardAttachment(
+                                  currentAttachmentEntry.att
+                                )
+                              }
+                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
+                            >
                               <Send size={14} /> Forward
                             </button>
                           )}
                           {canModifyDocuments && (
                             <button
-                              onClick={() => deleteAttDisc.open(currentAttachmentEntry.att)}
-                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
+                              onClick={() =>
+                                deleteAttDisc.open(currentAttachmentEntry.att)
+                              }
+                              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition"
+                            >
                               <Trash2 size={14} /> Delete
                             </button>
                           )}
@@ -1121,33 +1591,61 @@ export default function MasterPage() {
                       <div className="flex items-start justify-between gap-4">
                         <div>
                           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                            <h2 className="text-lg font-extrabold text-slate-800">{selection.title}</h2>
-                            <Badge className={levelBadgeClass(selection.level)}>{selection.level}</Badge>
+                            <h2 className="text-lg font-extrabold text-slate-800">
+                              {selection.title}
+                            </h2>
+                            <Badge className={levelBadgeClass(selection.level)}>
+                              {selection.level}
+                            </Badge>
                           </div>
                           <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500">
                             {selection.created_at && (
                               <span className="bg-slate-100 px-2 py-0.5 rounded-full">
-                                📅 {new Date(selection.created_at).toLocaleString('en-PH', {
-                                  year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                                })}
+                                📅{" "}
+                                {new Date(selection.created_at).toLocaleString(
+                                  "en-PH",
+                                  {
+                                    year: "numeric",
+                                    month: "short",
+                                    day: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  }
+                                )}
                               </span>
                             )}
-                            <span className="bg-slate-100 px-2 py-0.5 rounded-full">{selection.type} · {selection.size}</span>
+                            <span className="bg-slate-100 px-2 py-0.5 rounded-full">
+                              {selection.type} · {selection.size}
+                            </span>
                           </div>
                         </div>
                         <div className="flex gap-2 flex-shrink-0 flex-wrap">
                           {canModifyDocuments && (
                             <>
-                              <button onClick={() => setForwardModalOpen(true)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition">
+                              <button
+                                onClick={() => setForwardModalOpen(true)}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition"
+                              >
                                 <Send size={16} /> Forward
                               </button>
-                              <button onClick={editModal.open} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
+                              <button
+                                onClick={editModal.open}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition"
+                              >
                                 <Pencil size={16} /> Edit
                               </button>
-                              <button onClick={() => archiveDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition">
+                              <button
+                                onClick={() =>
+                                  archiveDisc.open(selection.title)
+                                }
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition"
+                              >
                                 <Archive size={16} /> Archive
                               </button>
-                              <button onClick={() => deleteDisc.open(selection.title)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
+                              <button
+                                onClick={() => deleteDisc.open(selection.title)}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition"
+                              >
                                 <Trash2 size={16} /> Delete
                               </button>
                             </>
@@ -1157,29 +1655,64 @@ export default function MasterPage() {
                     )}
 
                     {/* Primary file */}
-                    {currentAttachmentEntry?.kind !== 'attachment' && selection.fileUrl ? (
+                    {currentAttachmentEntry?.kind !== "attachment" &&
+                    selection.fileUrl ? (
                       <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
-                        <FileText size={18} className="flex-shrink-0 text-blue-600" />
+                        <FileText
+                          size={18}
+                          className="flex-shrink-0 text-blue-600"
+                        />
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-blue-800 truncate">Primary file</p>
-                          <p className="text-xs text-blue-600 truncate">{selection.title}.{selection.type.toLowerCase()}</p>
+                          <p className="text-xs font-semibold text-blue-800 truncate">
+                            Primary file
+                          </p>
+                          <p className="text-xs text-blue-600 truncate">
+                            {selection.title}.{selection.type.toLowerCase()}
+                          </p>
                         </div>
                         <div className="flex gap-1.5 flex-shrink-0">
-                          <button type="button"
-                            onClick={() => handleDownloadFile(selection.fileUrl!, getSuggestedFileName(selection.title, selection.fileUrl!), `document-${selection.id}`, selection.id)}
-                            disabled={downloadingKey === `document-${selection.id}`}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition disabled:opacity-60">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDownloadFile(
+                                selection.fileUrl!,
+                                getSuggestedFileName(
+                                  selection.title,
+                                  selection.fileUrl!
+                                ),
+                                `document-${selection.id}`,
+                                selection.id
+                              )
+                            }
+                            disabled={
+                              downloadingKey === `document-${selection.id}`
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition disabled:opacity-60"
+                          >
                             <Download size={13} />
-                            {downloadingKey === `document-${selection.id}` ? 'Downloading…' : 'Download'}
+                            {downloadingKey === `document-${selection.id}`
+                              ? "Downloading…"
+                              : "Download"}
                           </button>
-                          <button type="button"
-                            onClick={() => handlePrintFile(selection.fileUrl!, selection.title, selection.id)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handlePrintFile(
+                                selection.fileUrl!,
+                                selection.title,
+                                selection.id
+                              )
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition"
+                          >
                             <Printer size={13} /> Print
                           </button>
                           <button
-                            onClick={() => window.open(selection.fileUrl!, '_blank')}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition">
+                            onClick={() =>
+                              window.open(selection.fileUrl!, "_blank")
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition"
+                          >
                             <Eye size={13} /> View
                           </button>
                         </div>
@@ -1205,20 +1738,30 @@ export default function MasterPage() {
                             multiple
                             accept=".pdf"
                             className="hidden"
-                            onChange={e => {
+                            onChange={(e) => {
                               if (e.target.files && e.target.files.length > 0)
-                                handleUpload(selection.id, currentParentAttachment?.id ?? null, e.target.files)
-                              e.target.value = ''
+                                handleUpload(
+                                  selection.id,
+                                  currentParentAttachment?.id ?? null,
+                                  e.target.files
+                                );
+                              e.target.value = "";
                             }}
                           />
                           {canModifyDocuments && (
-                            <Button variant="primary" size="sm" disabled={!!uploadingId}
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              disabled={!!uploadingId}
                               onClick={() => {
-                                if (!selection) return
-                                setAttachParentDocId(selection.id)
-                                setAttachParentAttId(currentParentAttachment?.id ?? null)
-                                setAttachModalOpen(true)
-                              }}>
+                                if (!selection) return;
+                                setAttachParentDocId(selection.id);
+                                setAttachParentAttId(
+                                  currentParentAttachment?.id ?? null
+                                );
+                                setAttachModalOpen(true);
+                              }}
+                            >
                               + Attach file
                             </Button>
                           )}
@@ -1230,11 +1773,20 @@ export default function MasterPage() {
                         <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/70">
                           <div className="flex items-center gap-1 flex-wrap">
                             {attachmentNavStack.map((entry, i) => {
-                              const isLast = i === attachmentNavStack.length - 1
-                              const label = entry.kind === 'document' ? entry.doc.title : displayName(entry.att)
+                              const isLast =
+                                i === attachmentNavStack.length - 1;
+                              const label =
+                                entry.kind === "document"
+                                  ? entry.doc.title
+                                  : displayName(entry.att);
                               return (
-                                <div key={`${entry.kind}-${i}`} className="flex items-center gap-1">
-                                  {i > 0 && <span className="text-slate-300">›</span>}
+                                <div
+                                  key={`${entry.kind}-${i}`}
+                                  className="flex items-center gap-1"
+                                >
+                                  {i > 0 && (
+                                    <span className="text-slate-300">›</span>
+                                  )}
                                   {isLast ? (
                                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200 max-w-[220px] truncate">
                                       {label}
@@ -1248,7 +1800,7 @@ export default function MasterPage() {
                                     </button>
                                   )}
                                 </div>
-                              )
+                              );
                             })}
                           </div>
                         </div>
@@ -1257,177 +1809,410 @@ export default function MasterPage() {
                       {filteredCurrentAttachments.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-10 text-center">
                           <FileText size={28} className="text-slate-300 mb-2" />
-                          <p className="text-sm font-semibold text-slate-500">No attachments yet</p>
+                          <p className="text-sm font-semibold text-slate-500">
+                            No attachments yet
+                          </p>
                           {canModifyDocuments && (
                             <>
-                              <p className="text-xs text-slate-400 mt-1">Click + Attach file to upload supporting documents.</p>
-                              <Button variant="outline" size="sm" className="mt-3"
-                                onClick={() => attachmentInputRef.current?.click()}>
+                              <p className="text-xs text-slate-400 mt-1">
+                                Click + Attach file to upload supporting
+                                documents.
+                              </p>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="mt-3"
+                                onClick={() =>
+                                  attachmentInputRef.current?.click()
+                                }
+                              >
                                 + Attach file
                               </Button>
                             </>
                           )}
                         </div>
                       ) : (
-                        <div className="overflow-y-auto">
-                          <table className="w-full border-collapse">
-                            <thead className="sticky top-0 z-10">
-                              <tr className="bg-slate-50 border-y border-slate-200">
-                                <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">Title / File name</th>
-                                <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[90px]">Type</th>
-                                <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[90px]">Size</th>
-                                <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[140px]">Added</th>
-                                <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[95px]">Children</th>
-                                <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[300px]">Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {filteredCurrentAttachments.map(att => {
-                                const fi       = fileInfoFromMime(att.mime_type, att.file_name)
-                                const children = childCount(att.id)
-                                const label    = displayName(att)
-                                const isEditing = editingAttachmentId === att.id
-                                return (
-                                  <tr key={att.id} className="border-b border-slate-100 transition-colors group hover:bg-blue-50/50">
-                                    <td className="px-4 py-3">
-                                      {isEditing ? (
-                                        <div className="flex flex-col gap-2">
-                                          <input
-                                            type="text"
-                                            value={editingAttachmentName}
-                                            onChange={e => setEditingAttachmentName(e.target.value)}
-                                            onKeyDown={async e => {
-                                              if (e.key === 'Enter') {
-                                                e.preventDefault()
-                                                setRenamingAttachmentId(att.id)
-                                                const ok = await handleRenameAttachment(att, editingAttachmentName)
-                                                setRenamingAttachmentId(null)
-                                                if (ok) { setEditingAttachmentId(null); setEditingAttachmentName('') }
+                        <>
+                          <div className="hidden md:block overflow-y-auto">
+                            <table className="w-full border-collapse">
+                              <thead className="sticky top-0 z-10">
+                                <tr className="bg-slate-50 border-y border-slate-200">
+                                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                                    Title / File name
+                                  </th>
+                                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[90px]">
+                                    Type
+                                  </th>
+                                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[90px]">
+                                    Size
+                                  </th>
+                                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[140px]">
+                                    Added
+                                  </th>
+                                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[95px]">
+                                    Children
+                                  </th>
+                                  <th className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 w-[300px]">
+                                    Actions
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filteredCurrentAttachments.map((att) => {
+                                  const fi = fileInfoFromMime(
+                                    att.mime_type,
+                                    att.file_name
+                                  );
+                                  const children = childCount(att.id);
+                                  const label = displayName(att);
+                                  const isEditing =
+                                    editingAttachmentId === att.id;
+                                  return (
+                                    <tr
+                                      key={att.id}
+                                      className="border-b border-slate-100 transition-colors group hover:bg-blue-50/50"
+                                    >
+                                      <td className="px-4 py-3">
+                                        {isEditing ? (
+                                          <div className="flex flex-col gap-2">
+                                            <input
+                                              type="text"
+                                              value={editingAttachmentName}
+                                              onChange={(e) =>
+                                                setEditingAttachmentName(
+                                                  e.target.value
+                                                )
                                               }
-                                              if (e.key === 'Escape') { setEditingAttachmentId(null); setEditingAttachmentName('') }
-                                            }}
-                                            className="w-full px-2 py-2 text-sm border border-blue-300 bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-blue-200"
-                                            disabled={renamingAttachmentId === att.id}
-                                            autoFocus
-                                          />
-                                          <div className="flex flex-wrap gap-2">
-                                            <button
-                                              onClick={async () => {
-                                                setRenamingAttachmentId(att.id)
-                                                const ok = await handleRenameAttachment(att, editingAttachmentName)
-                                                setRenamingAttachmentId(null)
-                                                if (ok) { setEditingAttachmentId(null); setEditingAttachmentName('') }
+                                              onKeyDown={async (e) => {
+                                                if (e.key === "Enter") {
+                                                  e.preventDefault();
+                                                  setRenamingAttachmentId(
+                                                    att.id
+                                                  );
+                                                  const ok =
+                                                    await handleRenameAttachment(
+                                                      att,
+                                                      editingAttachmentName
+                                                    );
+                                                  setRenamingAttachmentId(null);
+                                                  if (ok) {
+                                                    setEditingAttachmentId(
+                                                      null
+                                                    );
+                                                    setEditingAttachmentName(
+                                                      ""
+                                                    );
+                                                  }
+                                                }
+                                                if (e.key === "Escape") {
+                                                  setEditingAttachmentId(null);
+                                                  setEditingAttachmentName("");
+                                                }
                                               }}
-                                              disabled={renamingAttachmentId === att.id}
-                                              className="text-[10px] px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-medium transition disabled:opacity-60"
-                                            >
-                                              {renamingAttachmentId === att.id ? '…' : 'Save'}
-                                            </button>
-                                            <button
-                                              onClick={() => { setEditingAttachmentId(null); setEditingAttachmentName('') }}
-                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-md hover:bg-slate-200 transition"
-                                            ><X size={13} /></button>
+                                              className="w-full px-2 py-2 text-sm border border-blue-300 bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-blue-200"
+                                              disabled={
+                                                renamingAttachmentId === att.id
+                                              }
+                                              autoFocus
+                                            />
+                                            <div className="flex flex-wrap gap-2">
+                                              <button
+                                                onClick={async () => {
+                                                  setRenamingAttachmentId(
+                                                    att.id
+                                                  );
+                                                  const ok =
+                                                    await handleRenameAttachment(
+                                                      att,
+                                                      editingAttachmentName
+                                                    );
+                                                  setRenamingAttachmentId(null);
+                                                  if (ok) {
+                                                    setEditingAttachmentId(
+                                                      null
+                                                    );
+                                                    setEditingAttachmentName(
+                                                      ""
+                                                    );
+                                                  }
+                                                }}
+                                                disabled={
+                                                  renamingAttachmentId ===
+                                                  att.id
+                                                }
+                                                className="text-[10px] px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-medium transition disabled:opacity-60"
+                                              >
+                                                {renamingAttachmentId === att.id
+                                                  ? "…"
+                                                  : "Save"}
+                                              </button>
+                                              <button
+                                                onClick={() => {
+                                                  setEditingAttachmentId(null);
+                                                  setEditingAttachmentName("");
+                                                }}
+                                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-md hover:bg-slate-200 transition"
+                                              >
+                                                <X size={13} />
+                                              </button>
+                                            </div>
                                           </div>
-                                        </div>
-                                      ) : (
-                                        <div className="flex items-center gap-2.5">
-                                          <Paperclip size={16} className="flex-shrink-0 text-blue-600" />
+                                        ) : (
+                                          <div className="flex items-center gap-2.5">
+                                            <Paperclip
+                                              size={16}
+                                              className="flex-shrink-0 text-blue-600"
+                                            />
+                                            <button
+                                              onClick={() =>
+                                                handleDrillDown(att)
+                                              }
+                                              className="text-sm font-semibold truncate max-w-[240px] text-left transition text-slate-800 hover:text-blue-600 hover:underline cursor-pointer"
+                                              title={`Click to explore ${label}`}
+                                            >
+                                              {label}
+                                            </button>
+                                            <span className="flex-shrink-0 text-[9px] font-bold text-slate-300 group-hover:text-blue-400 transition">
+                                              ›
+                                            </span>
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <span
+                                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${fi.badgeCls}`}
+                                        >
+                                          {fi.label}
+                                        </span>
+                                      </td>
+                                      <td className="px-4 py-3 text-xs text-slate-500">
+                                        {formatBytes(att.file_size_bytes)}
+                                      </td>
+                                      <td className="px-4 py-3 text-xs text-slate-500">
+                                        {new Date(
+                                          att.created_at
+                                        ).toLocaleString("en-PH", {
+                                          year: "numeric",
+                                          month: "short",
+                                          day: "numeric",
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                        })}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {children > 0 ? (
                                           <button
                                             onClick={() => handleDrillDown(att)}
-                                            className="text-sm font-semibold truncate max-w-[240px] text-left transition text-slate-800 hover:text-blue-600 hover:underline cursor-pointer"
-                                            title={`Click to explore ${label}`}
+                                            className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition"
                                           >
-                                            {label}
+                                            <Paperclip size={14} /> {children}
                                           </button>
-                                          <span className="flex-shrink-0 text-[9px] font-bold text-slate-300 group-hover:text-blue-400 transition">›</span>
-                                        </div>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${fi.badgeCls}`}>
-                                        {fi.label}
-                                      </span>
-                                    </td>
-                                    <td className="px-4 py-3 text-xs text-slate-500">{formatBytes(att.file_size_bytes)}</td>
-                                    <td className="px-4 py-3 text-xs text-slate-500">
-                                      {new Date(att.created_at).toLocaleString('en-PH', {
-                                        year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                                      })}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      {children > 0 ? (
-                                        <button onClick={() => handleDrillDown(att)}
-                                          className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition">
-                                          <Paperclip size={14} /> {children}
-                                        </button>
-                                      ) : (
-                                        <span className="text-xs text-slate-300">—</span>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                      <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        {/* View */}
-                                        <button
-                                          onClick={() => window.open(att.gdrive_url, '_blank')}
-                                          className="inline-flex items-center justify-center px-1.5 py-1.5 text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
-                                          title="View file">
-                                          <Eye size={14} strokeWidth={2} />
-                                        </button>
-                                        {/* Download */}
-                                        <button type="button"
-                                          onClick={() => handleDownloadFile(att.gdrive_url, getSuggestedFileName(label, att.gdrive_url), `attachment-${att.id}`, att.master_document_id)}
-                                          disabled={downloadingKey === `attachment-${att.id}`}
-                                          className="inline-flex items-center justify-center px-1.5 py-1.5 text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition disabled:opacity-60"
-                                          title="Download file">
-                                          <Download size={14} />
-                                        </button>
-                                        {/* Print */}
-                                        <button type="button"
-                                          onClick={() => handlePrintFile(att.gdrive_url, label, att.master_document_id)}
-                                          className="inline-flex items-center justify-center px-1.5 py-1.5 text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition"
-                                          title="Print file">
-                                          <Printer size={14} />
-                                        </button>
-                                        {/* Drill-down / explore */}
-                                        <button onClick={() => handleDrillDown(att)}
-                                          className="inline-flex items-center justify-center px-1.5 py-1.5 text-violet-600 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100 hover:border-violet-300 transition"
-                                          title="Open & explore nested attachments">
-                                          <FolderOpen size={14} />
-                                        </button>
-                                        {/* Forward — new */}
-                                        {canModifyDocuments && (
+                                        ) : (
+                                          <span className="text-xs text-slate-300">
+                                            —
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                          {/* View */}
                                           <button
-                                            onClick={() => handleForwardAttachment(att)}
+                                            onClick={() =>
+                                              window.open(
+                                                att.gdrive_url,
+                                                "_blank"
+                                              )
+                                            }
                                             className="inline-flex items-center justify-center px-1.5 py-1.5 text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
-                                            title="Forward attachment">
-                                            <Send size={14} />
+                                            title="View file"
+                                          >
+                                            <Eye size={14} strokeWidth={2} />
                                           </button>
-                                        )}
-                                        {canModifyDocuments && (
-                                          <>
-                                            {/* Rename */}
+                                          {/* Download */}
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleDownloadFile(
+                                                att.gdrive_url,
+                                                getSuggestedFileName(
+                                                  label,
+                                                  att.gdrive_url
+                                                ),
+                                                `attachment-${att.id}`,
+                                                att.master_document_id
+                                              )
+                                            }
+                                            disabled={
+                                              downloadingKey ===
+                                              `attachment-${att.id}`
+                                            }
+                                            className="inline-flex items-center justify-center px-1.5 py-1.5 text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition disabled:opacity-60"
+                                            title="Download file"
+                                          >
+                                            <Download size={14} />
+                                          </button>
+                                          {/* Print */}
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handlePrintFile(
+                                                att.gdrive_url,
+                                                label,
+                                                att.master_document_id
+                                              )
+                                            }
+                                            className="inline-flex items-center justify-center px-1.5 py-1.5 text-slate-600 bg-slate-50 border border-slate-200 rounded-md hover:bg-slate-100 hover:border-slate-300 transition"
+                                            title="Print file"
+                                          >
+                                            <Printer size={14} />
+                                          </button>
+                                          {/* Drill-down / explore */}
+                                          <button
+                                            onClick={() => handleDrillDown(att)}
+                                            className="inline-flex items-center justify-center px-1.5 py-1.5 text-violet-600 bg-violet-50 border border-violet-200 rounded-md hover:bg-violet-100 hover:border-violet-300 transition"
+                                            title="Open & explore nested attachments"
+                                          >
+                                            <FolderOpen size={14} />
+                                          </button>
+                                          {/* Forward — new */}
+                                          {canModifyDocuments && (
                                             <button
-                                              onClick={() => { setEditingAttachmentId(att.id); setEditingAttachmentName(att.title || att.file_name || '') }}
-                                              className="inline-flex items-center justify-center px-1.5 py-1.5 text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 hover:border-emerald-300 transition"
-                                              title="Rename attachment">
-                                              <Pencil size={14} />
+                                              onClick={() =>
+                                                handleForwardAttachment(att)
+                                              }
+                                              className="inline-flex items-center justify-center px-1.5 py-1.5 text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 hover:border-blue-300 transition"
+                                              title="Forward attachment"
+                                            >
+                                              <Send size={14} />
                                             </button>
-                                            {/* Delete */}
-                                            <button onClick={() => deleteAttDisc.open(att)}
-                                              className="inline-flex items-center justify-center px-1.5 py-1.5 text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 hover:border-red-300 transition"
-                                              title="Delete attachment">
-                                              <Trash2 size={14} />
-                                            </button>
-                                          </>
-                                        )}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                )
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
+                                          )}
+                                          {canModifyDocuments && (
+                                            <>
+                                              {/* Rename */}
+                                              <button
+                                                onClick={() => {
+                                                  setEditingAttachmentId(
+                                                    att.id
+                                                  );
+                                                  setEditingAttachmentName(
+                                                    att.title ||
+                                                      att.file_name ||
+                                                      ""
+                                                  );
+                                                }}
+                                                className="inline-flex items-center justify-center px-1.5 py-1.5 text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100 hover:border-emerald-300 transition"
+                                                title="Rename attachment"
+                                              >
+                                                <Pencil size={14} />
+                                              </button>
+                                              {/* Delete */}
+                                              <button
+                                                onClick={() =>
+                                                  deleteAttDisc.open(att)
+                                                }
+                                                className="inline-flex items-center justify-center px-1.5 py-1.5 text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 hover:border-red-300 transition"
+                                                title="Delete attachment"
+                                              >
+                                                <Trash2 size={14} />
+                                              </button>
+                                            </>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div className="md:hidden divide-y divide-slate-100">
+                            {filteredCurrentAttachments.map((att) => {
+                              const fi = fileInfoFromMime(
+                                att.mime_type,
+                                att.file_name
+                              );
+                              const children = childCount(att.id);
+                              const label = displayName(att);
+                              return (
+                                <div key={att.id} className="p-4 space-y-2">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <button
+                                      onClick={() => handleDrillDown(att)}
+                                      className="flex items-center gap-2 text-left font-semibold text-sm text-slate-800"
+                                    >
+                                      <Paperclip
+                                        size={16}
+                                        className="flex-shrink-0 text-blue-600"
+                                      />
+                                      {label}
+                                    </button>
+                                    <span
+                                      className={`flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${fi.badgeCls}`}
+                                    >
+                                      {fi.label}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-3 text-xs text-slate-500">
+                                    <span>
+                                      {formatBytes(att.file_size_bytes)}
+                                    </span>
+                                    <span>·</span>
+                                    <span>
+                                      {new Date(
+                                        att.created_at
+                                      ).toLocaleDateString("en-PH")}
+                                    </span>
+                                    {children > 0 && (
+                                      <>
+                                        <span>·</span>
+                                        <button
+                                          onClick={() => handleDrillDown(att)}
+                                          className="text-blue-600 font-semibold"
+                                        >
+                                          {children} nested
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5 pt-1">
+                                    <button
+                                      onClick={() =>
+                                        window.open(att.gdrive_url, "_blank")
+                                      }
+                                      className="px-2.5 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md"
+                                    >
+                                      View
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        handleDownloadFile(
+                                          att.gdrive_url,
+                                          getSuggestedFileName(
+                                            label,
+                                            att.gdrive_url
+                                          ),
+                                          `attachment-${att.id}`,
+                                          att.master_document_id
+                                        )
+                                      }
+                                      className="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md"
+                                    >
+                                      Download
+                                    </button>
+                                    {canModifyDocuments && (
+                                      <button
+                                        onClick={() => deleteAttDisc.open(att)}
+                                        className="px-2.5 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md"
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>
@@ -1439,8 +2224,17 @@ export default function MasterPage() {
       </div>
 
       {/* Modals */}
-      <AddDocumentModal open={uploadModal.isOpen} onClose={uploadModal.close} onAdd={handleAdd} />
-      <EditModal doc={selection} open={editModal.isOpen} onClose={editModal.close} onSave={handleSave} />
+      <AddDocumentModal
+        open={uploadModal.isOpen}
+        onClose={uploadModal.close}
+        onAdd={handleAdd}
+      />
+      <EditModal
+        doc={selection}
+        open={editModal.isOpen}
+        onClose={editModal.close}
+        onSave={handleSave}
+      />
       <AddMasterDocAttachmentModal
         open={attachModalOpen}
         onClose={() => setAttachModalOpen(false)}
@@ -1456,16 +2250,16 @@ export default function MasterPage() {
           open={forwardModalOpen}
           onClose={() => setForwardModalOpen(false)}
           document={{
-            id:            selection.id,
-            title:         selection.title,
-            type:          'Master Document',
-            documentType:  'master_document',
-            gdriveFileId:  (selection as any).gdrive_file_id  ?? '',
-            gdriveUrl:     (selection as any).gdrive_url       ?? selection.fileUrl ?? '',
-            poolAccountId: (selection as any).pool_account_id  ?? '',
-            fileName:      (selection as any).file_name        ?? undefined,
-            fileSizeBytes: (selection as any).file_size_bytes  ?? undefined,
-            mimeType:      (selection as any).mime_type        ?? undefined,
+            id: selection.id,
+            title: selection.title,
+            type: "Master Document",
+            documentType: "master_document",
+            gdriveFileId: (selection as any).gdrive_file_id ?? "",
+            gdriveUrl: (selection as any).gdrive_url ?? selection.fileUrl ?? "",
+            poolAccountId: (selection as any).pool_account_id ?? "",
+            fileName: (selection as any).file_name ?? undefined,
+            fileSizeBytes: (selection as any).file_size_bytes ?? undefined,
+            mimeType: (selection as any).mime_type ?? undefined,
           }}
           attachmentsMap={attachmentsMap as any}
           onForwarded={() => setForwardModalOpen(false)}
@@ -1477,21 +2271,27 @@ export default function MasterPage() {
       {forwardAttachment && (
         <ForwardDocumentModal
           open={forwardAttModalOpen}
-          onClose={() => { setForwardAttModalOpen(false); setForwardAttachment(null) }}
+          onClose={() => {
+            setForwardAttModalOpen(false);
+            setForwardAttachment(null);
+          }}
           document={{
-            id:            forwardAttachment.id,
-            title:         displayName(forwardAttachment),
-            type:          'Master Document',
-            documentType:  'master_document',
-            gdriveFileId:  forwardAttachment.gdrive_file_id,
-            gdriveUrl:     forwardAttachment.gdrive_url,
+            id: forwardAttachment.id,
+            title: displayName(forwardAttachment),
+            type: "Master Document",
+            documentType: "master_document",
+            gdriveFileId: forwardAttachment.gdrive_file_id,
+            gdriveUrl: forwardAttachment.gdrive_url,
             poolAccountId: forwardAttachment.pool_account_id,
-            fileName:      forwardAttachment.file_name       ?? undefined,
+            fileName: forwardAttachment.file_name ?? undefined,
             fileSizeBytes: forwardAttachment.file_size_bytes ?? undefined,
-            mimeType:      forwardAttachment.mime_type       ?? undefined,
+            mimeType: forwardAttachment.mime_type ?? undefined,
           }}
           attachmentsMap={attachmentsMap as any}
-          onForwarded={() => { setForwardAttModalOpen(false); setForwardAttachment(null) }}
+          onForwarded={() => {
+            setForwardAttModalOpen(false);
+            setForwardAttachment(null);
+          }}
           senderRole={user?.role as AdminRole}
         />
       )}
@@ -1505,10 +2305,19 @@ export default function MasterPage() {
           documentTitle={selection.title}
           approval={activeApproval}
           onDone={() => {
-            setDocuments(prev => prev.map(d => d.id === selection.id
-              ? { ...d, approval: { ...d.approval!, status: 'approved' } as DocumentApproval }
-              : d
-            ))
+            setDocuments((prev) =>
+              prev.map((d) =>
+                d.id === selection.id
+                  ? {
+                      ...d,
+                      approval: {
+                        ...d.approval!,
+                        status: "approved",
+                      } as DocumentApproval,
+                    }
+                  : d
+              )
+            );
           }}
         />
       )}
@@ -1517,7 +2326,8 @@ export default function MasterPage() {
         open={archiveDisc.isOpen}
         title="Archive Document"
         message={`Archive "${archiveDisc.payload}"? This will move the uploaded file to an archive folder in the connected Google Drive account, and remove it from the active document list. You can restore archived documents from the Archive section if needed.`}
-        confirmLabel="Archive" variant="danger"
+        confirmLabel="Archive"
+        variant="danger"
         isLoading={isArchiving}
         onConfirm={handleArchiveDoc}
         onCancel={archiveDisc.close}
@@ -1526,7 +2336,9 @@ export default function MasterPage() {
       <ConfirmDialog
         open={deleteAttDisc.isOpen}
         title="Delete Attachment"
-        message={`Delete "${deleteAttDisc.payload ? displayName(deleteAttDisc.payload) : ''}" permanently? This cannot be undone.`}
+        message={`Delete "${
+          deleteAttDisc.payload ? displayName(deleteAttDisc.payload) : ""
+        }" permanently? This cannot be undone.`}
         confirmLabel="Delete"
         variant="danger"
         isLoading={isDeleting}
@@ -1545,5 +2357,5 @@ export default function MasterPage() {
         onCancel={deleteDisc.close}
       />
     </>
-  )
+  );
 }

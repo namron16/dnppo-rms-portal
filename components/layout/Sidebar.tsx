@@ -105,6 +105,7 @@ export function Sidebar() {
   const [showProfileSettings, setShowProfileSettings] = useState(false)
   const [pendingHref,         setPendingHref]         = useState<string | null>(null)
   const [unreadInboxCount,    setUnreadInboxCount]    = useState(0)
+  const [mobileOpen, setMobileOpen] = useState(false)
 
   const [localDisplayName, setLocalDisplayName] = useState<string | null>(null)
   const [localAvatarUrl,   setLocalAvatarUrl]   = useState<string | null>(null)
@@ -204,6 +205,9 @@ export function Sidebar() {
     return () => { supabase.removeChannel(channel) }
   }, [user, supabase])
 
+  // ADD this useEffect so the drawer auto-closes when a link is tapped
+  useEffect(() => { setMobileOpen(false) }, [pathname])
+
   async function handleLogoutConfirm() {
     setShowLogoutConfirm(false)
     await logout()
@@ -236,7 +240,39 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="sidebar-fixed bg-white border-r border-gray-200">
+    {/* Hamburger button — phone/tablet only */}
+    <button
+      onClick={() => setMobileOpen(true)}
+      className="md:hidden fixed top-3 left-3 z-[60] w-10 h-10 flex items-center justify-center bg-white border border-gray-200 rounded-lg shadow-sm"
+      aria-label="Open menu"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <line x1="3" y1="6" x2="21" y2="6" />
+        <line x1="3" y1="12" x2="21" y2="12" />
+        <line x1="3" y1="18" x2="21" y2="18" />
+      </svg>
+    </button>
+
+    {/* Overlay behind drawer — phone/tablet only, when open */}
+    {mobileOpen && (
+      <div
+        className="md:hidden fixed inset-0 bg-black/40 z-[55]"
+        onClick={() => setMobileOpen(false)}
+      />
+    )}
+      <aside className={cn(
+        "bg-white border-r border-gray-200 fixed top-0 left-0 h-screen w-64 z-[56] flex flex-col",
+        "transition-transform duration-200 ease-out",
+        mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      )}>
+
+      {/* Close button — phone/tablet only */}
+      <button
+        onClick={() => setMobileOpen(false)}
+        className="md:hidden absolute top-3 right-3 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-700"
+      >
+        ✕
+      </button>
 
         {/* Logo */}
         <div className="px-3 py-3 border-b border-gray-200 flex items-center gap-3">
