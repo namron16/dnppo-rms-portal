@@ -1314,12 +1314,12 @@ export default function MasterPage() {
       >
         <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-hidden flex flex-col flex-1 min-h-0">
           {/* Toolbar */}
-          <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50 flex-shrink-0">
+          <div className="flex items-center gap-2.5 px-3 sm:px-6 py-3 sm:py-4 border-b border-slate-100 bg-slate-50 flex-shrink-0 flex-wrap">
             <SearchInput
               value={query}
               onChange={setQuery}
               placeholder="Search documents and attachments…"
-              className="max-w-xs flex-1"
+              className="w-full sm:max-w-xs sm:flex-1"
             />
             <ToolbarSelect
               defaultValue="ALL"
@@ -1336,7 +1336,7 @@ export default function MasterPage() {
               <Button
                 variant="primary"
                 size="sm"
-                className="ml-auto"
+                className="ml-auto sm:ml-auto"
                 onClick={uploadModal.open}
               >
                 + Upload
@@ -1588,8 +1588,8 @@ export default function MasterPage() {
                       </div>
                     ) : (
                       // ── Root document header ──
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4">
+                        <div className="min-w-0">
                           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                             <h2 className="text-lg font-extrabold text-slate-800">
                               {selection.title}
@@ -1619,7 +1619,7 @@ export default function MasterPage() {
                             </span>
                           </div>
                         </div>
-                        <div className="flex gap-2 flex-shrink-0 flex-wrap">
+                        <div className="flex gap-2 flex-wrap w-full sm:w-auto">
                           {canModifyDocuments && (
                             <>
                               <button

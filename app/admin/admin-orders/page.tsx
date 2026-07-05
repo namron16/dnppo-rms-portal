@@ -754,9 +754,9 @@ function AttachmentsTablePanel({
       <Breadcrumb navStack={navStack} onNavigateTo={onNavigateTo} />
 
       {/* Title + actions */}
-      <div className="flex items-start justify-between mb-4 gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4">
+        <div className="min-w-0">
+          <div className="flex gap-2 flex-wrap w-full sm:w-auto">
             <span className="text-xl flex-shrink-0">
               {isDrillDown ? drillFi?.icon ?? "📄" : "📋"}
             </span>
@@ -1903,18 +1903,18 @@ export default function AdminOrdersPage() {
       >
         <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-hidden flex flex-col flex-1 min-h-0">
           {/* Toolbar */}
-          <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50 flex-shrink-0">
+          <div className="flex items-center gap-2.5 px-3 sm:px-6 py-3 sm:py-4 border-b border-slate-100 bg-slate-50 flex-shrink-0 flex-wrap">
             <SearchInput
               value={query}
               onChange={setQuery}
               placeholder="Search orders…"
-              className="max-w-xs flex-1"
+              className="w-full sm:max-w-xs sm:flex-1"
             />
             {canUpload && (
               <Button
                 variant="primary"
                 size="sm"
-                className="ml-auto"
+                className="ml-auto sm:ml-auto"
                 onClick={newSOModal.open}
               >
                 + New SO
