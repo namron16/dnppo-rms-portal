@@ -761,14 +761,18 @@ export default function LibraryPage() {
           ].map((s) => (
             <div
               key={s.label}
-              className={`${s.bg} border border-slate-200 rounded-xl px-5 py-4 flex items-center gap-3`}
+              className={`${s.bg} border border-slate-200 rounded-xl px-3 py-3 sm:px-5 sm:py-4 flex items-center gap-2 sm:gap-3 min-w-0`}
             >
-              <span className="text-2xl">{s.icon}</span>
-              <div>
-                <div className={`text-2xl font-extrabold ${s.txt}`}>
+              <span className="text-xl sm:text-2xl shrink-0">{s.icon}</span>
+              <div className="min-w-0">
+                <div
+                  className={`text-lg sm:text-2xl font-extrabold ${s.txt} truncate`}
+                >
                   {s.value}
                 </div>
-                <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
+                <div className="text-[11px] sm:text-xs text-slate-500 mt-0.5 truncate">
+                  {s.label}
+                </div>
               </div>
             </div>
           ))}
@@ -776,12 +780,12 @@ export default function LibraryPage() {
 
         {/* Main table */}
         <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-visible flex flex-1 min-h-0 flex-col">
-          <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50">
+          <div className="flex items-center gap-2.5 px-3 sm:px-6 py-3 sm:py-4 border-b border-slate-100 bg-slate-50 flex-wrap">
             <SearchInput
               value={query}
               onChange={setQuery}
               placeholder="Search library…"
-              className="max-w-xs flex-1"
+              className="w-full sm:max-w-xs sm:flex-1"
             />
             <ToolbarSelect
               onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
@@ -798,7 +802,7 @@ export default function LibraryPage() {
               <Button
                 variant="primary"
                 size="sm"
-                className="ml-auto"
+                className="w-full sm:w-auto sm:ml-auto"
                 onClick={newModal.open}
               >
                 + Add to Library

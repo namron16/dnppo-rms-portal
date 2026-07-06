@@ -841,14 +841,18 @@ export default function DailyJournalsPage() {
               ].map((card) => (
                 <div
                   key={card.label}
-                  className={`${card.bg} rounded-xl border border-slate-200 px-4 py-3 flex items-center gap-3`}
+                  className={`${card.bg} border border-slate-200 rounded-xl px-3 py-3 sm:px-5 sm:py-4 flex items-center gap-2 sm:gap-3 min-w-0`}
                 >
-                  <span className="text-2xl">{card.icon}</span>
-                  <div>
-                    <div className={`text-2xl font-extrabold ${card.text}`}>
+                  <span className="text-xl sm:text-2xl shrink-0">
+                    {card.icon}
+                  </span>
+                  <div className="min-w-0">
+                    <div
+                      className={`text-lg sm:text-2xl font-extrabold ${card.text} truncate`}
+                    >
                       {card.value}
                     </div>
-                    <div className="text-xs text-slate-500 mt-0.5">
+                    <div className="text-[11px] sm:text-xs text-slate-500 mt-0.5 truncate">
                       {card.label}
                     </div>
                   </div>
@@ -860,12 +864,12 @@ export default function DailyJournalsPage() {
 
         {/* Table */}
         <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-visible flex flex-1 min-h-0 flex-col">
-          <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50 flex-wrap">
+          <div className="flex items-center gap-2.5 px-3 sm:px-6 py-3 sm:py-4 border-b border-slate-100 bg-slate-50 flex-wrap">
             <SearchInput
               value={query}
               onChange={setQuery}
               placeholder="Search journal entries…"
-              className="max-w-xs flex-1"
+              className="w-full sm:max-w-xs sm:flex-1"
             />
             <ToolbarSelect
               value={activeType}
@@ -883,7 +887,7 @@ export default function DailyJournalsPage() {
               <Button
                 variant="primary"
                 size="sm"
-                className="ml-auto"
+                className="w-full sm:w-auto sm:ml-auto"
                 onClick={addModal.open}
               >
                 + Add Entry

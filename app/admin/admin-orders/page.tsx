@@ -760,7 +760,7 @@ function AttachmentsTablePanel({
             <span className="text-xl flex-shrink-0">
               {isDrillDown ? drillFi?.icon ?? "📄" : "📋"}
             </span>
-            <h2 className="text-lg font-extrabold text-slate-800 leading-tight truncate">
+            <h2 className="text-lg font-extrabold text-slate-800 leading-tight truncate min-w-0 flex-1">
               {currentLabel}
             </h2>
             {isDrillDown && (
@@ -812,7 +812,7 @@ function AttachmentsTablePanel({
 
         {/* Root order actions */}
         {!isDrillDown && (
-          <div className="flex gap-2 flex-shrink-0">
+          <div className="flex gap-2 flex-wrap w-full sm:w-auto">
             {canEditOrder && (
               <button
                 onClick={onForwardOrder}
@@ -907,17 +907,19 @@ function AttachmentsTablePanel({
 
       {/* Primary file preview strip (root order only) */}
       {!isDrillDown && currentOrder?.fileUrl && (
-        <div className="mb-4 flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
-          <FileText size={18} className="flex-shrink-0 text-blue-600" />
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-blue-800 truncate">
-              Primary file
-            </p>
-            <p className="text-xs text-blue-600 truncate">
-              {currentOrder.reference} – {currentOrder.subject}
-            </p>
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center gap-3 min-w-0">
+            <FileText size={18} className="flex-shrink-0 text-blue-600" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-blue-800 truncate">
+                Primary file
+              </p>
+              <p className="text-xs text-blue-600 truncate">
+                {currentOrder.reference} – {currentOrder.subject}
+              </p>
+            </div>
           </div>
-          <div className="flex gap-1.5 flex-shrink-0">
+          <div className="flex gap-1.5 flex-wrap w-full sm:w-auto">
             <button
               type="button"
               onClick={() =>
@@ -955,7 +957,7 @@ function AttachmentsTablePanel({
       {/* Attachments card */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex-1 flex flex-col min-h-0">
         {/* Toolbar */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50 flex-shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50 flex-shrink-0 flex-wrap gap-2">
           <span className="text-xs font-bold uppercase tracking-widest text-slate-500">
             Attachments · {attachments.length}
           </span>
@@ -1255,13 +1257,13 @@ function AttachmentsTablePanel({
                     <div className="flex items-start justify-between gap-2">
                       <button
                         onClick={() => onDrillDown(att)}
-                        className="flex items-center gap-2 text-left font-semibold text-sm text-slate-800"
+                        className="flex items-center gap-2 text-left font-semibold text-sm text-slate-800 min-w-0 flex-1"
                       >
                         <Paperclip
                           size={16}
                           className="flex-shrink-0 text-blue-600"
                         />
-                        {label}
+                        <span className="truncate">{label}</span>
                       </button>
                       <span
                         className={`flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${fi.badgeCls}`}
@@ -1898,7 +1900,7 @@ export default function AdminOrdersPage() {
       <PageHeader title="Admin Orders" />
 
       <div
-        className="p-6 flex flex-col gap-5 flex-1"
+        className="p-3 sm:p-6 flex flex-col gap-4 sm:gap-5 flex-1"
         style={{ height: "calc(100vh - 56px)" }}
       >
         <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-hidden flex flex-col flex-1 min-h-0">
@@ -1998,7 +2000,7 @@ export default function AdminOrdersPage() {
             </div>
 
             {/* Right: attachment detail with drill-down */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-3 sm:p-6">
               {!currentEntry ? (
                 <div className="h-full flex items-center justify-center">
                   <EmptyState

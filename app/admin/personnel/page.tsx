@@ -2698,14 +2698,18 @@ export default function PersonnelFilesPage() {
           {statCards.map((s) => (
             <div
               key={s.label}
-              className={`${s.bg} border border-slate-200 rounded-xl px-5 py-4 flex items-center gap-3`}
+              className={`${s.bg} border border-slate-200 rounded-xl px-3 py-3 sm:px-5 sm:py-4 flex items-center gap-2 sm:gap-3 min-w-0`}
             >
-              <span className="text-2xl">{s.icon}</span>
-              <div>
-                <div className={`text-2xl font-extrabold ${s.num}`}>
+              <span className="text-xl sm:text-2xl shrink-0">{s.icon}</span>
+              <div className="min-w-0">
+                <div
+                  className={`text-lg sm:text-2xl font-extrabold ${s.num} truncate`}
+                >
                   {s.value}
                 </div>
-                <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
+                <div className="text-[11px] sm:text-xs text-slate-500 mt-0.5 truncate">
+                  {s.label}
+                </div>
               </div>
             </div>
           ))}
