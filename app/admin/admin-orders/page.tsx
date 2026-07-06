@@ -812,41 +812,37 @@ function AttachmentsTablePanel({
 
         {/* Root order actions */}
         {!isDrillDown && (
-          <div className="flex gap-2 flex-wrap w-full sm:w-auto">
+          <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto">
             {canEditOrder && (
               <button
                 onClick={onForwardOrder}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition"
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition"
               >
-                <Send size={16} />
-                Forward
+                <Send size={16} /> Forward
               </button>
             )}
             {canEditOrder && (
               <button
                 onClick={onEditOrder}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition"
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition"
               >
-                <Pencil size={16} />
-                Edit
+                <Pencil size={16} /> Edit
               </button>
             )}
             {canEditOrder && (
               <button
                 onClick={onArchiveOrder}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition"
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition"
               >
-                <Archive size={16} />
-                Archive
+                <Archive size={16} /> Archive
               </button>
             )}
             {canEditOrder && (
               <button
                 onClick={onDeleteOrder}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition"
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition"
               >
-                <Trash2 size={16} />
-                Delete
+                <Trash2 size={16} /> Delete
               </button>
             )}
           </div>
@@ -1916,7 +1912,7 @@ export default function AdminOrdersPage() {
               <Button
                 variant="primary"
                 size="sm"
-                className="ml-auto sm:ml-auto"
+                className="w-full sm:w-auto sm:ml-auto"
                 onClick={newSOModal.open}
               >
                 + New SO
