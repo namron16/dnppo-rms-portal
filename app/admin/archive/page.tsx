@@ -110,19 +110,20 @@ export default function ArchivePage() {
     <>
       <PageHeader title="Archive" />
 
-      <div className="p-8">
+      <div className="p-4 sm:p-8 overflow-x-hidden">
         <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-hidden">
-          <div className="flex items-center gap-2.5 px-6 py-4 border-b border-slate-100 bg-slate-50">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 px-4 sm:px-6 py-4 border-b border-slate-100 bg-slate-50">
             <SearchInput
               value={query}
               onChange={setQuery}
               placeholder="Search archived documents…"
-              className="max-w-xs flex-1"
+              className="w-full sm:max-w-xs sm:flex-1"
             />
             <ToolbarSelect
               onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
                 setType(e.target.value)
               }
+              className="w-full sm:w-auto"
             >
               <option>All Types</option>
               <option>Special Order</option>

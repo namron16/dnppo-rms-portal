@@ -12,6 +12,18 @@
 //
 // UPDATE: Added Forward + Print actions to attachment table rows.
 //         Added Forward button to drilled-down nested file header.
+//
+// MOBILE FIX (this revision):
+//   1. Outer page wrapper now has `overflow-x-hidden` so nothing (buttons,
+//      badges, long titles) can force horizontal scrolling on small screens.
+//   2. Root-order action buttons (Forward/Edit/Archive/Delete) now use a
+//      true `grid-cols-2` layout on mobile with `min-w-0` + `truncate` so
+//      button labels never get cut off at the screen edge.
+//   3. Headings, badges, icons, and paddings scale down with `sm:` prefixes
+//      across the whole page (toolbar, order list, attachment panel, table).
+//   4. The order list panel and split-view container use full-width mobile
+//      layout with a shorter max-height so the attachment panel is reachable
+//      without scrolling the whole page.
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -419,19 +431,21 @@ function InlineFileViewerModal({
       width="max-w-5xl"
     >
       <div className="flex flex-col" style={{ maxHeight: "85vh" }}>
-        <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-100 bg-slate-50 flex-shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-5 py-2.5 border-b border-slate-100 bg-slate-50 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-lg flex-shrink-0">{fi.icon}</span>
-            <p className="text-xs font-semibold text-slate-700 truncate max-w-sm">
+            <span className="text-base sm:text-lg flex-shrink-0">
+              {fi.icon}
+            </span>
+            <p className="text-[11px] sm:text-xs font-semibold text-slate-700 truncate max-w-[160px] sm:max-w-sm">
               {fileName}
             </p>
           </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0 ml-3">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
               type="button"
               onClick={handleDownload}
               disabled={isDownloading}
-              className="text-[11px] font-semibold px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition flex items-center gap-1 disabled:opacity-60"
+              className="text-[10px] sm:text-[11px] font-semibold px-2 sm:px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition flex items-center gap-1 disabled:opacity-60"
             >
               {isDownloading ? "⬇ Saving…" : "⬇ Download"}
             </button>
@@ -458,7 +472,7 @@ function InlineFileViewerModal({
               style={{ height: "75vh", minHeight: 400 }}
             />
           ) : isImage ? (
-            <div className="flex items-center justify-center p-6 min-h-96">
+            <div className="flex items-center justify-center p-4 sm:p-6 min-h-96">
               <img
                 src={fileUrl}
                 alt={fileName}
@@ -466,8 +480,8 @@ function InlineFileViewerModal({
               />
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center py-20 px-8 text-center">
-              <span className="text-6xl mb-4">{fi.icon}</span>
+            <div className="flex flex-col items-center justify-center py-14 sm:py-20 px-4 sm:px-8 text-center">
+              <span className="text-5xl sm:text-6xl mb-4">{fi.icon}</span>
               <p className="text-sm font-semibold text-slate-700 mb-1 break-all">
                 {fileName}
               </p>
@@ -529,7 +543,7 @@ function EditSpecialOrderModal({
       title="Edit Special Order"
       width="max-w-lg"
     >
-      <div className="p-6 space-y-4">
+      <div className="p-4 sm:p-6 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
@@ -569,12 +583,17 @@ function EditSpecialOrderModal({
             }
           />
         </div>
-        <div className="flex justify-end gap-2.5 pt-1">
-          <Button variant="outline" onClick={onClose}>
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 pt-1">
+          <Button
+            variant="outline"
+            onClick={onClose}
+            className="w-full sm:w-auto"
+          >
             Cancel
           </Button>
           <Button
             variant="primary"
+            className="w-full sm:w-auto"
             onClick={() =>
               onSave({
                 ...order,
@@ -607,8 +626,8 @@ function Breadcrumb({
 }) {
   if (navStack.length <= 1) return null;
   return (
-    <div className="flex items-center gap-1 flex-wrap mb-4 px-2.5 md:px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl">
-      <span className="text-slate-400 mr-1 text-sm">🗂</span>
+    <div className="flex items-center gap-1 flex-wrap mb-4 px-2 sm:px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl">
+      <span className="text-slate-400 mr-1 text-sm hidden sm:inline">🗂</span>
       {navStack.map((entry, i) => {
         const label =
           entry.kind === "order"
@@ -622,38 +641,38 @@ function Breadcrumb({
         return (
           <span key={i} className="flex items-center">
             {i > 0 && (
-              <span className="mx-1.5 text-slate-400 font-bold text-sm select-none">
+              <span className="mx-1 sm:mx-1.5 text-slate-400 font-bold text-sm select-none">
                 ›
               </span>
             )}
             {isLast ? (
               <span
-                className="flex items-center gap-1 text-[13px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg"
+                className="flex items-center gap-1 text-[11px] sm:text-[13px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 sm:px-2.5 py-1 rounded-lg"
                 title={label}
               >
                 {fi && (
                   <Paperclip
-                    size={14}
+                    size={13}
                     className="flex-shrink-0 text-blue-600"
                   />
                 )}
-                <span className="truncate max-w-[180px]">
+                <span className="truncate max-w-[110px] sm:max-w-[180px]">
                   {label.length > 28 ? label.slice(0, 27) + "…" : label}
                 </span>
               </span>
             ) : (
               <button
                 onClick={() => onNavigateTo(i)}
-                className="flex items-center gap-1 text-[13px] font-semibold text-slate-600 hover:text-blue-700 hover:bg-white border border-transparent hover:border-blue-200 px-2 py-1 rounded-lg transition-all"
+                className="flex items-center gap-1 text-[11px] sm:text-[13px] font-semibold text-slate-600 hover:text-blue-700 hover:bg-white border border-transparent hover:border-blue-200 px-1.5 sm:px-2 py-1 rounded-lg transition-all"
                 title={`Go back to ${label}`}
               >
                 {fi && (
                   <Paperclip
-                    size={14}
+                    size={13}
                     className="flex-shrink-0 text-blue-600"
                   />
                 )}
-                <span className="truncate max-w-[140px]">
+                <span className="truncate max-w-[90px] sm:max-w-[140px]">
                   {label.length > 20 ? label.slice(0, 19) + "…" : label}
                 </span>
               </button>
@@ -750,34 +769,34 @@ function AttachmentsTablePanel({
     : null;
 
   return (
-    <div className="animate-fade-up h-full flex flex-col">
+    <div className="animate-fade-up h-full flex flex-col min-w-0">
       <Breadcrumb navStack={navStack} onNavigateTo={onNavigateTo} />
 
       {/* Title + actions */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4">
         <div className="min-w-0">
-          <div className="flex gap-2 flex-wrap w-full sm:w-auto">
-            <span className="text-xl flex-shrink-0">
+          <div className="flex gap-2 flex-wrap w-full min-w-0">
+            <span className="text-lg sm:text-xl flex-shrink-0">
               {isDrillDown ? drillFi?.icon ?? "📄" : "📋"}
             </span>
-            <h2 className="text-lg font-extrabold text-slate-800 leading-tight truncate min-w-0 flex-1">
+            <h2 className="text-base sm:text-lg font-extrabold text-slate-800 leading-tight truncate min-w-0 flex-1">
               {currentLabel}
             </h2>
             {isDrillDown && (
-              <span className="flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
+              <span className="flex-shrink-0 text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
                 Nested File
               </span>
             )}
           </div>
           {isDrillDown && drillAtt && (
-            <div className="flex items-center gap-2 flex-wrap mt-1">
-              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap mt-1">
+              <span className="text-[10px] sm:text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
                 {drillFi?.label}
               </span>
-              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
+              <span className="text-[10px] sm:text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
                 {formatBytes(drillAtt.file_size_bytes)}
               </span>
-              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
+              <span className="text-[10px] sm:text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full font-medium">
                 📅{" "}
                 {new Date(drillAtt.created_at).toLocaleString("en-PH", {
                   year: "numeric",
@@ -790,9 +809,9 @@ function AttachmentsTablePanel({
             </div>
           )}
           {!isDrillDown && currentOrder && (
-            <div className="flex items-center gap-2 flex-wrap mt-1">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap mt-1">
               {currentOrder.created_at && (
-                <span className="text-xs text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full font-medium">
+                <span className="text-[10px] sm:text-xs text-slate-500 bg-slate-100 px-2 sm:px-2.5 py-1 rounded-full font-medium">
                   📅{" "}
                   {new Date(currentOrder.created_at).toLocaleString("en-PH", {
                     year: "numeric",
@@ -810,39 +829,44 @@ function AttachmentsTablePanel({
           )}
         </div>
 
-        {/* Root order actions */}
+        {/* Root order actions — 2-column grid on mobile so nothing gets
+            cut off at the screen edge, single row on larger screens */}
         {!isDrillDown && (
-          <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto">
+          <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:flex-wrap sm:w-auto">
             {canEditOrder && (
               <button
                 onClick={onForwardOrder}
-                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition"
+                className="min-w-0 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3.5 py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 transition"
               >
-                <Send size={16} /> Forward
+                <Send size={14} className="flex-shrink-0" />
+                <span className="truncate">Forward</span>
               </button>
             )}
             {canEditOrder && (
               <button
                 onClick={onEditOrder}
-                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition"
+                className="min-w-0 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3.5 py-2 text-xs sm:text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition"
               >
-                <Pencil size={16} /> Edit
+                <Pencil size={14} className="flex-shrink-0" />
+                <span className="truncate">Edit</span>
               </button>
             )}
             {canEditOrder && (
               <button
                 onClick={onArchiveOrder}
-                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition"
+                className="min-w-0 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3.5 py-2 text-xs sm:text-sm font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition"
               >
-                <Archive size={16} /> Archive
+                <Archive size={14} className="flex-shrink-0" />
+                <span className="truncate">Archive</span>
               </button>
             )}
             {canEditOrder && (
               <button
                 onClick={onDeleteOrder}
-                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition"
+                className="min-w-0 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3.5 py-2 text-xs sm:text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition"
               >
-                <Trash2 size={16} /> Delete
+                <Trash2 size={14} className="flex-shrink-0" />
+                <span className="truncate">Delete</span>
               </button>
             )}
           </div>
@@ -850,23 +874,25 @@ function AttachmentsTablePanel({
 
         {/* Drilled-down attachment actions */}
         {isDrillDown && drillAtt && (
-          <div className="flex gap-1.5 flex-shrink-0 flex-wrap justify-end">
+          <div className="grid grid-cols-2 sm:flex gap-1.5 sm:flex-wrap w-full sm:w-auto justify-start sm:justify-end">
             <button
               onClick={() =>
                 onViewFile(drillAtt.gdrive_url, displayName(drillAtt))
               }
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
+              className="min-w-0 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
             >
-              <Eye size={14} /> View File
+              <Eye size={14} className="flex-shrink-0" />
+              <span className="truncate">View File</span>
             </button>
             <button
               type="button"
               onClick={() =>
                 onDownloadFile(drillAtt.gdrive_url, displayName(drillAtt))
               }
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"
+              className="min-w-0 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 transition"
             >
-              <Download size={14} /> Download
+              <Download size={14} className="flex-shrink-0" />
+              <span className="truncate">Download</span>
             </button>
             <button
               type="button"
@@ -877,25 +903,28 @@ function AttachmentsTablePanel({
                   drillAtt.special_order_id
                 )
               }
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition"
+              className="min-w-0 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition"
             >
-              <Printer size={14} /> Print
+              <Printer size={14} className="flex-shrink-0" />
+              <span className="truncate">Print</span>
             </button>
             {/* ── Forward button for drilled-down attachment ── */}
             {canEditOrder && (
               <button
                 onClick={() => onForwardAttachment(drillAtt)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
+                className="min-w-0 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
               >
-                <Send size={14} /> Forward
+                <Send size={14} className="flex-shrink-0" />
+                <span className="truncate">Forward</span>
               </button>
             )}
             <button
               onClick={() => canEditOrder && onDeleteAttachment(drillAtt)}
               disabled={!canEditOrder}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition disabled:opacity-60"
+              className="min-w-0 inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition disabled:opacity-60"
             >
-              <Trash2 size={14} /> Delete
+              <Trash2 size={14} className="flex-shrink-0" />
+              <span className="truncate">Delete</span>
             </button>
           </div>
         )}
@@ -903,7 +932,7 @@ function AttachmentsTablePanel({
 
       {/* Primary file preview strip (root order only) */}
       {!isDrillDown && currentOrder?.fileUrl && (
-        <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <div className="mt-4 mb-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
           <div className="flex items-center gap-3 min-w-0">
             <FileText size={18} className="flex-shrink-0 text-blue-600" />
             <div className="flex-1 min-w-0">
@@ -915,15 +944,16 @@ function AttachmentsTablePanel({
               </p>
             </div>
           </div>
-          <div className="flex gap-1.5 flex-wrap w-full sm:w-auto">
+          <div className="grid grid-cols-3 sm:flex gap-1.5 w-full sm:w-auto">
             <button
               type="button"
               onClick={() =>
                 onDownloadFile(currentOrder.fileUrl!, currentOrder.reference)
               }
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition"
+              className="min-w-0 inline-flex items-center justify-center gap-1 px-2 sm:px-2.5 py-1.5 text-[11px] sm:text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition"
             >
-              <Download size={13} /> Download
+              <Download size={13} className="flex-shrink-0" />
+              <span className="truncate">Download</span>
             </button>
             <button
               type="button"
@@ -934,34 +964,36 @@ function AttachmentsTablePanel({
                   currentOrder.id
                 )
               }
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition"
+              className="min-w-0 inline-flex items-center justify-center gap-1 px-2 sm:px-2.5 py-1.5 text-[11px] sm:text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition"
             >
-              <Printer size={13} /> Print
+              <Printer size={13} className="flex-shrink-0" />
+              <span className="truncate">Print</span>
             </button>
             <button
               onClick={() =>
                 onViewFile(currentOrder.fileUrl!, currentOrder.reference)
               }
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition"
+              className="min-w-0 inline-flex items-center justify-center gap-1 px-2 sm:px-2.5 py-1.5 text-[11px] sm:text-xs font-medium bg-white border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50 transition"
             >
-              <Eye size={13} /> View
+              <Eye size={13} className="flex-shrink-0" />
+              <span className="truncate">View</span>
             </button>
           </div>
         </div>
       )}
 
       {/* Attachments card */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex-1 flex flex-col min-h-0">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex-1 flex flex-col min-h-0 mt-4">
         {/* Toolbar */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50 flex-shrink-0 flex-wrap gap-2">
-          <span className="text-xs font-bold uppercase tracking-widest text-slate-500">
+        <div className="flex items-center justify-between px-3 sm:px-4 py-3 border-b border-slate-200 bg-slate-50 flex-shrink-0 flex-wrap gap-2">
+          <span className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-slate-500">
             Attachments · {attachments.length}
           </span>
           <div className="flex items-center gap-2">
             {uploadingId && (
-              <span className="flex items-center gap-1.5 text-xs text-blue-600 font-medium bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">
+              <span className="flex items-center gap-1.5 text-[10px] sm:text-xs text-blue-600 font-medium bg-blue-50 border border-blue-200 px-2 sm:px-2.5 py-1 rounded-full">
                 <span className="w-3 h-3 border border-blue-600 border-t-transparent rounded-full animate-spin block" />
-                Uploading…
+                <span className="hidden sm:inline">Uploading…</span>
               </span>
             )}
             {canEditOrder && (
@@ -993,7 +1025,7 @@ function AttachmentsTablePanel({
 
         {/* Body */}
         {attachments.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-center py-14 px-6">
+          <div className="flex-1 flex flex-col items-center justify-center text-center py-10 sm:py-14 px-4 sm:px-6">
             <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center mb-3">
               <Paperclip size={24} className="text-slate-400" />
             </div>
@@ -1249,25 +1281,25 @@ function AttachmentsTablePanel({
                 const children = childCount(att.id);
                 const label = displayName(att);
                 return (
-                  <div key={att.id} className="p-4 space-y-2">
+                  <div key={att.id} className="p-3 sm:p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <button
                         onClick={() => onDrillDown(att)}
-                        className="flex items-center gap-2 text-left font-semibold text-sm text-slate-800 min-w-0 flex-1"
+                        className="flex items-center gap-2 text-left font-semibold text-[13px] sm:text-sm text-slate-800 min-w-0 flex-1"
                       >
                         <Paperclip
-                          size={16}
+                          size={15}
                           className="flex-shrink-0 text-blue-600"
                         />
                         <span className="truncate">{label}</span>
                       </button>
                       <span
-                        className={`flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${fi.badgeCls}`}
+                        className={`flex-shrink-0 text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full ${fi.badgeCls}`}
                       >
                         {fi.label}
                       </span>
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-500">
+                    <div className="flex items-center gap-2 sm:gap-3 text-[11px] sm:text-xs text-slate-500 flex-wrap">
                       <span>{formatBytes(att.file_size_bytes)}</span>
                       <span>·</span>
                       <span>
@@ -1282,25 +1314,38 @@ function AttachmentsTablePanel({
                         </button>
                       )}
                     </div>
-                    <div className="flex flex-wrap gap-1.5 pt-1">
+                    <div className="grid grid-cols-3 gap-1.5 pt-1">
                       <button
                         onClick={() => onViewFile(att.gdrive_url, label)}
-                        className="px-2.5 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md"
+                        className="min-w-0 truncate px-2 py-1.5 text-[11px] font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md"
                       >
                         View
                       </button>
                       <button
                         onClick={() => onDownloadFile(att.gdrive_url, label)}
-                        className="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md"
+                        className="min-w-0 truncate px-2 py-1.5 text-[11px] font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md"
                       >
                         Download
                       </button>
-                      {canEditOrder && (
+                      {canEditOrder ? (
                         <button
                           onClick={() => onDeleteAttachment(att)}
-                          className="px-2.5 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md"
+                          className="min-w-0 truncate px-2 py-1.5 text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 rounded-md"
                         >
                           Delete
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() =>
+                            onPrintFile(
+                              att.gdrive_url,
+                              label,
+                              att.special_order_id
+                            )
+                          }
+                          className="min-w-0 truncate px-2 py-1.5 text-[11px] font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md"
+                        >
+                          Print
                         </button>
                       )}
                     </div>
@@ -1342,7 +1387,7 @@ function OrderListNode({
 
   return (
     <div
-      className={`flex items-center gap-1.5 pr-2 pl-2.5 py-2.5 rounded-lg mb-0.5 cursor-pointer transition mx-2 ${
+      className={`flex items-center gap-1.5 pr-2 pl-2.5 py-2.5 rounded-lg mb-0.5 cursor-pointer transition mx-2 min-w-0 ${
         isSelected
           ? "bg-blue-600 text-white shadow-sm"
           : "text-slate-700 hover:bg-slate-100"
@@ -1354,11 +1399,11 @@ function OrderListNode({
         style={{ background: statusColor }}
       />
       <div className="flex-1 min-w-0">
-        <p className="text-[13px] font-semibold truncate leading-tight">
+        <p className="text-[12px] sm:text-[13px] font-semibold truncate leading-tight">
           {order.reference}
         </p>
         <p
-          className={`text-[11px] truncate leading-tight ${
+          className={`text-[10px] sm:text-[11px] truncate leading-tight ${
             isSelected ? "text-blue-200" : "text-slate-400"
           }`}
         >
@@ -1367,13 +1412,13 @@ function OrderListNode({
       </div>
       {topLevelCount > 0 && (
         <span
-          className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none flex items-center gap-0.5 ${
+          className={`flex-shrink-0 text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none flex items-center gap-0.5 ${
             isSelected
               ? "bg-white/20 text-white"
               : "bg-slate-200 text-slate-500"
           }`}
         >
-          <Paperclip size={11} /> {topLevelCount}
+          <Paperclip size={10} /> {topLevelCount}
         </span>
       )}
       {uploadingId === order.id && (
@@ -1896,7 +1941,7 @@ export default function AdminOrdersPage() {
       <PageHeader title="Admin Orders" />
 
       <div
-        className="p-3 sm:p-6 flex flex-col gap-4 sm:gap-5 flex-1"
+        className="p-2.5 sm:p-6 flex flex-col gap-3 sm:gap-5 flex-1 overflow-x-hidden min-w-0"
         style={{ height: "calc(100vh - 56px)" }}
       >
         <div className="bg-white border-[1.5px] border-slate-200 rounded-xl overflow-hidden flex flex-col flex-1 min-h-0">
@@ -1912,7 +1957,7 @@ export default function AdminOrdersPage() {
               <Button
                 variant="primary"
                 size="sm"
-                className="w-full sm:w-auto sm:ml-auto"
+                className="ml-auto sm:ml-auto"
                 onClick={newSOModal.open}
               >
                 + New SO
@@ -1923,17 +1968,17 @@ export default function AdminOrdersPage() {
           {/* Split view */}
           <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
             {/* Left: order list */}
-            <div className="flex-shrink-0 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col overflow-hidden w-full md:w-[280px] max-h-[35vh] md:max-h-none">
+            <div className="flex-shrink-0 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col overflow-hidden w-full md:w-[280px] max-h-[40vh] md:max-h-none">
               <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex-shrink-0">
-                <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 leading-none">
+                <p className="text-[10px] sm:text-[11px] font-bold uppercase tracking-widest text-slate-400 leading-none">
                   Orders · {filteredOrders.length}
                 </p>
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Click to view attachments
+                <p className="text-[9px] sm:text-[10px] text-slate-400 mt-1">
+                  Tap to view attachments
                 </p>
               </div>
 
-              <div className="flex-1 overflow-y-auto py-2">
+              <div className="flex-1 overflow-y-auto py-2 px-2">
                 {loading ? (
                   <div className="flex items-center justify-center py-12">
                     <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -1970,8 +2015,8 @@ export default function AdminOrdersPage() {
                 />
               )}
 
-              {/* Legend */}
-              <div className="px-4 py-3 border-t border-slate-100 space-y-1.5 flex-shrink-0">
+              {/* Legend — hidden on very small screens to save space */}
+              <div className="hidden sm:block px-4 py-3 border-t border-slate-100 space-y-1.5 flex-shrink-0">
                 {[
                   { color: "#3b63b8", label: "Active" },
                   { color: "#94a3b8", label: "Other" },
@@ -1996,13 +2041,13 @@ export default function AdminOrdersPage() {
             </div>
 
             {/* Right: attachment detail with drill-down */}
-            <div className="flex-1 overflow-y-auto p-3 sm:p-6">
+            <div className="relative flex-1 min-h-0 overflow-hidden">
               {!currentEntry ? (
                 <div className="h-full flex items-center justify-center">
                   <EmptyState
                     icon="📋"
                     title="Select an order"
-                    description="Click any order from the list on the left to view its attachments."
+                    description="Tap any order from the list above to view its attachments."
                     action={
                       canUpload ? (
                         <Button
@@ -2017,7 +2062,7 @@ export default function AdminOrdersPage() {
                   />
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-4 min-w-0">
                   <AttachmentsTablePanel
                     navStack={navStack}
                     currentEntry={currentEntry}

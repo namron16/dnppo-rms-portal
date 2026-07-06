@@ -1,85 +1,94 @@
-'use client'
+"use client";
 // components/layout/Sidebar.tsx
 
-import { useEffect, useState, useMemo } from 'react'
-import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { useAuth } from '@/lib/auth'
-import { cn } from '@/lib/utils'
-import { createClient } from '@/lib/supabase/client'
-import LogoutConfirmModal from '@/components/modals/LogoutConfirmModal'
-import { ProfileSettingsModal } from '@/components/modals/ProfileSettingsModal'
+import { useEffect, useState, useMemo } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth";
+import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
+import LogoutConfirmModal from "@/components/modals/LogoutConfirmModal";
+import { ProfileSettingsModal } from "@/components/modals/ProfileSettingsModal";
 
 interface NavItem {
-  label: string
-  icon:  string
-  href:  string
+  label: string;
+  icon: string;
+  href: string;
 }
 
 const DOC_NAV: NavItem[] = [
-  { label: 'Master Documents', icon: '📁', href: '/admin/master'          },
-  { label: 'Admin Orders',     icon: '📋', href: '/admin/admin-orders'    },
-  { label: '201 Files',        icon: '📔', href: '/admin/personnel'       },
-  { label: 'Daily Journal',    icon: '📒', href: '/admin/daily-journals'  },
-  { label: 'Organization',     icon: '🏛️', href: '/admin/organization'    },
-  { label: 'e-Library',        icon: '📚', href: '/admin/e-library'       },
-  { label: 'Forwarded Files',  icon: '📥', href: '/admin/forwarded'       },
-  { label: 'Archive',          icon: '🗄️', href: '/admin/archive'         },
-]
+  { label: "Master Documents", icon: "📁", href: "/admin/master" },
+  { label: "Admin Orders", icon: "📋", href: "/admin/admin-orders" },
+  { label: "201 Files", icon: "📔", href: "/admin/personnel" },
+  { label: "Daily Journal", icon: "📒", href: "/admin/daily-journals" },
+  { label: "Organization", icon: "🏛️", href: "/admin/organization" },
+  { label: "e-Library", icon: "📚", href: "/admin/e-library" },
+  { label: "Forwarded Files", icon: "📥", href: "/admin/forwarded" },
+  { label: "Archive", icon: "🗄️", href: "/admin/archive" },
+];
 
 const P2_NAV: NavItem[] = [
-  { label: 'Master Documents',     icon: '📁', href: '/admin/master'                  },
-  { label: 'Admin Orders',         icon: '📋', href: '/admin/admin-orders'            },
-  { label: 'Classified Documents', icon: '🛡️', href: '/admin/classified-documents'    },
-  { label: 'Organization',         icon: '🏛️', href: '/admin/organization'            },
-  { label: 'e-Library',            icon: '📚', href: '/admin/e-library'               },
-  { label: 'Forwarded Files',      icon: '📥', href: '/admin/forwarded'               },
-  { label: 'Archive',              icon: '🗄️', href: '/admin/archive'                 },
-]
+  { label: "Master Documents", icon: "📁", href: "/admin/master" },
+  { label: "Admin Orders", icon: "📋", href: "/admin/admin-orders" },
+  {
+    label: "Classified Documents",
+    icon: "🛡️",
+    href: "/admin/classified-documents",
+  },
+  { label: "Organization", icon: "🏛️", href: "/admin/organization" },
+  { label: "e-Library", icon: "📚", href: "/admin/e-library" },
+  { label: "Forwarded Files", icon: "📥", href: "/admin/forwarded" },
+  { label: "Archive", icon: "🗄️", href: "/admin/archive" },
+];
 
 const VIEWER_NAV: NavItem[] = [
-  { label: 'Master Documents', icon: '📁', href: '/admin/master'         },
-  { label: 'Admin Orders',     icon: '📋', href: '/admin/admin-orders'   },
-  { label: 'Daily Journal',    icon: '📒', href: '/admin/daily-journals' },
-  { label: 'Organization',     icon: '🏛️', href: '/admin/organization'   },
-  { label: 'e-Library',        icon: '📚', href: '/admin/e-library'      },
-  { label: 'Forwarded Files',  icon: '📥', href: '/admin/forwarded'      },
-  { label: 'Archive',          icon: '🗄️', href: '/admin/archive'        },
-]
+  { label: "Master Documents", icon: "📁", href: "/admin/master" },
+  { label: "Admin Orders", icon: "📋", href: "/admin/admin-orders" },
+  { label: "Daily Journal", icon: "📒", href: "/admin/daily-journals" },
+  { label: "Organization", icon: "🏛️", href: "/admin/organization" },
+  { label: "e-Library", icon: "📚", href: "/admin/e-library" },
+  { label: "Forwarded Files", icon: "📥", href: "/admin/forwarded" },
+  { label: "Archive", icon: "🗄️", href: "/admin/archive" },
+];
 
 const ADMIN_NAV: NavItem[] = [
-  { label: 'Log History',       icon: '📊', href: '/admin/log-history'      },
-  { label: 'User Management',   icon: '👥', href: '/admin/user-management'  },
-  { label: 'Drive Storage',     icon: '☁️', href: '/admin/gdrive'           },
-  { label: 'Backup & Recovery', icon: '🛡️', href: '/admin/backup-recovery'  },
-  { label: 'System Settings',   icon: '⚙️', href: '/admin/system-settings'  },
-]
+  { label: "Log History", icon: "📊", href: "/admin/log-history" },
+  { label: "User Management", icon: "👥", href: "/admin/user-management" },
+  { label: "Drive Storage", icon: "☁️", href: "/admin/gdrive" },
+  { label: "Backup & Recovery", icon: "🛡️", href: "/admin/backup-recovery" },
+  { label: "System Settings", icon: "⚙️", href: "/admin/system-settings" },
+];
 
 const DPDA_NAV: NavItem[] = [
-  { label: 'Master Documents', icon: '📁', href: '/admin/master'         },
-  { label: 'Admin Orders',     icon: '📋', href: '/admin/admin-orders'   },
-  { label: 'Daily Journal',    icon: '📒', href: '/admin/daily-journals' },
-  { label: 'Organization',     icon: '🏛️', href: '/admin/organization'   },
-  { label: 'e-Library',        icon: '📚', href: '/admin/e-library'      },
-  { label: 'Archive',          icon: '🗄️', href: '/admin/archive'        },
-  { label: 'Forwarded',        icon: '📮', href: '/admin/inbox'     },
-]
+  { label: "Master Documents", icon: "📁", href: "/admin/master" },
+  { label: "Admin Orders", icon: "📋", href: "/admin/admin-orders" },
+  { label: "Daily Journal", icon: "📒", href: "/admin/daily-journals" },
+  { label: "Organization", icon: "🏛️", href: "/admin/organization" },
+  { label: "e-Library", icon: "📚", href: "/admin/e-library" },
+  { label: "Archive", icon: "🗄️", href: "/admin/archive" },
+  { label: "Forwarded", icon: "📮", href: "/admin/inbox" },
+];
 
-function NavLink({ item, active, onNavigate, badgeCount }: {
-  item:        NavItem
-  active:      boolean
-  onNavigate:  (href: string) => void
-  badgeCount?: number
+function NavLink({
+  item,
+  active,
+  onNavigate,
+  badgeCount,
+}: {
+  item: NavItem;
+  active: boolean;
+  onNavigate: (href: string) => void;
+  badgeCount?: number;
 }) {
   return (
     <Link
       href={item.href}
       onClick={() => onNavigate(item.href)}
       className={cn(
-        'flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-[background-color,color,border-color] duration-120 ease-[cubic-bezier(0.22,1,0.36,1)] mb-1 group',
+        "flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-[background-color,color,border-color] duration-120 ease-[cubic-bezier(0.22,1,0.36,1)] mb-1 group",
         active
-          ? 'bg-blue-100 text-blue-700 border border-blue-200'
-          : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-transparent'
+          ? "bg-blue-100 text-blue-700 border border-blue-200"
+          : "text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-transparent"
       )}
     >
       <span className="w-5 h-5 flex items-center justify-center text-sm flex-shrink-0 group-hover:scale-110 transition-transform">
@@ -88,27 +97,27 @@ function NavLink({ item, active, onNavigate, badgeCount }: {
       <span className="flex-1">{item.label}</span>
       {badgeCount && badgeCount > 0 && (
         <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-full min-w-[20px] text-center shadow-sm">
-          {badgeCount > 99 ? '99+' : badgeCount}
+          {badgeCount > 99 ? "99+" : badgeCount}
         </span>
       )}
     </Link>
-  )
+  );
 }
 
 export function Sidebar() {
-  const { user, logout } = useAuth()
-  const supabase  = useMemo(() => createClient(), [])
-  const router    = useRouter()
-  const pathname  = usePathname()
+  const { user, logout } = useAuth();
+  const supabase = useMemo(() => createClient(), []);
+  const router = useRouter();
+  const pathname = usePathname();
 
-  const [showLogoutConfirm,   setShowLogoutConfirm]   = useState(false)
-  const [showProfileSettings, setShowProfileSettings] = useState(false)
-  const [pendingHref,         setPendingHref]         = useState<string | null>(null)
-  const [unreadInboxCount,    setUnreadInboxCount]    = useState(0)
-  const [mobileOpen, setMobileOpen] = useState(false)
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [unreadInboxCount, setUnreadInboxCount] = useState(0);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  const [localDisplayName, setLocalDisplayName] = useState<string | null>(null)
-  const [localAvatarUrl,   setLocalAvatarUrl]   = useState<string | null>(null)
+  const [localDisplayName, setLocalDisplayName] = useState<string | null>(null);
+  const [localAvatarUrl, setLocalAvatarUrl] = useState<string | null>(null);
 
   // FIX: initialise navGroup directly from user.nav_group (JWT value set in
   // auth.tsx). This means the correct nav renders on the very first paint —
@@ -116,163 +125,231 @@ export function Sidebar() {
   // The useEffect below still syncs from DB so any registry change is picked
   // up, but it no longer races with the initial render.
   const [navGroup, setNavGroup] = useState<string>(
-    () => user?.nav_group ?? 'documents'
-  )
+    () => user?.nav_group ?? "documents"
+  );
 
   // Keep navGroup in sync when user object changes (e.g. after login)
   useEffect(() => {
-    if (user?.nav_group) setNavGroup(user.nav_group)
-  }, [user?.nav_group])
+    if (user?.nav_group) setNavGroup(user.nav_group);
+  }, [user?.nav_group]);
 
   // Also sync from DB so changes made in the registry are picked up live.
   useEffect(() => {
-    if (!user) return
+    if (!user) return;
     supabase
-      .from('role_registry')
-      .select('nav_group, is_viewer_only')
-      .eq('role', user.role)
+      .from("role_registry")
+      .select("nav_group, is_viewer_only")
+      .eq("role", user.role)
       .single()
       .then(({ data }) => {
-        if (data?.nav_group) setNavGroup(data.nav_group)
-      })
-  }, [user?.role, supabase])
+        if (data?.nav_group) setNavGroup(data.nav_group);
+      });
+  }, [user?.role, supabase]);
 
   // Reset local overrides on user change
-  useEffect(() => { setLocalDisplayName(null); setLocalAvatarUrl(null) }, [user?.id])
-  useEffect(() => { setLocalDisplayName(null) }, [user?.name])
-  useEffect(() => { setLocalAvatarUrl(null) }, [user?.avatarUrl])
+  useEffect(() => {
+    setLocalDisplayName(null);
+    setLocalAvatarUrl(null);
+  }, [user?.id]);
+  useEffect(() => {
+    setLocalDisplayName(null);
+  }, [user?.name]);
+  useEffect(() => {
+    setLocalAvatarUrl(null);
+  }, [user?.avatarUrl]);
 
   // Prefetch all routes
   useEffect(() => {
-    const allRoutes = [...DOC_NAV, ...ADMIN_NAV].map(i => i.href)
-    allRoutes.forEach(href => router.prefetch(href))
-  }, [router])
+    const allRoutes = [...DOC_NAV, ...ADMIN_NAV].map((i) => i.href);
+    allRoutes.forEach((href) => router.prefetch(href));
+  }, [router]);
 
-  useEffect(() => { setPendingHref(null) }, [pathname])
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
 
   // Unread inbox count with realtime subscription
   useEffect(() => {
-    if (!user) { setUnreadInboxCount(0); return }
-
-    const fetchCount = async () => {
-      const isDPDAUser = ['DPDA', 'DPDO'].includes(user.role)
-      const query = supabase
-        .from('forwarded_documents')
-        .select('*', { count: 'exact', head: true })
-        .eq('recipient_role', user.role)
-
-      const { count } = isDPDAUser
-        ? await query.eq('dpda_status', 'pending')
-        : await query.eq('status', 'pending')
-
-      setUnreadInboxCount(count ?? 0)
+    if (!user) {
+      setUnreadInboxCount(0);
+      return;
     }
 
-    fetchCount()
+    const fetchCount = async () => {
+      const isDPDAUser = ["DPDA", "DPDO"].includes(user.role);
+      const query = supabase
+        .from("forwarded_documents")
+        .select("*", { count: "exact", head: true })
+        .eq("recipient_role", user.role);
+
+      const { count } = isDPDAUser
+        ? await query.eq("dpda_status", "pending")
+        : await query.eq("status", "pending");
+
+      setUnreadInboxCount(count ?? 0);
+    };
+
+    fetchCount();
 
     const channel = supabase
-      .channel('forwarded-inbox-count')
-      .on('postgres_changes', {
-        event:  '*',
-        schema: 'public',
-        table:  'forwarded_documents',
-        filter: `recipient_role=eq.${user.role}`,
-      }, () => fetchCount())
-      .subscribe()
+      .channel("forwarded-inbox-count")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "forwarded_documents",
+          filter: `recipient_role=eq.${user.role}`,
+        },
+        () => fetchCount()
+      )
+      .subscribe();
 
-    return () => { supabase.removeChannel(channel) }
-  }, [user, supabase])
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, supabase]);
 
   // Realtime profile sync across tabs/devices
   useEffect(() => {
-    if (!user) return
+    if (!user) return;
 
     const channel = supabase
-      .channel('profile-realtime')
-      .on('postgres_changes', {
-        event:  'UPDATE',
-        schema: 'public',
-        table:  'profiles',
-      }, async (payload) => {
-        const { data: { user: authUser } } = await supabase.auth.getUser()
-        if (payload.new.id !== authUser?.id) return
-        const { display_name, avatar_url } = payload.new as { display_name?: string; avatar_url?: string }
-        if (display_name) setLocalDisplayName(display_name)
-        if (avatar_url)   setLocalAvatarUrl(avatar_url)
-      })
-      .subscribe()
+      .channel("profile-realtime")
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "profiles",
+        },
+        async (payload) => {
+          const {
+            data: { user: authUser },
+          } = await supabase.auth.getUser();
+          if (payload.new.id !== authUser?.id) return;
+          const { display_name, avatar_url } = payload.new as {
+            display_name?: string;
+            avatar_url?: string;
+          };
+          if (display_name) setLocalDisplayName(display_name);
+          if (avatar_url) setLocalAvatarUrl(avatar_url);
+        }
+      )
+      .subscribe();
 
-    return () => { supabase.removeChannel(channel) }
-  }, [user, supabase])
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, supabase]);
 
   // ADD this useEffect so the drawer auto-closes when a link is tapped
-  useEffect(() => { setMobileOpen(false) }, [pathname])
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
 
   async function handleLogoutConfirm() {
-    setShowLogoutConfirm(false)
-    await logout()
-    router.replace('/login')
+    setShowLogoutConfirm(false);
+    await logout();
+    router.replace("/login");
   }
 
-  function handleProfileUpdated({ displayName, avatarUrl }: { displayName?: string; avatarUrl?: string }) {
-    if (displayName) setLocalDisplayName(displayName)
-    if (avatarUrl)   setLocalAvatarUrl(avatarUrl)
+  function handleProfileUpdated({
+    displayName,
+    avatarUrl,
+  }: {
+    displayName?: string;
+    avatarUrl?: string;
+  }) {
+    if (displayName) setLocalDisplayName(displayName);
+    if (avatarUrl) setLocalAvatarUrl(avatarUrl);
   }
 
   // Nav group flags — derived from navGroup state which is seeded from JWT
-  const isAdmin       = navGroup === 'admin'
-  const isDPDAorDPDO = navGroup === 'dpda-dpdo'
-  const isViewerNo201 = navGroup === 'documents' && user?.role !== 'P1' && user?.role !== 'P2'
-  const isP1          = user?.role === 'P1'
-  const canSeeP2      = user?.role === 'P2'
-
+  const isAdmin = navGroup === "admin";
+  const isDPDAorDPDO = navGroup === "dpda-dpdo";
+  const isViewerNo201 =
+    navGroup === "documents" && user?.role !== "P1" && user?.role !== "P2";
+  const isP1 = user?.role === "P1";
+  const canSeeP2 = user?.role === "P2";
 
   // Display values
-  const displayName = localDisplayName ?? user?.name ?? user?.role ?? ''
-  const avatarUrl   = localAvatarUrl ?? user?.avatarUrl ?? null
-  const initials    = displayName
-    .split(' ')
-    .filter(Boolean)
-    .map((n: string) => n[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase() || (user?.initials ?? '??')
+  const displayName = localDisplayName ?? user?.name ?? user?.role ?? "";
+  const avatarUrl = localAvatarUrl ?? user?.avatarUrl ?? null;
+  const initials =
+    displayName
+      .split(" ")
+      .filter(Boolean)
+      .map((n: string) => n[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() ||
+    (user?.initials ?? "??");
 
   return (
     <>
-    {/* Hamburger button — phone/tablet only */}
-    <button
-      onClick={() => setMobileOpen(true)}
-      className="md:hidden fixed top-3 left-3 z-[60] w-10 h-10 flex items-center justify-center bg-white border border-gray-200 rounded-lg shadow-sm"
-      aria-label="Open menu"
-    >
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-        <line x1="3" y1="6" x2="21" y2="6" />
-        <line x1="3" y1="12" x2="21" y2="12" />
-        <line x1="3" y1="18" x2="21" y2="18" />
-      </svg>
-    </button>
-
-    {/* Overlay behind drawer — phone/tablet only, when open */}
-    {mobileOpen && (
-      <div
-        className="md:hidden fixed inset-0 bg-black/40 z-[55]"
-        onClick={() => setMobileOpen(false)}
-      />
-    )}
-      <aside className={cn(
-        "bg-white border-r border-gray-200 fixed top-0 left-0 h-screen w-64 z-[56] flex flex-col",
-        "transition-transform duration-200 ease-out",
-        mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-      )}>
-
-      {/* Close button — phone/tablet only */}
+      {/* Hamburger button — phone/tablet only */}
       <button
-        onClick={() => setMobileOpen(false)}
-        className="md:hidden absolute top-3 right-3 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-700"
+        onClick={() => setMobileOpen((v) => !v)}
+        className={cn(
+          "md:hidden fixed top-3 left-3 z-[60] w-10 h-10 flex items-center justify-center bg-white border border-gray-200 rounded-lg shadow-sm",
+          mobileOpen && "hidden" // Hides the button entirely when the menu is open
+        )}
+        aria-label={mobileOpen ? "Close menu" : "Open menu"}
       >
-        ✕
+        {mobileOpen ? (
+          // X icon
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        ) : (
+          // Hamburger icon
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        )}
       </button>
+
+      {/* Overlay behind drawer — phone/tablet only, when open */}
+      {mobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/40 z-[55]"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+      <aside
+        className={cn(
+          "bg-white border-r border-gray-200 fixed top-0 left-0 h-screen w-64 z-[56] flex flex-col",
+          "transition-transform duration-200 ease-out",
+          mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        )}
+      >
+        {/* Close button — phone/tablet only */}
+        <button
+          onClick={() => setMobileOpen(false)}
+          className="md:hidden absolute top-3 right-3 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-700"
+        >
+          ✕
+        </button>
 
         {/* Logo */}
         <div className="px-3 py-3 border-b border-gray-200 flex items-center gap-3">
@@ -282,8 +359,12 @@ export function Sidebar() {
             className="w-[4rem] h-13 flex-shrink-0 object-cover"
           />
           <div className="leading-tight">
-            <div className="text-gray-900 text-[15px] font-bold tracking-tight">DNPPO Records</div>
-            <div className="text-gray-500 text-[12px] font-medium">Davao Del Norte</div>
+            <div className="text-gray-900 text-[15px] font-bold tracking-tight">
+              DNPPO Records
+            </div>
+            <div className="text-gray-500 text-[12px] font-medium">
+              Davao Del Norte
+            </div>
           </div>
         </div>
 
@@ -313,8 +394,12 @@ export function Sidebar() {
                 <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-gray-900 text-[13px] font-semibold truncate leading-tight">{displayName}</p>
-                <p className="text-gray-500 text-[11px] truncate">{user.title}</p>
+                <p className="text-gray-900 text-[13px] font-semibold truncate leading-tight">
+                  {displayName}
+                </p>
+                <p className="text-gray-500 text-[11px] truncate">
+                  {user.title}
+                </p>
               </div>
               <div className="flex-shrink-0 flex items-center gap-1 text-gray-400 group-hover:text-blue-600 transition-colors">
                 {isP1 && (
@@ -322,7 +407,17 @@ export function Sidebar() {
                     SUPER
                   </span>
                 )}
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-50 group-hover:opacity-100 transition-opacity">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="opacity-50 group-hover:opacity-100 transition-opacity"
+                >
                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                   <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                 </svg>
@@ -334,28 +429,50 @@ export function Sidebar() {
         {/* Documents nav */}
         {!isAdmin && !isDPDAorDPDO && (
           <div className="px-3 pt-5 pb-2">
-            <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">Documents</div>
+            <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">
+              Documents
+            </div>
             {canSeeP2
-              ? P2_NAV.map(item => (
-                  <NavLink key={item.href} item={item}
+              ? P2_NAV.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    item={item}
                     active={pathname === item.href || pendingHref === item.href}
                     onNavigate={setPendingHref}
-                    badgeCount={item.href === '/admin/forwarded' ? unreadInboxCount : undefined} />
+                    badgeCount={
+                      item.href === "/admin/forwarded"
+                        ? unreadInboxCount
+                        : undefined
+                    }
+                  />
                 ))
               : isViewerNo201
-                ? VIEWER_NAV.map(item => (
-                    <NavLink key={item.href} item={item}
-                      active={pathname === item.href || pendingHref === item.href}
-                      onNavigate={setPendingHref}
-                      badgeCount={item.href === '/admin/forwarded' ? unreadInboxCount : undefined} />
-                  ))
-                : DOC_NAV.map(item => (
-                    <NavLink key={item.href} item={item}
-                      active={pathname === item.href || pendingHref === item.href}
-                      onNavigate={setPendingHref}
-                      badgeCount={item.href === '/admin/forwarded' ? unreadInboxCount : undefined} />
-                  ))
-            }
+              ? VIEWER_NAV.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    item={item}
+                    active={pathname === item.href || pendingHref === item.href}
+                    onNavigate={setPendingHref}
+                    badgeCount={
+                      item.href === "/admin/forwarded"
+                        ? unreadInboxCount
+                        : undefined
+                    }
+                  />
+                ))
+              : DOC_NAV.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    item={item}
+                    active={pathname === item.href || pendingHref === item.href}
+                    onNavigate={setPendingHref}
+                    badgeCount={
+                      item.href === "/admin/forwarded"
+                        ? unreadInboxCount
+                        : undefined
+                    }
+                  />
+                ))}
           </div>
         )}
 
@@ -365,14 +482,14 @@ export function Sidebar() {
             <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">
               Management
             </div>
-            {DPDA_NAV.map(item => (
+            {DPDA_NAV.map((item) => (
               <NavLink
                 key={item.href}
                 item={item}
                 active={pathname === item.href || pendingHref === item.href}
                 onNavigate={setPendingHref}
                 badgeCount={
-                  item.href === '/admin/inbox' ? unreadInboxCount : undefined
+                  item.href === "/admin/inbox" ? unreadInboxCount : undefined
                 }
               />
             ))}
@@ -382,11 +499,16 @@ export function Sidebar() {
         {/* Admin nav */}
         {isAdmin && (
           <div className="px-3 pt-3 pb-2">
-            <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">Administration</div>
-            {ADMIN_NAV.map(item => (
-              <NavLink key={item.href} item={item}
+            <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">
+              Administration
+            </div>
+            {ADMIN_NAV.map((item) => (
+              <NavLink
+                key={item.href}
+                item={item}
                 active={pathname === item.href || pendingHref === item.href}
-                onNavigate={setPendingHref} />
+                onNavigate={setPendingHref}
+              />
             ))}
           </div>
         )}
@@ -397,7 +519,17 @@ export function Sidebar() {
             onClick={() => setShowLogoutConfirm(true)}
             className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-gray-600 hover:text-red-600 hover:bg-red-50 transition-colors text-[13px] font-medium group"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="group-hover:scale-110 transition-transform">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="group-hover:scale-110 transition-transform"
+            >
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
               <polyline points="16 17 21 12 16 7" />
               <line x1="21" y1="12" x2="9" y2="12" />
@@ -420,5 +552,5 @@ export function Sidebar() {
         onProfileUpdated={handleProfileUpdated}
       />
     </>
-  )
+  );
 }
