@@ -1,4 +1,4 @@
-'use client'
+"use client";
 
 import { useState } from "react";
 
@@ -8,15 +8,29 @@ const sections = [
     title: "Acceptance of Terms",
     content: (
       <div className="space-y-3">
-        <p>By logging into and utilizing the PNP-RMS, you confirm that you have read, understood, and expressly agree to:</p>
+        <p>
+          By logging into and utilizing the PNP-RMS, you confirm that you have
+          read, understood, and expressly agree to:
+        </p>
         <ul className="bullet-list">
           <li>These Terms and Conditions</li>
-          <li>The provisions of R.A. 10173 (DPA) and its Implementing Rules and Regulations (IRR)</li>
-          <li>All relevant PNP memorandum circulars and administrative orders</li>
-          <li>Any subsequent amendments issued by the National Privacy Commission (NPC) or the PNP</li>
+          <li>
+            The provisions of R.A. 10173 (DPA) and its Implementing Rules and
+            Regulations (IRR)
+          </li>
+          <li>
+            All relevant PNP memorandum circulars and administrative orders
+          </li>
+          <li>
+            Any subsequent amendments issued by the National Privacy Commission
+            (NPC) or the PNP
+          </li>
         </ul>
         <div className="note">
-          Access to this system constitutes a continuous affirmation of these terms. If you do not agree to any provision herein, you must immediately discontinue use of the system and notify your designated Data Protection Officer (DPO).
+          Access to this system constitutes a continuous affirmation of these
+          terms. If you do not agree to any provision herein, you must
+          immediately discontinue use of the system and notify your designated
+          Data Protection Officer (DPO).
         </div>
       </div>
     ),
@@ -26,16 +40,34 @@ const sections = [
     title: "System Overview and Scope",
     content: (
       <div className="space-y-4">
-        <p>The PNP-RMS is a centralized digital records management platform designed to automate and secure the full lifecycle of police records, administrative files, classified documents, and internal communications. Deployed for use by the Davao Norte Police Provincial Office (DNPPO) and its subordinate units.</p>
+        <p>
+          The PNP-RMS is a centralized digital records management platform
+          designed to automate and secure the full lifecycle of police records,
+          administrative files, classified documents, and internal
+          communications. Deployed for use by the Davao Norte Police Provincial
+          Office (DNPPO) and its subordinate units.
+        </p>
 
         {[
           {
             sub: "2.1 Document Lifecycle Management",
             items: [
-              { label: "Uploading", desc: "Uploading and ingestion of digital files, memoranda, circulars, reports, and official directives into the secure records database." },
-              { label: "Cross-Referencing", desc: "Attachment and cross-referencing of related documents to create an interconnected audit trail for comprehensive case and records tracking." },
-              { label: "Archiving", desc: "Long-term preservation of inactive records in compliance with the standards of the National Archives of the Philippines (NAP), including both automated and manual archiving workflows." },
-              { label: "Editing and Modification", desc: "Controlled modification of existing records by authorized personnel, subject to full audit logging and version control that preserves the original file and all changes." },
+              {
+                label: "Uploading",
+                desc: "Uploading and ingestion of digital files, memoranda, circulars, reports, and official directives into the secure records database.",
+              },
+              {
+                label: "Cross-Referencing",
+                desc: "Attachment and cross-referencing of related documents to create an interconnected audit trail for comprehensive case and records tracking.",
+              },
+              {
+                label: "Archiving",
+                desc: "Long-term preservation of inactive records in compliance with the standards of the National Archives of the Philippines (NAP), including both automated and manual archiving workflows.",
+              },
+              {
+                label: "Editing and Modification",
+                desc: "Controlled modification of existing records by authorized personnel, subject to full audit logging and version control that preserves the original file and all changes.",
+              },
             ],
           },
         ].map((mod, i) => (
@@ -53,30 +85,70 @@ const sections = [
         ))}
 
         <div>
-          <p className="sub-heading">2.2 Personnel Records Management — P1 Exclusive</p>
-          <p>The system maintains a secure digital 201 File repository for all PNP personnel, covering Personal Data Sheets (PDS), service records, promotion histories, commendations, and disciplinary actions.</p>
+          <p className="sub-heading">
+            2.2 Personnel Records Management — P1 Exclusive
+          </p>
+          <p>
+            The system maintains a secure digital 201 File repository for all
+            PNP personnel, covering Personal Data Sheets (PDS), service records,
+            promotion histories, commendations, and disciplinary actions.
+          </p>
           <ul className="bullet-list mt-2">
-            <li>Management of 201 Files is strictly exclusive to P1 (Personnel and Administrative Section). Only accounts assigned the P1 role may upload, edit, archive, view, or perform any action on personnel records within this module.</li>
-            <li>All other staff roles — P2 through P10, WCPD, and PPSMU — are barred from accessing the Personnel 201 File module in any capacity.</li>
+            <li>
+              Management of 201 Files is strictly exclusive to P1 (Personnel and
+              Administrative Section). Only accounts assigned the P1 role may
+              upload, edit, archive, view, or perform any action on personnel
+              records within this module.
+            </li>
+            <li>
+              All other staff roles — P2 through P10, WCPD, and PPSMU — are
+              barred from accessing the Personnel 201 File module in any
+              capacity.
+            </li>
           </ul>
         </div>
 
         <div>
           <p className="sub-heading">2.3 Classified Documents — P2 Exclusive</p>
-          <p>The Classified Documents module stores sensitive, restricted, and confidential records requiring heightened access controls.</p>
+          <p>
+            The Classified Documents module stores sensitive, restricted, and
+            confidential records requiring heightened access controls.
+          </p>
           <ul className="bullet-list mt-2">
-            <li>All operations within this module — uploading, viewing, editing, archiving, and printing — are strictly exclusive to P2 (Intelligence Section).</li>
-            <li>No other role may access, view, or interact with classified documents, regardless of rank or assignment.</li>
+            <li>
+              All operations within this module — uploading, viewing, editing,
+              archiving, and printing — are strictly exclusive to P2
+              (Intelligence Section).
+            </li>
+            <li>
+              No other role may access, view, or interact with classified
+              documents, regardless of rank or assignment.
+            </li>
           </ul>
         </div>
 
         <div>
           <p className="sub-heading">2.4 Inter-Departmental Document Routing</p>
-          <p>The system provides an automated digital communication pipeline to eliminate manual paper distribution and bureaucratic delays.</p>
+          <p>
+            The system provides an automated digital communication pipeline to
+            eliminate manual paper distribution and bureaucratic delays.
+          </p>
           <ul className="bullet-list mt-2">
-            <li>Authorized roles (P1 through P10, WCPD, PPSMU) may forward official documents, case files, and memoranda to other sections or units digitally.</li>
-            <li>Real-time tracking of document workflow status (Pending, Saved, Dismissed) provides an electronic accountability log for the receiving officer or department.</li>
-            <li>DPDA and DPDO accounts may review forwarded documents and route them back to the originating section. They may not upload, modify, or delete records.</li>
+            <li>
+              Authorized roles (P1 through P10, WCPD, PPSMU) may forward
+              official documents, case files, and memoranda to other sections or
+              units digitally.
+            </li>
+            <li>
+              Real-time tracking of document workflow status (Pending, Saved,
+              Dismissed) provides an electronic accountability log for the
+              receiving officer or department.
+            </li>
+            <li>
+              DPDA and DPDO accounts may review forwarded documents and route
+              them back to the originating section. They may not upload, modify,
+              or delete records.
+            </li>
           </ul>
         </div>
       </div>
@@ -87,7 +159,11 @@ const sections = [
     title: "Role-Based Access Control (RBAC)",
     content: (
       <div className="space-y-3">
-        <p>Access within the PNP-RMS is governed by a strict role-based access control framework. Each account is assigned a fixed system role at provisioning. Roles cannot be self-modified.</p>
+        <p>
+          Access within the PNP-RMS is governed by a strict role-based access
+          control framework. Each account is assigned a fixed system role at
+          provisioning. Roles cannot be self-modified.
+        </p>
         <div className="table-wrap">
           <table>
             <thead>
@@ -98,11 +174,26 @@ const sections = [
             </thead>
             <tbody>
               {[
-                ["Super Administrator (admin)", "Full system administration: manage Google Drive accounts, user account credentials, log history, and backup and recovery operations. Does not access document content."],
-                ["DPDA / DPDO", "View-only access to all document modules. May review forwarded documents and return them to the originating section. Cannot upload, modify, or delete documents."],
-                ["P1 — Personnel and Administrative Section", "Full document operations on all modules plus exclusive access to the Personnel 201 File module. May upload, edit, archive, and forward documents."],
-                ["P2 — Intelligence Section", "Full document operations on all general modules. Exclusive access to the Classified Documents module. Cannot access Personnel 201 Files."],
-                ["P3 – P10, WCPD, PPSMU", "Upload, edit, archive, and forward documents within their designated modules. No access to Personnel 201 Files or Classified Documents."],
+                [
+                  "Super Administrator (admin)",
+                  "Full system administration: manage Google Drive accounts, user account credentials, log history, and backup and recovery operations. Does not access document content.",
+                ],
+                [
+                  "DPDA / DPDO",
+                  "View-only access to all document modules. May review forwarded documents and return them to the originating section. Cannot upload, modify, or delete documents.",
+                ],
+                [
+                  "P1 — Personnel and Administrative Section",
+                  "Full document operations on all modules plus exclusive access to the Personnel 201 File module. May upload, edit, archive, and forward documents.",
+                ],
+                [
+                  "P2 — Intelligence Section",
+                  "Full document operations on all general modules. Exclusive access to the Classified Documents module. Cannot access Personnel 201 Files.",
+                ],
+                [
+                  "P3 – P10, WCPD, PPSMU",
+                  "Upload, edit, archive, and forward documents within their designated modules. No access to Personnel 201 Files or Classified Documents.",
+                ],
               ].map(([role, scope], i) => (
                 <tr key={i}>
                   <td className="cat-cell">{role}</td>
@@ -112,7 +203,11 @@ const sections = [
             </tbody>
           </table>
         </div>
-        <div className="note">Any attempt to access data, modules, or functions beyond the scope defined for your assigned role constitutes unauthorized access and is subject to disciplinary and legal action as outlined in Section 8.</div>
+        <div className="note">
+          Any attempt to access data, modules, or functions beyond the scope
+          defined for your assigned role constitutes unauthorized access and is
+          subject to disciplinary and legal action as outlined in Section 8.
+        </div>
       </div>
     ),
   },
@@ -121,13 +216,41 @@ const sections = [
     title: "Storage and File Management",
     content: (
       <div className="space-y-3">
-        <p>The PNP-RMS utilizes a multi-account Google Drive pooling system as its primary cloud storage infrastructure. The following provisions apply:</p>
+        <p>
+          The PNP-RMS utilizes a multi-account Google Drive pooling system as
+          its primary cloud storage infrastructure. The following provisions
+          apply:
+        </p>
         <ul className="bullet-list">
-          <li>All uploaded files are stored in Google Drive accounts managed and controlled by the implementing agency. Files are organized into category-specific folders and are subject to access controls consistent with user roles.</li>
-          <li>The system enforces a maximum file size limit of <strong>50 MB per upload</strong>. Accepted file formats are limited to: PDF, DOCX, XLSX, DOC, XLS, and common image formats (JPEG, PNG, etc.).</li>
-          <li>Each user account's storage is scoped to that user's provisioned Google Drive accounts. The system is designed to prevent cross-user data routing.</li>
-          <li>Google Drive accounts connected to the system are administered exclusively by the Super Administrator role. Users are prohibited from directly accessing, modifying, or disconnecting Drive accounts through any means outside the system.</li>
-          <li>Backup of all system data and files is performed automatically on a configurable schedule (daily, weekly, monthly, yearly) and may also be triggered manually by the Super Administrator. Backup archives are <strong>AES-256 encrypted</strong>.</li>
+          <li>
+            All uploaded files are stored in Google Drive accounts managed and
+            controlled by the implementing agency. Files are organized into
+            category-specific folders and are subject to access controls
+            consistent with user roles.
+          </li>
+          <li>
+            The system enforces a maximum file size limit of{" "}
+            <strong>50 MB per upload</strong>. Accepted file formats are limited
+            to: PDF, DOCX, XLSX, DOC, XLS, and common image formats (JPEG, PNG,
+            etc.).
+          </li>
+          <li>
+            Each user account's storage is scoped to that user's provisioned
+            Google Drive accounts. The system is designed to prevent cross-user
+            data routing.
+          </li>
+          <li>
+            Google Drive accounts connected to the system are administered
+            exclusively by the Super Administrator role. Users are prohibited
+            from directly accessing, modifying, or disconnecting Drive accounts
+            through any means outside the system.
+          </li>
+          <li>
+            Backup of all system data and files is performed automatically on a
+            configurable schedule (daily, weekly, monthly, yearly) and may also
+            be triggered manually by the Super Administrator. Backup archives
+            are <strong>AES-256 encrypted</strong>.
+          </li>
         </ul>
       </div>
     ),
@@ -139,19 +262,42 @@ const sections = [
       <div className="space-y-4">
         <div>
           <p className="sub-heading">5.1 Governing Law</p>
-          <p>The PNP-RMS and its operations are governed by Republic Act No. 10173, otherwise known as the Data Privacy Act of 2012, its Implementing Rules and Regulations, and all circulars and issuances of the National Privacy Commission (NPC).</p>
+          <p>
+            The PNP-RMS and its operations are governed by Republic Act No.
+            10173, otherwise known as the Data Privacy Act of 2012, its
+            Implementing Rules and Regulations, and all circulars and issuances
+            of the National Privacy Commission (NPC).
+          </p>
         </div>
         <div>
           <p className="sub-heading">5.2 Law Enforcement Exemptions</p>
-          <p>Pursuant to Section 4 of the Data Privacy Act of 2012, information necessary for the prevention, investigation, prosecution, and other law enforcement functions of public authorities is exempt from the full application of the DPA, provided that processing is strictly limited to the minimum necessary to fulfill the PNP's mandated functions. This exemption does not override the security, audit, and confidentiality obligations imposed upon all system users under these Terms.</p>
+          <p>
+            Pursuant to Section 4 of the Data Privacy Act of 2012, information
+            necessary for the prevention, investigation, prosecution, and other
+            law enforcement functions of public authorities is exempt from the
+            full application of the DPA, provided that processing is strictly
+            limited to the minimum necessary to fulfill the PNP's mandated
+            functions. This exemption does not override the security, audit, and
+            confidentiality obligations imposed upon all system users under
+            these Terms.
+          </p>
         </div>
         <div>
           <p className="sub-heading">5.3 Data Processing Principles</p>
           <div className="list-items">
             {[
-              { label: "Transparency", desc: "Data subjects will be informed of the nature, scope, and purpose of data processing. Consent, where required, shall be obtained prior to collection." },
-              { label: "Legitimate Purpose", desc: "Processing is strictly limited to purposes related to law enforcement, public safety, internal administration, and official PNP functions." },
-              { label: "Proportionality", desc: "Only data that is necessary for the declared purpose shall be collected, retained, and processed." },
+              {
+                label: "Transparency",
+                desc: "Data subjects will be informed of the nature, scope, and purpose of data processing. Consent, where required, shall be obtained prior to collection.",
+              },
+              {
+                label: "Legitimate Purpose",
+                desc: "Processing is strictly limited to purposes related to law enforcement, public safety, internal administration, and official PNP functions.",
+              },
+              {
+                label: "Proportionality",
+                desc: "Only data that is necessary for the declared purpose shall be collected, retained, and processed.",
+              },
             ].map((item, i) => (
               <div key={i} className="list-item">
                 <span className="badge">{item.label}</span>
@@ -163,11 +309,28 @@ const sections = [
         <div>
           <p className="sub-heading">5.4 Security Measures</p>
           <ul className="bullet-list">
-            <li>AES-256-GCM encryption for all backup archives and classified document exports.</li>
-            <li>Role-based access control (RBAC) enforced at both the application and database levels, including row-level security (RLS) on all document tables.</li>
-            <li>Comprehensive and immutable audit logging of all user actions, including login, logout, upload, edit, archive, delete, and document forwarding events.</li>
-            <li>Session management controls, including single active session enforcement per role to prevent concurrent unauthorized access.</li>
-            <li>Automatic account lockout and administrator notification upon detection of policy violations or suspicious activity.</li>
+            <li>
+              AES-256-GCM encryption for all backup archives and classified
+              document exports.
+            </li>
+            <li>
+              Role-based access control (RBAC) enforced at both the application
+              and database levels, including row-level security (RLS) on all
+              document tables.
+            </li>
+            <li>
+              Comprehensive and immutable audit logging of all user actions,
+              including login, logout, upload, edit, archive, delete, and
+              document forwarding events.
+            </li>
+            <li>
+              Session management controls, including single active session
+              enforcement per role to prevent concurrent unauthorized access.
+            </li>
+            <li>
+              Automatic account lockout and administrator notification upon
+              detection of policy violations or suspicious activity.
+            </li>
           </ul>
         </div>
       </div>
@@ -179,12 +342,30 @@ const sections = [
     content: (
       <div className="list-items">
         {[
-          { label: "Confidentiality", desc: "All information accessed through the PNP-RMS — regardless of classification level — must be treated as strictly confidential. Unauthorized disclosure, distribution, or reproduction of system data in any form is prohibited." },
-          { label: "Authorized Access Only", desc: "Users shall only access records, modules, and functions directly relevant to their current official assignment. Accessing records outside the scope of one's role or duty — including curiosity searching — constitutes a severe violation." },
-          { label: "Data Integrity", desc: "All data submitted, encoded, or modified by users must be accurate, factual, and complete. Deliberate falsification or distortion of records is grounds for criminal and administrative action." },
-          { label: "Audit and Monitoring", desc: "All system activities — including login, document access, edits, exports, and forwarding events — are continuously tracked and logged. Users consent to this monitoring as a condition of system access." },
-          { label: "Credential Security", desc: "Users must safeguard their login credentials at all times. Sharing of passwords or access tokens is strictly prohibited. Users are fully accountable for all actions performed under their credentials." },
-          { label: "Incident Reporting", desc: "Users must immediately report any suspected security incident, unauthorized access, or data breach to the designated DPO." },
+          {
+            label: "Confidentiality",
+            desc: "All information accessed through the PNP-RMS — regardless of classification level — must be treated as strictly confidential. Unauthorized disclosure, distribution, or reproduction of system data in any form is prohibited.",
+          },
+          {
+            label: "Authorized Access Only",
+            desc: "Users shall only access records, modules, and functions directly relevant to their current official assignment. Accessing records outside the scope of one's role or duty — including curiosity searching — constitutes a severe violation.",
+          },
+          {
+            label: "Data Integrity",
+            desc: "All data submitted, encoded, or modified by users must be accurate, factual, and complete. Deliberate falsification or distortion of records is grounds for criminal and administrative action.",
+          },
+          {
+            label: "Audit and Monitoring",
+            desc: "All system activities — including login, document access, edits, exports, and forwarding events — are continuously tracked and logged. Users consent to this monitoring as a condition of system access.",
+          },
+          {
+            label: "Credential Security",
+            desc: "Users must safeguard their login credentials at all times. Sharing of passwords or access tokens is strictly prohibited. Users are fully accountable for all actions performed under their credentials.",
+          },
+          {
+            label: "Incident Reporting",
+            desc: "Users must immediately report any suspected security incident, unauthorized access, or data breach to the designated DPO.",
+          },
         ].map((item, i) => (
           <div key={i} className="list-item">
             <span className="badge">{item.label}</span>
@@ -200,12 +381,32 @@ const sections = [
     content: (
       <div className="space-y-3">
         <ul className="bullet-list">
-          <li><strong>Active Records:</strong> Retained for the duration of the operational or investigative need for which they were created.</li>
-          <li><strong>Personnel 201 Files:</strong> Retained for the duration of active service plus fifteen (15) years following separation. Records exceeding this retention period are automatically flagged for archiving by the system.</li>
-          <li><strong>Administrative Logs and Audit Trails:</strong> Retained for a minimum of ninety (90) days. Extended retention may be mandated by ongoing investigations or legal proceedings.</li>
-          <li><strong>Upon Expiration:</strong> Records shall be securely archived or — where legally permissible — anonymized or disposed of in a manner that prevents reconstruction.</li>
+          <li>
+            <strong>Active Records:</strong> Retained for the duration of the
+            operational or investigative need for which they were created.
+          </li>
+          <li>
+            <strong>Personnel 201 Files:</strong> Retained for the duration of
+            active service plus fifteen (15) years following separation. Records
+            exceeding this retention period are automatically flagged for
+            archiving by the system.
+          </li>
+          <li>
+            <strong>Administrative Logs and Audit Trails:</strong> Retained for
+            a minimum of ninety (90) days. Extended retention may be mandated by
+            ongoing investigations or legal proceedings.
+          </li>
+          <li>
+            <strong>Upon Expiration:</strong> Records shall be securely archived
+            or — where legally permissible — anonymized or disposed of in a
+            manner that prevents reconstruction.
+          </li>
         </ul>
-        <p className="note">All retention and disposal actions are subject to compliance with the National Archives of the Philippines (NAP) standards and applicable PNP memorandum circulars.</p>
+        <p className="note">
+          All retention and disposal actions are subject to compliance with the
+          National Archives of the Philippines (NAP) standards and applicable
+          PNP memorandum circulars.
+        </p>
       </div>
     ),
   },
@@ -214,13 +415,30 @@ const sections = [
     title: "Prohibited Acts and Penalties",
     content: (
       <div className="space-y-3">
-        <p>The following acts are strictly prohibited and shall be dealt with accordingly under applicable law and PNP administrative regulations:</p>
+        <p>
+          The following acts are strictly prohibited and shall be dealt with
+          accordingly under applicable law and PNP administrative regulations:
+        </p>
         <ul className="bullet-list">
-          <li>Unauthorized access to, disclosure, or processing of records within the system.</li>
-          <li>Sharing, replication, or exfiltration of system data without proper authorization.</li>
-          <li>Tampering, falsification, deletion, or destruction of records.</li>
-          <li>Circumventing or disabling any security feature, access control, or audit mechanism.</li>
-          <li>Using the system for any purpose other than the official discharge of duties.</li>
+          <li>
+            Unauthorized access to, disclosure, or processing of records within
+            the system.
+          </li>
+          <li>
+            Sharing, replication, or exfiltration of system data without proper
+            authorization.
+          </li>
+          <li>
+            Tampering, falsification, deletion, or destruction of records.
+          </li>
+          <li>
+            Circumventing or disabling any security feature, access control, or
+            audit mechanism.
+          </li>
+          <li>
+            Using the system for any purpose other than the official discharge
+            of duties.
+          </li>
         </ul>
         <div className="table-wrap">
           <table>
@@ -232,10 +450,22 @@ const sections = [
             </thead>
             <tbody>
               {[
-                ["Unauthorized Access or Processing", "Sections 25 and 29, R.A. 10173 — Imprisonment up to six (6) years and fines up to ₱5,000,000"],
-                ["Breach of Confidentiality", "R.A. 3019, Anti-Graft and Corrupt Practices Act — Criminal liability and administrative sanctions"],
-                ["Administrative Infractions", "RRACCS and PNP Disciplinary Machinery (NAPOLCOM) — Suspension, dismissal, or other administrative penalties"],
-                ["Malicious Data Tampering or Destruction", "R.A. 10175, Cybercrime Prevention Act of 2012 — Imprisonment and fines commensurate to severity"],
+                [
+                  "Unauthorized Access or Processing",
+                  "Sections 25 and 29, R.A. 10173 — Imprisonment up to six (6) years and fines up to ₱5,000,000",
+                ],
+                [
+                  "Breach of Confidentiality",
+                  "R.A. 3019, Anti-Graft and Corrupt Practices Act — Criminal liability and administrative sanctions",
+                ],
+                [
+                  "Administrative Infractions",
+                  "RRACCS and PNP Disciplinary Machinery (NAPOLCOM) — Suspension, dismissal, or other administrative penalties",
+                ],
+                [
+                  "Malicious Data Tampering or Destruction",
+                  "R.A. 10175, Cybercrime Prevention Act of 2012 — Imprisonment and fines commensurate to severity",
+                ],
               ].map(([offense, penalty], i) => (
                 <tr key={i}>
                   <td className="cat-cell">{offense}</td>
@@ -253,12 +483,32 @@ const sections = [
     title: "Backup, Recovery, and System Continuity",
     content: (
       <div className="space-y-3">
-        <p>The PNP-RMS incorporates an integrated backup and recovery system managed exclusively by the Super Administrator account. The following provisions govern its use:</p>
+        <p>
+          The PNP-RMS incorporates an integrated backup and recovery system
+          managed exclusively by the Super Administrator account. The following
+          provisions govern its use:
+        </p>
         <ul className="bullet-list">
-          <li>Automated backups are executed on a configurable schedule across all modules, including Master Documents, Admin Orders, Daily Journals, E-Library, Personnel 201 Files, Classified Documents, and administrative logs.</li>
-          <li>All backup archives are encrypted using AES-256-GCM. Classified document backups undergo an additional layer of encryption.</li>
-          <li>Recovery operations may only be initiated by the Super Administrator and require explicit confirmation. Recovery procedures are logged and audited.</li>
-          <li>Backup integrity is verified using SHA-256 checksums embedded in a signed manifest file. Any manifest tampering is detected automatically and will abort the recovery process.</li>
+          <li>
+            Automated backups are executed on a configurable schedule across all
+            modules, including Master Documents, Admin Orders, Daily Journals,
+            E-Library, Personnel 201 Files, Classified Documents, and
+            administrative logs.
+          </li>
+          <li>
+            All backup archives are encrypted using AES-256-GCM. Classified
+            document backups undergo an additional layer of encryption.
+          </li>
+          <li>
+            Recovery operations may only be initiated by the Super Administrator
+            and require explicit confirmation. Recovery procedures are logged
+            and audited.
+          </li>
+          <li>
+            Backup integrity is verified using SHA-256 checksums embedded in a
+            signed manifest file. Any manifest tampering is detected
+            automatically and will abort the recovery process.
+          </li>
         </ul>
       </div>
     ),
@@ -267,7 +517,14 @@ const sections = [
     id: 10,
     title: "Amendments to These Terms",
     content: (
-      <p>The PNP reserves the right to amend, revise, or update these Terms and Conditions at any time, in response to new legislation, NPC circulars, operational requirements, or system upgrades. All amendments will be communicated to users through official channels. Continued use of the system following notification of an amendment constitutes acceptance of the revised terms.</p>
+      <p>
+        The PNP reserves the right to amend, revise, or update these Terms and
+        Conditions at any time, in response to new legislation, NPC circulars,
+        operational requirements, or system upgrades. All amendments will be
+        communicated to users through official channels. Continued use of the
+        system following notification of an amendment constitutes acceptance of
+        the revised terms.
+      </p>
     ),
   },
   {
@@ -278,8 +535,16 @@ const sections = [
         <p className="font-semibold">Data Protection Officer (DPO)</p>
         <p>Davao Norte Police Provincial Office (DNPPO)</p>
         <p>National Highway, Visayan Village, Tagum City, Davao Del Norte</p>
-        <p>Email: <span className="placeholder">[Insert Official DPO Email Address]</span></p>
-        <p>Hotline: <span className="placeholder">[Insert Official Contact Number]</span></p>
+        <p>
+          Email:{" "}
+          <span className="placeholder">
+            [Insert Official DPO Email Address]
+          </span>
+        </p>
+        <p>
+          Hotline:{" "}
+          <span className="placeholder">[Insert Official Contact Number]</span>
+        </p>
       </div>
     ),
   },
@@ -288,7 +553,8 @@ const sections = [
 export default function TermsAndConditions() {
   const [activeSection, setActiveSection] = useState<number | null>(null);
 
-  const toggle = (id: number) => setActiveSection(activeSection === id ? null : id);
+  const toggle = (id: number) =>
+    setActiveSection(activeSection === id ? null : id);
 
   return (
     <>
@@ -364,6 +630,7 @@ export default function TermsAndConditions() {
           background: #c0392b;
           border-radius: 50%;
           display: inline-block;
+          flex-shrink: 0;
         }
 
         /* Intro */
@@ -487,7 +754,10 @@ export default function TermsAndConditions() {
           margin-bottom: 2px;
         }
 
-        .table-wrap { overflow-x: auto; }
+        .table-wrap {
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+        }
 
         table {
           width: 100%;
@@ -584,24 +854,94 @@ export default function TermsAndConditions() {
           text-transform: uppercase;
           border-radius: 2px;
         }
+
+        /* ============================================
+           RESPONSIVE DESIGN
+           Tablet: screens 768px wide or narrower
+           Mobile: screens 480px wide or narrower
+           ============================================ */
+
+        @media (max-width: 768px) {
+          .page-wrapper { padding: 32px 20px 60px; }
+
+          .doc-header h1 { font-size: 26px; }
+          .doc-header .system-name { font-size: 13px; }
+
+          .meta-strip {
+            flex-direction: column;
+            gap: 8px;
+          }
+
+          .intro-box { padding: 16px 18px; font-size: 13px; }
+
+          .section-title { font-size: 15px; }
+          .section-body { padding-left: 24px; font-size: 13.5px; }
+
+          table { font-size: 12.5px; }
+          th, td { padding: 8px 10px; }
+        }
+
+        @media (max-width: 480px) {
+          .page-wrapper { padding: 24px 14px 48px; }
+
+          .doc-header { padding-top: 20px; margin-bottom: 28px; }
+          .doc-header h1 { font-size: 21px; }
+          .doc-header .agency-line { font-size: 10px; letter-spacing: 0.1em; }
+          .doc-header .system-name { font-size: 12px; }
+
+          .meta-strip { font-size: 11px; gap: 6px; }
+
+          .intro-box { padding: 14px; font-size: 12.5px; line-height: 1.6; }
+
+          .section-btn { padding: 14px 0; gap: 8px; }
+          .section-num { min-width: 20px; font-size: 10px; }
+          .section-title { font-size: 13.5px; }
+          .section-body { padding-left: 12px; font-size: 12.5px; }
+
+          .table-wrap { margin: 0 -14px; padding: 0 14px; }
+          table { font-size: 11.5px; min-width: 480px; }
+          th, td { padding: 7px 8px; }
+
+          .doc-footer {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 10px;
+          }
+        }
       `}</style>
 
       <div className="page-wrapper">
         {/* Header */}
         <div className="doc-header">
-          <p className="agency-line">Philippine National Police — Davao Norte Police Provincial Office</p>
+          <p className="agency-line">
+            Philippine National Police — Davao Norte Police Provincial Office
+          </p>
           <h1>Terms and Conditions</h1>
           <p className="system-name">PNP Records Management System (PNP-RMS)</p>
           <div className="meta-strip">
-            <span><span className="meta-dot" /> Effective Date: Upon System Turnover</span>
-            <span><span className="meta-dot" /> Version: 1.0</span>
-            <span><span className="meta-dot" /> Governed by R.A. 10173 — Data Privacy Act of 2012</span>
+            <span>
+              <span className="meta-dot" /> Effective Date: Upon System Turnover
+            </span>
+            <span>
+              <span className="meta-dot" /> Version: 1.0
+            </span>
+            <span>
+              <span className="meta-dot" /> Governed by R.A. 10173 — Data
+              Privacy Act of 2012
+            </span>
           </div>
         </div>
 
         {/* Intro */}
         <div className="intro-box">
-          Welcome to the PNP Records Management System (PNP-RMS). By accessing or using this system, you — the authorized user, referring to PNP personnel, designated government agents, or cleared data subjects — agree to be bound by the following Terms and Conditions. These terms govern access to and use of the system in full compliance with applicable Philippine law, including Republic Act No. 10173, otherwise known as the Data Privacy Act of 2012 (DPA).
+          Welcome to the PNP Records Management System (PNP-RMS). By accessing
+          or using this system, you — the authorized user, referring to PNP
+          personnel, designated government agents, or cleared data subjects —
+          agree to be bound by the following Terms and Conditions. These terms
+          govern access to and use of the system in full compliance with
+          applicable Philippine law, including Republic Act No. 10173, otherwise
+          known as the Data Privacy Act of 2012 (DPA).
         </div>
 
         {/* Accordion Sections */}
@@ -609,9 +949,17 @@ export default function TermsAndConditions() {
           {sections.map((sec) => (
             <div key={sec.id} className="section-item">
               <button className="section-btn" onClick={() => toggle(sec.id)}>
-                <span className="section-num">{String(sec.id).padStart(2, "0")}</span>
+                <span className="section-num">
+                  {String(sec.id).padStart(2, "0")}
+                </span>
                 <span className="section-title">{sec.title}</span>
-                <span className={`chevron ${activeSection === sec.id ? "open" : ""}`}>▾</span>
+                <span
+                  className={`chevron ${
+                    activeSection === sec.id ? "open" : ""
+                  }`}
+                >
+                  ▾
+                </span>
               </button>
               {activeSection === sec.id && (
                 <div className="section-body">{sec.content}</div>

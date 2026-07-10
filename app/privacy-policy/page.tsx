@@ -1,6 +1,5 @@
-'use client'
+"use client";
 import { useState } from "react";
-
 
 const sections = [
   {
@@ -8,16 +7,31 @@ const sections = [
     title: "Identity of the Personal Information Controller",
     content: (
       <div className="space-y-3">
-        <p>The Personal Information Controller (PIC) for data processed through the PNP-RMS is:</p>
+        <p>
+          The Personal Information Controller (PIC) for data processed through
+          the PNP-RMS is:
+        </p>
         <div className="info-card">
-          <p className="font-semibold">Davao Norte Police Provincial Office (DNPPO)</p>
+          <p className="font-semibold">
+            Davao Norte Police Provincial Office (DNPPO)
+          </p>
           <p>National Highway, Visayan Village, Tagum City, Davao Del Norte</p>
           <p>Philippine National Police</p>
         </div>
         <div className="info-card mt-3">
           <p className="label">Designated Data Protection Officer (DPO)</p>
-          <p>Email: <span className="placeholder">[Insert Official DPO Email Address]</span></p>
-          <p>Hotline: <span className="placeholder">[Insert Official Contact Number]</span></p>
+          <p>
+            Email:{" "}
+            <span className="placeholder">
+              [Insert Official DPO Email Address]
+            </span>
+          </p>
+          <p>
+            Hotline:{" "}
+            <span className="placeholder">
+              [Insert Official Contact Number]
+            </span>
+          </p>
         </div>
       </div>
     ),
@@ -27,13 +41,27 @@ const sections = [
     title: "Legal Basis for Processing",
     content: (
       <div className="space-y-3">
-        <p>The PNP-RMS processes personal data on the following legal grounds:</p>
+        <p>
+          The PNP-RMS processes personal data on the following legal grounds:
+        </p>
         <div className="list-items">
           {[
-            { label: "Legal Mandate", desc: "Performance of official law enforcement, public safety, and administrative functions mandated to the PNP under R.A. 6975 and R.A. 8551." },
-            { label: "Legal Obligation", desc: "Processing necessary for compliance with legal obligations, including audit, archiving, and records retention requirements of the National Archives of the Philippines (NAP)." },
-            { label: "Consent", desc: "Processing expressly authorized by the data subject as a condition of system access and use." },
-            { label: "Law Enforcement Exemption", desc: "Pursuant to Section 4 of R.A. 10173, certain processing activities related to law enforcement functions are exempt from specific DPA requirements, subject to the minimum necessary standard." },
+            {
+              label: "Legal Mandate",
+              desc: "Performance of official law enforcement, public safety, and administrative functions mandated to the PNP under R.A. 6975 and R.A. 8551.",
+            },
+            {
+              label: "Legal Obligation",
+              desc: "Processing necessary for compliance with legal obligations, including audit, archiving, and records retention requirements of the National Archives of the Philippines (NAP).",
+            },
+            {
+              label: "Consent",
+              desc: "Processing expressly authorized by the data subject as a condition of system access and use.",
+            },
+            {
+              label: "Law Enforcement Exemption",
+              desc: "Pursuant to Section 4 of R.A. 10173, certain processing activities related to law enforcement functions are exempt from specific DPA requirements, subject to the minimum necessary standard.",
+            },
           ].map((item, i) => (
             <div key={i} className="list-item">
               <span className="badge">{item.label}</span>
@@ -49,7 +77,10 @@ const sections = [
     title: "Categories of Personal Data Collected",
     content: (
       <div className="space-y-3">
-        <p>The PNP-RMS collects and processes the following categories of data depending on the user's role and module accessed:</p>
+        <p>
+          The PNP-RMS collects and processes the following categories of data
+          depending on the user's role and module accessed:
+        </p>
         <div className="table-wrap">
           <table>
             <thead>
@@ -61,12 +92,36 @@ const sections = [
             </thead>
             <tbody>
               {[
-                ["Identity and Authentication Data", "Full name, assigned role, employee serial number, login credentials (hashed), session tokens", "System access, authentication, and audit trail"],
-                ["Personnel Records (201 Files)", "Personal Data Sheet (PDS), service records, promotions, commendations, disciplinary actions, biometric and identification data", "Personnel administration; P1 module only"],
-                ["Document Metadata", "Upload timestamps, file names, file types, document titles, categories, tags, version history", "Records lifecycle management and search"],
-                ["Classified and Operational Records", "Restricted and confidential documents, intelligence reports, operational case files", "Law enforcement and intelligence functions; P2 module only"],
-                ["System Activity Logs", "Login/logout timestamps, IP addresses, actions performed, session duration", "Security auditing, compliance, and accountability"],
-                ["Cloud Storage Metadata", "Google Drive file identifiers, storage pool assignments, file size, MIME type, access URLs", "File retrieval, storage management, and backup"],
+                [
+                  "Identity and Authentication Data",
+                  "Full name, assigned role, employee serial number, login credentials (hashed), session tokens",
+                  "System access, authentication, and audit trail",
+                ],
+                [
+                  "Personnel Records (201 Files)",
+                  "Personal Data Sheet (PDS), service records, promotions, commendations, disciplinary actions, biometric and identification data",
+                  "Personnel administration; P1 module only",
+                ],
+                [
+                  "Document Metadata",
+                  "Upload timestamps, file names, file types, document titles, categories, tags, version history",
+                  "Records lifecycle management and search",
+                ],
+                [
+                  "Classified and Operational Records",
+                  "Restricted and confidential documents, intelligence reports, operational case files",
+                  "Law enforcement and intelligence functions; P2 module only",
+                ],
+                [
+                  "System Activity Logs",
+                  "Login/logout timestamps, IP addresses, actions performed, session duration",
+                  "Security auditing, compliance, and accountability",
+                ],
+                [
+                  "Cloud Storage Metadata",
+                  "Google Drive file identifiers, storage pool assignments, file size, MIME type, access URLs",
+                  "File retrieval, storage management, and backup",
+                ],
               ].map(([cat, ex, purpose], i) => (
                 <tr key={i}>
                   <td className="cat-cell">{cat}</td>
@@ -77,7 +132,11 @@ const sections = [
             </tbody>
           </table>
         </div>
-        <p className="note">The system does not collect data beyond what is necessary for the performance of official PNP functions. Sensitive personal information is accessible only to the P1 role.</p>
+        <p className="note">
+          The system does not collect data beyond what is necessary for the
+          performance of official PNP functions. Sensitive personal information
+          is accessible only to the P1 role.
+        </p>
       </div>
     ),
   },
@@ -105,18 +164,39 @@ const sections = [
     content: (
       <div className="space-y-4">
         {[
-          { sub: "5.1 Cloud Storage", text: "All uploaded files and documents are stored within a multi-account Google Drive pooling system administered by the DNPPO. Storage is partitioned per user role to prevent cross-user data access. Files are organized into category-specific folders within a dedicated root directory labelled 'DNPPO RMS' in each connected Google Drive account." },
-          { sub: "5.2 Database Security", text: "Document metadata, user profiles, audit logs, and system configuration data are stored in a Supabase PostgreSQL database secured with row-level security (RLS) policies. Each database table enforces role-specific access rules, ensuring that users can only interact with records within their authorized scope." },
+          {
+            sub: "5.1 Cloud Storage",
+            text: "All uploaded files and documents are stored within a multi-account Google Drive pooling system administered by the DNPPO. Storage is partitioned per user role to prevent cross-user data access. Files are organized into category-specific folders within a dedicated root directory labelled 'DNPPO RMS' in each connected Google Drive account.",
+          },
+          {
+            sub: "5.2 Database Security",
+            text: "Document metadata, user profiles, audit logs, and system configuration data are stored in a Supabase PostgreSQL database secured with row-level security (RLS) policies. Each database table enforces role-specific access rules, ensuring that users can only interact with records within their authorized scope.",
+          },
           { sub: "5.3 Encryption", text: null },
-          { sub: "5.4 Audit Logging", text: "All user actions within the system — including login, logout, document uploads, edits, archiving, deletions, and document forwarding — are captured in an immutable audit log. Logs are retained for a minimum of ninety (90) days and are accessible exclusively to the Super Administrator role." },
+          {
+            sub: "5.4 Audit Logging",
+            text: "All user actions within the system — including login, logout, document uploads, edits, archiving, deletions, and document forwarding — are captured in an immutable audit log. Logs are retained for a minimum of ninety (90) days and are accessible exclusively to the Super Administrator role.",
+          },
         ].map((s, i) => (
           <div key={i}>
             <p className="sub-heading">{s.sub}</p>
-            {s.text ? <p>{s.text}</p> : (
+            {s.text ? (
+              <p>{s.text}</p>
+            ) : (
               <ul className="bullet-list">
-                <li>Backup archives: AES-256-GCM encryption. Classified document backups are subject to double-layer encryption using a separate key.</li>
-                <li>OAuth2 refresh tokens and access tokens for Google Drive accounts: AES-256-GCM encryption before database storage.</li>
-                <li>Data in transit: All communications between the system and external services are secured via HTTPS/TLS.</li>
+                <li>
+                  Backup archives: AES-256-GCM encryption. Classified document
+                  backups are subject to double-layer encryption using a
+                  separate key.
+                </li>
+                <li>
+                  OAuth2 refresh tokens and access tokens for Google Drive
+                  accounts: AES-256-GCM encryption before database storage.
+                </li>
+                <li>
+                  Data in transit: All communications between the system and
+                  external services are secured via HTTPS/TLS.
+                </li>
               </ul>
             )}
           </div>
@@ -129,14 +209,35 @@ const sections = [
     title: "Data Sharing and Disclosure",
     content: (
       <div className="space-y-3">
-        <p>Personal data processed within the PNP-RMS is not shared with external third parties for commercial, marketing, or non-official purposes. Data may be disclosed only in the following circumstances:</p>
+        <p>
+          Personal data processed within the PNP-RMS is not shared with external
+          third parties for commercial, marketing, or non-official purposes.
+          Data may be disclosed only in the following circumstances:
+        </p>
         <ul className="bullet-list">
-          <li>To other authorized PNP offices or units in the performance of official law enforcement or administrative functions.</li>
-          <li>To the National Privacy Commission, the Ombudsman, or other oversight bodies upon lawful order or request.</li>
-          <li>To courts or other judicial or quasi-judicial bodies in connection with pending legal proceedings.</li>
-          <li>To Google LLC, solely to the extent necessary for the provision of Google Drive cloud storage services. No document content is analyzed or processed by Google for purposes other than storage and retrieval.</li>
+          <li>
+            To other authorized PNP offices or units in the performance of
+            official law enforcement or administrative functions.
+          </li>
+          <li>
+            To the National Privacy Commission, the Ombudsman, or other
+            oversight bodies upon lawful order or request.
+          </li>
+          <li>
+            To courts or other judicial or quasi-judicial bodies in connection
+            with pending legal proceedings.
+          </li>
+          <li>
+            To Google LLC, solely to the extent necessary for the provision of
+            Google Drive cloud storage services. No document content is analyzed
+            or processed by Google for purposes other than storage and
+            retrieval.
+          </li>
         </ul>
-        <p className="note">The system does not use third-party advertising services, analytics trackers, or data brokers.</p>
+        <p className="note">
+          The system does not use third-party advertising services, analytics
+          trackers, or data brokers.
+        </p>
       </div>
     ),
   },
@@ -146,12 +247,34 @@ const sections = [
     content: (
       <div className="space-y-3">
         <ul className="bullet-list">
-          <li><strong>Personnel 201 Files:</strong> Retained for the duration of active service plus fifteen (15) years from the date of separation. Records exceeding this period are automatically flagged for archiving.</li>
-          <li><strong>Administrative and Operational Documents:</strong> Retained for the duration of the relevant operational need, subject to applicable NAP archiving standards.</li>
-          <li><strong>System Audit Logs:</strong> Retained for a minimum of ninety (90) days. Logs related to pending investigations or legal proceedings are retained for the duration of those proceedings.</li>
-          <li><strong>Backup Archives:</strong> Retained per the backup retention schedule configured by the Super Administrator, with a default of ninety (90) days.</li>
+          <li>
+            <strong>Personnel 201 Files:</strong> Retained for the duration of
+            active service plus fifteen (15) years from the date of separation.
+            Records exceeding this period are automatically flagged for
+            archiving.
+          </li>
+          <li>
+            <strong>Administrative and Operational Documents:</strong> Retained
+            for the duration of the relevant operational need, subject to
+            applicable NAP archiving standards.
+          </li>
+          <li>
+            <strong>System Audit Logs:</strong> Retained for a minimum of ninety
+            (90) days. Logs related to pending investigations or legal
+            proceedings are retained for the duration of those proceedings.
+          </li>
+          <li>
+            <strong>Backup Archives:</strong> Retained per the backup retention
+            schedule configured by the Super Administrator, with a default of
+            ninety (90) days.
+          </li>
         </ul>
-        <p>Upon expiration of the applicable retention period, records shall be securely archived, anonymized, or disposed of in a manner that prevents reconstruction, in compliance with NAP standards and PNP directives.</p>
+        <p>
+          Upon expiration of the applicable retention period, records shall be
+          securely archived, anonymized, or disposed of in a manner that
+          prevents reconstruction, in compliance with NAP standards and PNP
+          directives.
+        </p>
       </div>
     ),
   },
@@ -160,15 +283,36 @@ const sections = [
     title: "Rights of Data Subjects",
     content: (
       <div className="space-y-3">
-        <p>Where applicable under R.A. 10173, and subject to lawful limitations, data subjects have the following rights:</p>
+        <p>
+          Where applicable under R.A. 10173, and subject to lawful limitations,
+          data subjects have the following rights:
+        </p>
         <div className="rights-grid">
           {[
-            { right: "Right to be Informed", desc: "Be informed of the personal data being processed and the purposes thereof." },
-            { right: "Right of Access", desc: "Request access to personal data held by the PNP-RMS." },
-            { right: "Right to Rectification", desc: "Request correction of inaccurate, incomplete, or outdated personal data." },
-            { right: "Right to Erasure / Blocking", desc: "Request the erasure or blocking of personal data whose processing violates R.A. 10173." },
-            { right: "Right to Data Portability", desc: "Receive personal data in a structured, commonly used, and machine-readable format, where technically feasible." },
-            { right: "Right to Object", desc: "Object to the processing of personal data, particularly where processing is based on legitimate interest." },
+            {
+              right: "Right to be Informed",
+              desc: "Be informed of the personal data being processed and the purposes thereof.",
+            },
+            {
+              right: "Right of Access",
+              desc: "Request access to personal data held by the PNP-RMS.",
+            },
+            {
+              right: "Right to Rectification",
+              desc: "Request correction of inaccurate, incomplete, or outdated personal data.",
+            },
+            {
+              right: "Right to Erasure / Blocking",
+              desc: "Request the erasure or blocking of personal data whose processing violates R.A. 10173.",
+            },
+            {
+              right: "Right to Data Portability",
+              desc: "Receive personal data in a structured, commonly used, and machine-readable format, where technically feasible.",
+            },
+            {
+              right: "Right to Object",
+              desc: "Object to the processing of personal data, particularly where processing is based on legitimate interest.",
+            },
           ].map((r, i) => (
             <div key={i} className="right-card">
               <p className="right-title">{r.right}</p>
@@ -176,7 +320,12 @@ const sections = [
             </div>
           ))}
         </div>
-        <p className="note">These rights may be exercised by submitting a written request to the designated Data Protection Officer. Note that certain rights may be subject to limitations where the processing is required for law enforcement purposes under Section 4 of R.A. 10173.</p>
+        <p className="note">
+          These rights may be exercised by submitting a written request to the
+          designated Data Protection Officer. Note that certain rights may be
+          subject to limitations where the processing is required for law
+          enforcement purposes under Section 4 of R.A. 10173.
+        </p>
       </div>
     ),
   },
@@ -184,14 +333,28 @@ const sections = [
     id: 9,
     title: "Cookies and Session Management",
     content: (
-      <p>The PNP-RMS uses server-side session cookies to maintain authenticated user sessions. These cookies are HttpOnly, SameSite=Lax, and secure in production environments. Session tokens are not shared with third parties and are invalidated upon logout. The system does not use tracking cookies, advertising cookies, or any form of cross-site analytics.</p>
+      <p>
+        The PNP-RMS uses server-side session cookies to maintain authenticated
+        user sessions. These cookies are HttpOnly, SameSite=Lax, and secure in
+        production environments. Session tokens are not shared with third
+        parties and are invalidated upon logout. The system does not use
+        tracking cookies, advertising cookies, or any form of cross-site
+        analytics.
+      </p>
     ),
   },
   {
     id: 10,
     title: "Changes to This Privacy Policy",
     content: (
-      <p>This Privacy Policy may be updated periodically to reflect changes in applicable law, NPC issuances, or system functionality. All revisions will be communicated to users through official channels. The current version will always be available within the system. Continued use of the PNP-RMS following notification of a revision constitutes acceptance of the updated policy.</p>
+      <p>
+        This Privacy Policy may be updated periodically to reflect changes in
+        applicable law, NPC issuances, or system functionality. All revisions
+        will be communicated to users through official channels. The current
+        version will always be available within the system. Continued use of the
+        PNP-RMS following notification of a revision constitutes acceptance of
+        the updated policy.
+      </p>
     ),
   },
   {
@@ -202,8 +365,16 @@ const sections = [
         <p className="font-semibold">Data Protection Officer (DPO)</p>
         <p>Davao Norte Police Provincial Office (DNPPO)</p>
         <p>National Highway, Visayan Village, Tagum City, Davao Del Norte</p>
-        <p>Email: <span className="placeholder">[Insert Official DPO Email Address]</span></p>
-        <p>Hotline: <span className="placeholder">[Insert Official Contact Number]</span></p>
+        <p>
+          Email:{" "}
+          <span className="placeholder">
+            [Insert Official DPO Email Address]
+          </span>
+        </p>
+        <p>
+          Hotline:{" "}
+          <span className="placeholder">[Insert Official Contact Number]</span>
+        </p>
       </div>
     ),
   },
@@ -212,7 +383,8 @@ const sections = [
 export default function PrivacyPolicy() {
   const [activeSection, setActiveSection] = useState<number | null>(null);
 
-  const toggle = (id: number) => setActiveSection(activeSection === id ? null : id);
+  const toggle = (id: number) =>
+    setActiveSection(activeSection === id ? null : id);
 
   return (
     <>
@@ -288,6 +460,7 @@ export default function PrivacyPolicy() {
           background: #c0392b;
           border-radius: 50%;
           display: inline-block;
+          flex-shrink: 0;
         }
 
         /* Intro */
@@ -411,7 +584,10 @@ export default function PrivacyPolicy() {
           margin-bottom: 2px;
         }
 
-        .table-wrap { overflow-x: auto; }
+        .table-wrap {
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+        }
 
         table {
           width: 100%;
@@ -488,10 +664,6 @@ export default function PrivacyPolicy() {
           gap: 10px;
         }
 
-        @media (max-width: 600px) {
-          .rights-grid { grid-template-columns: 1fr; }
-        }
-
         .right-card {
           background: #faf9f6;
           border: 1px solid #ddd;
@@ -533,24 +705,98 @@ export default function PrivacyPolicy() {
           text-transform: uppercase;
           border-radius: 2px;
         }
+
+        /* ============================================
+           RESPONSIVE DESIGN
+           Tablet: screens 768px wide or narrower
+           Mobile: screens 480px wide or narrower
+           ============================================ */
+
+        @media (max-width: 768px) {
+          .page-wrapper { padding: 32px 20px 60px; }
+
+          .doc-header h1 { font-size: 26px; }
+          .doc-header .system-name { font-size: 13px; }
+
+          .meta-strip {
+            flex-direction: column;
+            gap: 8px;
+          }
+
+          .intro-box { padding: 16px 18px; font-size: 13px; }
+
+          .section-title { font-size: 15px; }
+          .section-body { padding-left: 24px; font-size: 13.5px; }
+
+          table { font-size: 12.5px; }
+          th, td { padding: 8px 10px; }
+
+          .rights-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+        }
+
+        @media (max-width: 480px) {
+          .page-wrapper { padding: 24px 14px 48px; }
+
+          .doc-header { padding-top: 20px; margin-bottom: 28px; }
+          .doc-header h1 { font-size: 21px; }
+          .doc-header .agency-line { font-size: 10px; letter-spacing: 0.1em; }
+          .doc-header .system-name { font-size: 12px; }
+
+          .meta-strip { font-size: 11px; gap: 6px; }
+
+          .intro-box { padding: 14px; font-size: 12.5px; line-height: 1.6; }
+
+          .section-btn { padding: 14px 0; gap: 8px; }
+          .section-num { min-width: 20px; font-size: 10px; }
+          .section-title { font-size: 13.5px; }
+          .section-body { padding-left: 12px; font-size: 12.5px; }
+
+          .table-wrap { margin: 0 -14px; padding: 0 14px; }
+          table { font-size: 11.5px; min-width: 480px; }
+          th, td { padding: 7px 8px; }
+
+          .rights-grid { grid-template-columns: 1fr; gap: 8px; }
+
+          .doc-footer {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 10px;
+          }
+        }
       `}</style>
 
       <div className="page-wrapper">
         {/* Header */}
         <div className="doc-header">
-          <p className="agency-line">Philippine National Police — Davao Norte Police Provincial Office</p>
+          <p className="agency-line">
+            Philippine National Police — Davao Norte Police Provincial Office
+          </p>
           <h1>Privacy Policy</h1>
           <p className="system-name">PNP Records Management System (PNP-RMS)</p>
           <div className="meta-strip">
-            <span><span className="meta-dot" /> Effective Date: Upon System Turnover</span>
-            <span><span className="meta-dot" /> Version: 1.0</span>
-            <span><span className="meta-dot" /> Governed by R.A. 10173 — Data Privacy Act of 2012</span>
+            <span>
+              <span className="meta-dot" /> Effective Date: Upon System Turnover
+            </span>
+            <span>
+              <span className="meta-dot" /> Version: 1.0
+            </span>
+            <span>
+              <span className="meta-dot" /> Governed by R.A. 10173 — Data
+              Privacy Act of 2012
+            </span>
           </div>
         </div>
 
         {/* Intro */}
         <div className="intro-box">
-          The Davao Norte Police Provincial Office (DNPPO) of the Philippine National Police (PNP) is committed to protecting the personal data of all individuals whose information is processed within the PNP-RMS. This Privacy Policy explains what data we collect, why we collect it, how it is stored and protected, who may access it, and the rights of data subjects under Republic Act No. 10173, the Data Privacy Act of 2012.
+          The Davao Norte Police Provincial Office (DNPPO) of the Philippine
+          National Police (PNP) is committed to protecting the personal data of
+          all individuals whose information is processed within the PNP-RMS.
+          This Privacy Policy explains what data we collect, why we collect it,
+          how it is stored and protected, who may access it, and the rights of
+          data subjects under Republic Act No. 10173, the Data Privacy Act of
+          2012.
         </div>
 
         {/* Accordion Sections */}
@@ -558,9 +804,17 @@ export default function PrivacyPolicy() {
           {sections.map((sec) => (
             <div key={sec.id} className="section-item">
               <button className="section-btn" onClick={() => toggle(sec.id)}>
-                <span className="section-num">{String(sec.id).padStart(2, "0")}</span>
+                <span className="section-num">
+                  {String(sec.id).padStart(2, "0")}
+                </span>
                 <span className="section-title">{sec.title}</span>
-                <span className={`chevron ${activeSection === sec.id ? "open" : ""}`}>▾</span>
+                <span
+                  className={`chevron ${
+                    activeSection === sec.id ? "open" : ""
+                  }`}
+                >
+                  ▾
+                </span>
               </button>
               {activeSection === sec.id && (
                 <div className="section-body">{sec.content}</div>
