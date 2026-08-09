@@ -20,71 +20,77 @@
 //  6. Improved the MISSING_DRIVE_METADATA error message to tell the sender
 //     exactly what to do (delete + re-upload) rather than just "ask the sender
 //     to forward again" (which would not fix the root cause).
+//
+// FIX (admin-orders-audit.md §4.4):
+//  7. Attachment re-uploads previously ran strictly one-at-a-time inside a
+//     `for...of` loop with `await` — for a document with N attachments this
+//     meant N sequential download+upload round trips (wall-clock time scaled
+//     linearly with attachment count). Now attachments are re-uploaded with
+//     bounded concurrency (a small worker pool) so multiple files transfer
+//     in parallel, while still capping how many run at once to avoid
+//     overwhelming the Drive API / memory (each file is fully buffered).
 
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { logSaveForwardedDocument, setCurrentLogger } from '@/lib/adminLogger'
-import { AdminRole } from '@/lib/auth'
-import { uploadViaPool } from '@/lib/gdrive-pool/migrate-modal'
-import { getDriveClient } from '@/lib/gdrive-pool'
-import { getPoolAccountsByUsername } from '@/lib/gdrive-pool/db'
-import type { DocumentCategory } from '@/lib/gdrive-pool/types'
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { logSaveForwardedDocument, setCurrentLogger } from "@/lib/adminLogger";
+import { AdminRole } from "@/lib/auth";
+import { uploadViaPool } from "@/lib/gdrive-pool/migrate-modal";
+import { getDriveClient } from "@/lib/gdrive-pool";
+import { getPoolAccountsByUsername } from "@/lib/gdrive-pool/db";
+import type { DocumentCategory } from "@/lib/gdrive-pool/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Table maps
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DOCUMENT_TABLE_MAP: Record<string, string> = {
-  master_document: 'master_documents',
-  admin_order:     'special_orders',
-  daily_journal:   'daily_journals',
-  library:         'library_items',
-}
+  master_document: "master_documents",
+  admin_order: "special_orders",
+  daily_journal: "daily_journals",
+  library: "library_items",
+};
 
 const ATTACHMENT_TABLE_MAP: Record<string, string> = {
-  master_document: 'master_document_attachments',
-  admin_order:     'special_order_attachments',
-  daily_journal:   'daily_journal_attachments',
-  library:         'library_item_attachments',
-}
+  master_document: "master_document_attachments",
+  admin_order: "special_order_attachments",
+  daily_journal: "daily_journal_attachments",
+  library: "library_item_attachments",
+};
 
 const ATTACHMENT_FK_MAP: Record<string, string> = {
-  master_document: 'master_document_id',
-  admin_order:     'special_order_id',
-  daily_journal:   'daily_journal_id',
-  library:         'library_item_id',
-}
+  master_document: "master_document_id",
+  admin_order: "special_order_id",
+  daily_journal: "daily_journal_id",
+  library: "library_item_id",
+};
 
 const DOCUMENT_CATEGORY_MAP: Record<string, DocumentCategory> = {
-  master_document: 'master_documents',
-  admin_order:     'special_orders',
-  daily_journal:   'daily_journals',
-  library:         'library_items',
-}
+  master_document: "master_documents",
+  admin_order: "special_orders",
+  daily_journal: "daily_journals",
+  library: "library_items",
+};
 
 const ENTITY_TYPE_MAP: Record<string, string> = {
-  master_document: 'master_document',
-  admin_order:     'special_order',
-  daily_journal:   'daily_journal',
-  library:         'library_item',
-}
+  master_document: "master_document",
+  admin_order: "special_order",
+  daily_journal: "daily_journal",
+  library: "library_item",
+};
+
+// FIX 4.4: cap how many attachments re-upload at once. Each file is fully
+// buffered in memory during download+upload, so an unbounded Promise.all
+// over a large attachment set could spike memory usage. 4 concurrent
+// transfers is a safe middle ground between "still sequential" and
+// "unbounded parallel".
+const ATTACHMENT_UPLOAD_CONCURRENCY = 4;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FIX 5: hasValue — treats both null AND empty string as "missing"
-//
-// The original check was:
-//   if (!fwd.gdrive_file_id || !fwd.pool_account_id || !fwd.mime_type)
-//
-// This works for null/undefined but NOT for empty string "".
-// Empty string is falsy in JS, so `!""` is true — the old check DID catch
-// empty strings. The real problem was the error message said "ask sender to
-// re-forward" when the actual fix is "sender must re-upload the document".
-//
-// hasValue() is kept explicit here so it's easy to read and audit.
+// hasValue — treats both null AND empty string as "missing"
 // ─────────────────────────────────────────────────────────────────────────────
 
 function hasValue(s: string | null | undefined): boolean {
-  return typeof s === 'string' && s.trim().length > 0
+  return typeof s === "string" && s.trim().length > 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,12 +98,16 @@ function hasValue(s: string | null | undefined): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function generateDocId(documentType: string): string {
-  const ts = Date.now()
+  const ts = Date.now();
   switch (documentType) {
-    case 'master_document': return `md-${ts}`
-    case 'admin_order':     return `so-${ts}`
-    case 'daily_journal':   return `dj-${ts}`
-    default:                return `lib-${ts}`
+    case "master_document":
+      return `md-${ts}`;
+    case "admin_order":
+      return `so-${ts}`;
+    case "daily_journal":
+      return `dj-${ts}`;
+    default:
+      return `lib-${ts}`;
   }
 }
 
@@ -107,63 +117,92 @@ function generateDocId(documentType: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function reuploadToRecipientDrive(params: {
-  gdriveFileId:    string
-  poolAccountId:   string
-  fileName:        string
-  mimeType:        string
-  fileSizeBytes:   number
-  recipientRole:   string
-  documentType:    string
-  newDocId:        string
+  gdriveFileId: string;
+  poolAccountId: string;
+  fileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  recipientRole: string;
+  documentType: string;
+  newDocId: string;
 }): Promise<{
-  fileUrl:       string
-  downloadUrl:   string
-  previewUrl:    string
-  gdriveFileId:  string
-  poolAccountId: string
-  recordId:      string
-  sizeBytes:     number
+  fileUrl: string;
+  downloadUrl: string;
+  previewUrl: string;
+  gdriveFileId: string;
+  poolAccountId: string;
+  recordId: string;
+  sizeBytes: number;
 }> {
   console.log(
     `[ForwardSave] Re-uploading "${params.fileName}" ` +
-    `from pool ${params.poolAccountId} → recipient ${params.recipientRole}`
-  )
+      `from pool ${params.poolAccountId} → recipient ${params.recipientRole}`
+  );
 
   // 1. Download the file bytes from the SENDER's Drive
-  const senderDrive = await getDriveClient(params.poolAccountId)
+  const senderDrive = await getDriveClient(params.poolAccountId);
 
   const response = await senderDrive.files.get(
-    { fileId: params.gdriveFileId, alt: 'media' },
-    { responseType: 'arraybuffer' }
-  )
+    { fileId: params.gdriveFileId, alt: "media" },
+    { responseType: "arraybuffer" }
+  );
 
-  const fileBuffer = Buffer.from(response.data as ArrayBuffer)
+  const fileBuffer = Buffer.from(response.data as ArrayBuffer);
   console.log(
     `[ForwardSave] Downloaded ${fileBuffer.length} bytes ` +
-    `(expected ~${params.fileSizeBytes}) from sender's Drive`
-  )
+      `(expected ~${params.fileSizeBytes}) from sender's Drive`
+  );
 
   // 2. Upload the bytes to the RECIPIENT's own Drive pool
-  const category   = DOCUMENT_CATEGORY_MAP[params.documentType] ?? 'master_documents'
-  const entityType = ENTITY_TYPE_MAP[params.documentType]       ?? params.documentType
+  const category =
+    DOCUMENT_CATEGORY_MAP[params.documentType] ?? "master_documents";
+  const entityType =
+    ENTITY_TYPE_MAP[params.documentType] ?? params.documentType;
 
   const result = await uploadViaPool({
-    file:          fileBuffer,
-    fileName:      params.fileName ?? `forwarded-${Date.now()}`,
-    mimeType:      params.mimeType,
+    file: fileBuffer,
+    fileName: params.fileName ?? `forwarded-${Date.now()}`,
+    mimeType: params.mimeType,
     category,
     entityType,
-    entityId:      params.newDocId,
-    uploadedBy:    params.recipientRole,
+    entityId: params.newDocId,
+    uploadedBy: params.recipientRole,
     fileSizeBytes: fileBuffer.length,
-  })
+  });
 
   console.log(
     `[ForwardSave] Re-upload success → gdriveFileId=${result.gdriveFileId}, ` +
-    `pool=${result.poolAccountId}, owner=${params.recipientRole}`
-  )
+      `pool=${result.poolAccountId}, owner=${params.recipientRole}`
+  );
 
-  return result
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX 4.4 — bounded-concurrency map over attachments.
+// Runs `worker` for every item in `items`, at most `limit` at a time,
+// preserving input order in the returned results array.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function runNext(): Promise<void> {
+    const current = nextIndex++;
+    if (current >= items.length) return;
+    results[current] = await worker(items[current], current);
+    await runNext();
+  }
+
+  const workerCount = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => runNext()));
+
+  return results;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -175,92 +214,95 @@ function buildDocumentPayload(
   uploaderRole: string,
   docId: string,
   driveResult: {
-    fileUrl:       string
-    downloadUrl:   string
-    gdriveFileId:  string
-    poolAccountId: string
-    recordId:      string
-    sizeBytes:     number
+    fileUrl: string;
+    downloadUrl: string;
+    gdriveFileId: string;
+    poolAccountId: string;
+    recordId: string;
+    sizeBytes: number;
   }
 ): Record<string, any> {
-  const gdriveFileId  = driveResult.gdriveFileId
-  const gdriveUrl     = driveResult.fileUrl
-  const poolAccountId = driveResult.poolAccountId
-  const sizeBytes     = driveResult.sizeBytes
+  const gdriveFileId = driveResult.gdriveFileId;
+  const gdriveUrl = driveResult.fileUrl;
+  const poolAccountId = driveResult.poolAccountId;
+  const sizeBytes = driveResult.sizeBytes;
 
   const driveFields = {
-    gdrive_file_id:  gdriveFileId,
-    gdrive_url:      gdriveUrl,
+    gdrive_file_id: gdriveFileId,
+    gdrive_url: gdriveUrl,
     pool_account_id: poolAccountId,
-    file_name:       fwd.file_name        ?? null,
+    file_name: fwd.file_name ?? null,
     file_size_bytes: sizeBytes,
-    mime_type:       fwd.mime_type        ?? null,
-    source:          'forwarded',
-    forwarded_from:  fwd.sender_role,
-    uploaded_by:     uploaderRole,
-  }
+    mime_type: fwd.mime_type ?? null,
+    source: "forwarded",
+    forwarded_from: fwd.sender_role,
+    uploaded_by: uploaderRole,
+  };
 
   switch (fwd.document_type) {
-    case 'master_document':
+    case "master_document":
       return {
-        id:       docId,
-        title:    fwd.title,
-        level:    'REGIONAL',
-        type:     fwd.mime_type?.includes('pdf')   ? 'PDF'
-                : fwd.mime_type?.includes('word')  ? 'DOCX'
-                : fwd.mime_type?.includes('sheet') ? 'XLSX'
-                : 'PDF',
-        date:     new Date().toISOString().split('T')[0],
-        size:     sizeBytes ? `${(sizeBytes / 1024 / 1024).toFixed(1)} MB` : '0 MB',
-        tag:      'COMPLIANCE',
+        id: docId,
+        title: fwd.title,
+        level: "REGIONAL",
+        type: fwd.mime_type?.includes("pdf")
+          ? "PDF"
+          : fwd.mime_type?.includes("word")
+          ? "DOCX"
+          : fwd.mime_type?.includes("sheet")
+          ? "XLSX"
+          : "PDF",
+        date: new Date().toISOString().split("T")[0],
+        size: sizeBytes ? `${(sizeBytes / 1024 / 1024).toFixed(1)} MB` : "0 MB",
+        tag: "COMPLIANCE",
         file_url: gdriveUrl,
         ...driveFields,
-      }
+      };
 
-    case 'admin_order':
+    case "admin_order":
       return {
-        id:          docId,
-        reference:   fwd.title,
-        subject:     fwd.title,
-        date:        new Date().toISOString().split('T')[0],
+        id: docId,
+        reference: fwd.title,
+        subject: fwd.title,
+        date: new Date().toISOString().split("T")[0],
         attachments: 0,
-        status:      'ACTIVE',
-        file_url:    gdriveUrl,
+        status: "ACTIVE",
+        file_url: gdriveUrl,
         ...driveFields,
-      }
+      };
 
-    case 'daily_journal':
+    case "daily_journal":
       return {
-        id:          docId,
-        title:       fwd.title,
-        type:        'MEMO',
-        author:      uploaderRole,
-        date:        new Date().toISOString().split('T')[0],
-        status:      'Draft',
+        id: docId,
+        title: fwd.title,
+        type: "MEMO",
+        author: uploaderRole,
+        date: new Date().toISOString().split("T")[0],
+        status: "Draft",
         attachments: 0,
-        archived:    false,
-        file_url:    gdriveUrl,
+        archived: false,
+        file_url: gdriveUrl,
         ...driveFields,
-      }
+      };
 
-    case 'library':
+    case "library":
       return {
-        id:          docId,
-        title:       fwd.title,
-        category:    'TEMPLATE',
-        size:        sizeBytes ? `${(sizeBytes / 1024 / 1024).toFixed(1)} MB` : '0 MB',
-        date_added:  new Date().toISOString(),
-        file_url:    gdriveUrl,
+        id: docId,
+        title: fwd.title,
+        category: "TEMPLATE",
+        size: sizeBytes ? `${(sizeBytes / 1024 / 1024).toFixed(1)} MB` : "0 MB",
+        date_added: new Date().toISOString(),
+        file_url: gdriveUrl,
         ...driveFields,
-      }
+      };
 
     default:
       return {
-        id:       docId,
-        title:    fwd.title,
+        id: docId,
+        title: fwd.title,
         file_url: gdriveUrl,
         ...driveFields,
-      }
+      };
   }
 }
 
@@ -272,26 +314,30 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params
+  const { id } = await params;
 
-  const supabase = await createClient()
+  const supabase = await createClient();
 
   // ── Auth ────────────────────────────────────────────────────────────────────
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
 
-  if (!profile) return NextResponse.json({ error: 'Profile not found' }, { status: 403 })
-  setCurrentLogger(profile.role as AdminRole, user.id)
+  if (!profile)
+    return NextResponse.json({ error: "Profile not found" }, { status: 403 });
+  setCurrentLogger(profile.role as AdminRole, user.id);
 
   // ── Check recipient has a connected Drive account ──────────────────────────
-  const recipientAccount = await getPoolAccountsByUsername(profile.role)
-  const recipientDriveAccounts = recipientAccount ? [recipientAccount] : []
+  const recipientAccount = await getPoolAccountsByUsername(profile.role);
+  const recipientDriveAccounts = recipientAccount ? [recipientAccount] : [];
 
   if (recipientDriveAccounts.length === 0) {
     return NextResponse.json(
@@ -300,55 +346,46 @@ export async function POST(
           `Your account ("${profile.role}") has no connected Google Drive. ` +
           `An admin must connect a Google Drive account for you at /admin/gdrive ` +
           `before you can save forwarded files.`,
-        code: 'NO_DRIVE_ACCOUNT',
+        code: "NO_DRIVE_ACCOUNT",
       },
       { status: 422 }
-    )
+    );
   }
 
   // ── Fetch the forwarded document ────────────────────────────────────────────
   const { data: fwd, error: fetchError } = await supabase
-    .from('forwarded_documents')
-    .select('*, forwarded_attachments(*)')
-    .eq('id', id)
-    .eq('recipient_role', profile.role)
-    .single()
+    .from("forwarded_documents")
+    .select("*, forwarded_attachments(*)")
+    .eq("id", id)
+    .eq("recipient_role", profile.role)
+    .single();
 
   if (fetchError || !fwd) {
-    return NextResponse.json({ error: 'Forwarded document not found' }, { status: 404 })
+    return NextResponse.json(
+      { error: "Forwarded document not found" },
+      { status: 404 }
+    );
   }
 
-  if (fwd.status !== 'pending') {
+  if (fwd.status !== "pending") {
     return NextResponse.json(
       { error: `Document already ${fwd.status}` },
       { status: 409 }
-    )
+    );
   }
 
-  const targetTable     = DOCUMENT_TABLE_MAP[fwd.document_type]
-  const attachmentTable = ATTACHMENT_TABLE_MAP[fwd.document_type]
-  const attachmentFk    = ATTACHMENT_FK_MAP[fwd.document_type]
+  const targetTable = DOCUMENT_TABLE_MAP[fwd.document_type];
+  const attachmentTable = ATTACHMENT_TABLE_MAP[fwd.document_type];
+  const attachmentFk = ATTACHMENT_FK_MAP[fwd.document_type];
 
   if (!targetTable) {
     return NextResponse.json(
       { error: `Unknown document_type: ${fwd.document_type}` },
       { status: 400 }
-    )
+    );
   }
 
-  // ── FIX 5: Validate Drive metadata — treat "" the same as null ─────────────
-  //
-  // hasValue() rejects both null/undefined AND empty string "".
-  //
-  // Root cause of the original bug: the sender forwarded a document that was
-  // uploaded before the Drive pool system existed. Its DB row has
-  // gdrive_file_id = "" and pool_account_id = "". The ForwardDocumentModal
-  // now blocks this upfront (showing a "re-upload" warning), but we keep
-  // this server-side guard as a belt-and-suspenders check.
-  //
-  // FIX 6: Improved error message — tells the sender to delete + re-upload
-  // the original document (not just "re-forward"), because re-forwarding
-  // would produce the same empty-string row again.
+  // ── Validate Drive metadata — treat "" the same as null ─────────────
   if (!hasValue(fwd.gdrive_file_id) || !hasValue(fwd.pool_account_id)) {
     return NextResponse.json(
       {
@@ -358,158 +395,187 @@ export async function POST(
           `The sender needs to delete the original document and re-upload it ` +
           `through the normal upload flow so it gets proper Drive metadata, ` +
           `then forward it again.`,
-        code: 'MISSING_DRIVE_METADATA',
+        code: "MISSING_DRIVE_METADATA",
       },
       { status: 422 }
-    )
+    );
   }
 
   // mime_type is not strictly required — default to octet-stream if missing
-  // so documents forwarded without a mime_type can still be saved.
-  const mimeType = hasValue(fwd.mime_type) ? fwd.mime_type : 'application/octet-stream'
+  const mimeType = hasValue(fwd.mime_type)
+    ? fwd.mime_type
+    : "application/octet-stream";
 
   // ── Generate doc ID once, reuse in Drive upload and DB insert ──────────────
-  const newDocId = generateDocId(fwd.document_type)
+  const newDocId = generateDocId(fwd.document_type);
 
   // ── Re-upload to recipient's Drive — FATAL on failure ─────────────────────
-  let driveResult: Awaited<ReturnType<typeof reuploadToRecipientDrive>>
+  let driveResult: Awaited<ReturnType<typeof reuploadToRecipientDrive>>;
 
   try {
     driveResult = await reuploadToRecipientDrive({
-      gdriveFileId:  fwd.gdrive_file_id,
+      gdriveFileId: fwd.gdrive_file_id,
       poolAccountId: fwd.pool_account_id,
-      fileName:      fwd.file_name ?? fwd.title,
+      fileName: fwd.file_name ?? fwd.title,
       mimeType,
       fileSizeBytes: fwd.file_size_bytes ?? 0,
       recipientRole: profile.role,
-      documentType:  fwd.document_type,
+      documentType: fwd.document_type,
       newDocId,
-    })
+    });
   } catch (err: any) {
-    console.error(`[ForwardSave] Drive re-upload failed for forwarded doc ${id}:`, err?.message)
+    console.error(
+      `[ForwardSave] Drive re-upload failed for forwarded doc ${id}:`,
+      err?.message
+    );
     return NextResponse.json(
       {
         error:
-          `Failed to copy the file to your Google Drive: ${err?.message ?? 'Unknown error'}. ` +
+          `Failed to copy the file to your Google Drive: ${
+            err?.message ?? "Unknown error"
+          }. ` +
           `Ensure your Drive account is connected and has available storage at /admin/gdrive.`,
-        code: 'DRIVE_REUPLOAD_FAILED',
+        code: "DRIVE_REUPLOAD_FAILED",
       },
       { status: 502 }
-    )
+    );
   }
 
   // ── Build and insert the document row ──────────────────────────────────────
-  const payload = buildDocumentPayload(fwd, profile.role, newDocId, driveResult)
+  const payload = buildDocumentPayload(
+    fwd,
+    profile.role,
+    newDocId,
+    driveResult
+  );
 
   const { data: newDoc, error: docError } = await supabase
     .from(targetTable)
     .insert(payload)
     .select()
-    .single()
+    .single();
 
   if (docError || !newDoc) {
     console.error(
-      '[ForwardSave] Document insert error:',
+      "[ForwardSave] Document insert error:",
       docError?.message,
-      'Payload keys:',
+      "Payload keys:",
       Object.keys(payload)
-    )
+    );
     console.error(
       `[ForwardSave] ORPHANED Drive file: gdriveFileId=${driveResult.gdriveFileId}, ` +
-      `poolAccountId=${driveResult.poolAccountId}. Manual cleanup may be required.`
-    )
+        `poolAccountId=${driveResult.poolAccountId}. Manual cleanup may be required.`
+    );
     return NextResponse.json(
-      { error: docError?.message ?? 'Failed to save document metadata' },
+      { error: docError?.message ?? "Failed to save document metadata" },
       { status: 500 }
-    )
+    );
   }
 
   // ── Re-upload and insert attachments ────────────────────────────────────────
-  const attachments  = fwd.forwarded_attachments ?? []
-  const attErrors: string[] = []
+  // FIX 4.4 (admin-orders-audit.md): previously a strictly sequential
+  // `for...of` loop — each attachment's download+upload had to finish before
+  // the next started. Now runs with bounded concurrency so multiple
+  // attachments transfer at once, cutting wall-clock time roughly by a
+  // factor of ATTACHMENT_UPLOAD_CONCURRENCY for multi-attachment forwards.
+  const attachments = fwd.forwarded_attachments ?? [];
+  const attErrors: string[] = [];
 
   if (attachments.length > 0 && attachmentTable && attachmentFk) {
-    for (const att of attachments) {
-      // Skip attachments that also have missing Drive metadata
-      if (!hasValue(att.gdrive_file_id) || !hasValue(att.pool_account_id)) {
-        console.warn(
-          `[ForwardSave] Skipping attachment "${att.title}" — missing Drive metadata ` +
-          `(gdrive_file_id="${att.gdrive_file_id}", pool_account_id="${att.pool_account_id}")`
-        )
-        attErrors.push(`"${att.title}": missing Drive metadata (skipped)`)
-        continue
+    await mapWithConcurrency(
+      attachments,
+      ATTACHMENT_UPLOAD_CONCURRENCY,
+      async (att: any) => {
+        // Skip attachments that also have missing Drive metadata
+        if (!hasValue(att.gdrive_file_id) || !hasValue(att.pool_account_id)) {
+          console.warn(
+            `[ForwardSave] Skipping attachment "${att.title}" — missing Drive metadata ` +
+              `(gdrive_file_id="${att.gdrive_file_id}", pool_account_id="${att.pool_account_id}")`
+          );
+          attErrors.push(`"${att.title}": missing Drive metadata (skipped)`);
+          return;
+        }
+
+        const attMimeType = hasValue(att.mime_type)
+          ? att.mime_type
+          : "application/octet-stream";
+
+        let attDriveResult: Awaited<
+          ReturnType<typeof reuploadToRecipientDrive>
+        > | null = null;
+
+        try {
+          attDriveResult = await reuploadToRecipientDrive({
+            gdriveFileId: att.gdrive_file_id,
+            poolAccountId: att.pool_account_id,
+            fileName: att.file_name ?? att.title,
+            mimeType: attMimeType,
+            fileSizeBytes: att.file_size_bytes ?? 0,
+            recipientRole: profile.role,
+            documentType: fwd.document_type,
+            newDocId: newDoc.id,
+          });
+        } catch (err: any) {
+          console.error(
+            `[ForwardSave] Attachment re-upload failed for "${att.title}":`,
+            err?.message
+          );
+          attErrors.push(
+            `"${att.title}": Drive upload failed — ${err?.message}`
+          );
+          return;
+        }
+
+        const { error: attError } = await supabase
+          .from(attachmentTable)
+          .insert({
+            [attachmentFk]: newDoc.id,
+            title: att.title,
+            file_name: att.file_name ?? null,
+            file_size_bytes: attDriveResult.sizeBytes,
+            mime_type: attMimeType,
+            gdrive_file_id: attDriveResult.gdriveFileId,
+            gdrive_url: attDriveResult.fileUrl,
+            pool_account_id: attDriveResult.poolAccountId,
+            parent_id: att.parent_attachment_id ?? null,
+            depth: att.depth ?? 0,
+          });
+
+        if (attError) {
+          console.error(
+            "[ForwardSave] Attachment DB insert error (non-fatal):",
+            attError.message
+          );
+          attErrors.push(
+            `"${att.title}": DB insert failed — ${attError.message}`
+          );
+        }
       }
-
-      const attMimeType = hasValue(att.mime_type)
-        ? att.mime_type
-        : 'application/octet-stream'
-
-      let attDriveResult: Awaited<ReturnType<typeof reuploadToRecipientDrive>> | null = null
-
-      try {
-        attDriveResult = await reuploadToRecipientDrive({
-          gdriveFileId:  att.gdrive_file_id,
-          poolAccountId: att.pool_account_id,
-          fileName:      att.file_name ?? att.title,
-          mimeType:      attMimeType,
-          fileSizeBytes: att.file_size_bytes ?? 0,
-          recipientRole: profile.role,
-          documentType:  fwd.document_type,
-          newDocId:      newDoc.id,
-        })
-      } catch (err: any) {
-        console.error(
-          `[ForwardSave] Attachment re-upload failed for "${att.title}":`,
-          err?.message
-        )
-        attErrors.push(`"${att.title}": Drive upload failed — ${err?.message}`)
-        continue
-      }
-
-      const { error: attError } = await supabase
-        .from(attachmentTable)
-        .insert({
-          [attachmentFk]:  newDoc.id,
-          title:           att.title,
-          file_name:       att.file_name         ?? null,
-          file_size_bytes: attDriveResult.sizeBytes,
-          mime_type:       attMimeType,
-          gdrive_file_id:  attDriveResult.gdriveFileId,
-          gdrive_url:      attDriveResult.fileUrl,
-          pool_account_id: attDriveResult.poolAccountId,
-          parent_id:       att.parent_attachment_id ?? null,
-          depth:           att.depth ?? 0,
-        })
-
-      if (attError) {
-        console.error('[ForwardSave] Attachment DB insert error (non-fatal):', attError.message)
-        attErrors.push(`"${att.title}": DB insert failed — ${attError.message}`)
-      }
-    }
+    );
   }
 
   // ── Mark forwarded record as saved ──────────────────────────────────────────
   const { error: updateError } = await supabase
-    .from('forwarded_documents')
+    .from("forwarded_documents")
     .update({
-      status:       'saved',
-      saved_at:     new Date().toISOString(),
+      status: "saved",
+      saved_at: new Date().toISOString(),
       saved_doc_id: newDoc.id,
     })
-    .eq('id', fwd.id)
+    .eq("id", fwd.id);
 
   if (updateError) {
-    console.error('[ForwardSave] Status update error:', updateError.message)
+    console.error("[ForwardSave] Status update error:", updateError.message);
   }
 
-  await logSaveForwardedDocument(fwd.title, fwd.sender_role, targetTable)
+  await logSaveForwardedDocument(fwd.title, fwd.sender_role, targetTable);
 
   return NextResponse.json({
-    success:          true,
-    savedDocId:       newDoc.id,
-    table:            targetTable,
-    driveReupload:    'success',
+    success: true,
+    savedDocId: newDoc.id,
+    table: targetTable,
+    driveReupload: "success",
     recipientDriveId: driveResult.gdriveFileId,
     attachmentErrors: attErrors.length > 0 ? attErrors : undefined,
-  })
+  });
 }
