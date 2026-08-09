@@ -9,7 +9,7 @@ const sections = [
       <div className="space-y-3">
         <p>
           The Personal Information Controller (PIC) for data processed through
-          the PNP-RMS is:
+          the PORTAL Information System is:
         </p>
         <div className="info-card">
           <p className="font-semibold">
@@ -42,7 +42,7 @@ const sections = [
     content: (
       <div className="space-y-3">
         <p>
-          The PNP-RMS processes personal data on the following legal grounds:
+          The PORTAL Information System processes personal data on the following legal grounds:
         </p>
         <div className="list-items">
           {[
@@ -78,7 +78,7 @@ const sections = [
     content: (
       <div className="space-y-3">
         <p>
-          The PNP-RMS collects and processes the following categories of data
+          The PORTAL Information System collects and processes the following categories of data
           depending on the user's role and module accessed:
         </p>
         <div className="table-wrap">
@@ -170,7 +170,7 @@ const sections = [
           },
           {
             sub: "5.2 Database Security",
-            text: "Document metadata, user profiles, audit logs, and system configuration data are stored in a Supabase PostgreSQL database secured with row-level security (RLS) policies. Each database table enforces role-specific access rules, ensuring that users can only interact with records within their authorized scope.",
+            text: "Document metadata, user profiles, audit logs, and system configuration data are stored in a Supabase PostgreSQL database secured with row-level security (RLS) policies. Each database table enforces role-specific access rules, ensuring that users can only interact with records within their authorized scope. Sign-in additionally requires a role-linked one-time email code alongside the account password (two-factor authentication) before any session is issued.",
           },
           { sub: "5.3 Encryption", text: null },
           {
@@ -210,7 +210,7 @@ const sections = [
     content: (
       <div className="space-y-3">
         <p>
-          Personal data processed within the PNP-RMS is not shared with external
+          Personal data processed within the PORTAL Information System is not shared with external
           third parties for commercial, marketing, or non-official purposes.
           Data may be disclosed only in the following circumstances:
         </p>
@@ -295,7 +295,7 @@ const sections = [
             },
             {
               right: "Right of Access",
-              desc: "Request access to personal data held by the PNP-RMS.",
+              desc: "Request access to personal data held by the PORTAL Information System.",
             },
             {
               right: "Right to Rectification",
@@ -334,7 +334,7 @@ const sections = [
     title: "Cookies and Session Management",
     content: (
       <p>
-        The PNP-RMS uses server-side session cookies to maintain authenticated
+        The PORTAL Information System uses server-side session cookies to maintain authenticated
         user sessions. These cookies are HttpOnly, SameSite=Lax, and secure in
         production environments. Session tokens are not shared with third
         parties and are invalidated upon logout. The system does not use
@@ -352,7 +352,7 @@ const sections = [
         applicable law, NPC issuances, or system functionality. All revisions
         will be communicated to users through official channels. The current
         version will always be available within the system. Continued use of the
-        PNP-RMS following notification of a revision constitutes acceptance of
+        PORTAL Information System following notification of a revision constitutes acceptance of
         the updated policy.
       </p>
     ),
@@ -706,12 +706,6 @@ export default function PrivacyPolicy() {
           border-radius: 2px;
         }
 
-        /* ============================================
-           RESPONSIVE DESIGN
-           Tablet: screens 768px wide or narrower
-           Mobile: screens 480px wide or narrower
-           ============================================ */
-
         @media (max-width: 768px) {
           .page-wrapper { padding: 32px 20px 60px; }
 
@@ -773,10 +767,13 @@ export default function PrivacyPolicy() {
             Philippine National Police — Davao Norte Police Provincial Office
           </p>
           <h1>Privacy Policy</h1>
-          <p className="system-name">PNP Records Management System (PNP-RMS)</p>
+          <p className="system-name">PORTAL Information System (PORTAL-IS)</p>
           <div className="meta-strip">
             <span>
-              <span className="meta-dot" /> Effective Date: Upon System Turnover
+              <span className="meta-dot" /> Development Start: February 25, 2026
+            </span>
+            <span>
+              <span className="meta-dot" /> Effective Date: June 23, 2026 (System Turnover)
             </span>
             <span>
               <span className="meta-dot" /> Version: 1.0
@@ -792,7 +789,7 @@ export default function PrivacyPolicy() {
         <div className="intro-box">
           The Davao Norte Police Provincial Office (DNPPO) of the Philippine
           National Police (PNP) is committed to protecting the personal data of
-          all individuals whose information is processed within the PNP-RMS.
+          all individuals whose information is processed within the PORTAL Information System.
           This Privacy Policy explains what data we collect, why we collect it,
           how it is stored and protected, who may access it, and the rights of
           data subjects under Republic Act No. 10173, the Data Privacy Act of
@@ -826,7 +823,7 @@ export default function PrivacyPolicy() {
         {/* Footer */}
         <div className="doc-footer">
           <div>
-            <p>PNP-RMS Privacy Policy — Version 1.0</p>
+            <p>PORTAL Information System Privacy Policy — Version 1.0</p>
             <p>Davao Norte Police Provincial Office</p>
           </div>
           <span className="footer-badge">For Official Use Only</span>

@@ -9,8 +9,8 @@ const sections = [
     content: (
       <div className="space-y-3">
         <p>
-          By logging into and utilizing the PNP-RMS, you confirm that you have
-          read, understood, and expressly agree to:
+          By logging into and utilizing the PORTAL Information System, you
+          confirm that you have read, understood, and expressly agree to:
         </p>
         <ul className="bullet-list">
           <li>These Terms and Conditions</li>
@@ -41,11 +41,11 @@ const sections = [
     content: (
       <div className="space-y-4">
         <p>
-          The PNP-RMS is a centralized digital records management platform
-          designed to automate and secure the full lifecycle of police records,
-          administrative files, classified documents, and internal
-          communications. Deployed for use by the Davao Norte Police Provincial
-          Office (DNPPO) and its subordinate units.
+          The PORTAL Information System is a centralized digital records
+          management platform designed to automate and secure the full lifecycle
+          of police records, administrative files, classified documents, and
+          internal communications. Deployed for use by the Davao Norte Police
+          Provincial Office (DNPPO) and its subordinate units.
         </p>
 
         {[
@@ -160,9 +160,9 @@ const sections = [
     content: (
       <div className="space-y-3">
         <p>
-          Access within the PNP-RMS is governed by a strict role-based access
-          control framework. Each account is assigned a fixed system role at
-          provisioning. Roles cannot be self-modified.
+          Access within the PORTAL Information System is governed by a strict
+          role-based access control framework. Each account is assigned a fixed
+          system role at provisioning. Roles cannot be self-modified.
         </p>
         <div className="table-wrap">
           <table>
@@ -217,9 +217,9 @@ const sections = [
     content: (
       <div className="space-y-3">
         <p>
-          The PNP-RMS utilizes a multi-account Google Drive pooling system as
-          its primary cloud storage infrastructure. The following provisions
-          apply:
+          The PORTAL Information System utilizes a multi-account Google Drive
+          pooling system as its primary cloud storage infrastructure. The
+          following provisions apply:
         </p>
         <ul className="bullet-list">
           <li>
@@ -263,10 +263,10 @@ const sections = [
         <div>
           <p className="sub-heading">5.1 Governing Law</p>
           <p>
-            The PNP-RMS and its operations are governed by Republic Act No.
-            10173, otherwise known as the Data Privacy Act of 2012, its
-            Implementing Rules and Regulations, and all circulars and issuances
-            of the National Privacy Commission (NPC).
+            The PORTAL Information System and its operations are governed by
+            Republic Act No. 10173, otherwise known as the Data Privacy Act of
+            2012, its Implementing Rules and Regulations, and all circulars and
+            issuances of the National Privacy Commission (NPC).
           </p>
         </div>
         <div>
@@ -310,6 +310,11 @@ const sections = [
           <p className="sub-heading">5.4 Security Measures</p>
           <ul className="bullet-list">
             <li>
+              Two-factor sign-in: every login requires a role-linked email
+              one-time code in addition to the account password before a session
+              is granted.
+            </li>
+            <li>
               AES-256-GCM encryption for all backup archives and classified
               document exports.
             </li>
@@ -344,7 +349,7 @@ const sections = [
         {[
           {
             label: "Confidentiality",
-            desc: "All information accessed through the PNP-RMS — regardless of classification level — must be treated as strictly confidential. Unauthorized disclosure, distribution, or reproduction of system data in any form is prohibited.",
+            desc: "All information accessed through the PORTAL Information System — regardless of classification level — must be treated as strictly confidential. Unauthorized disclosure, distribution, or reproduction of system data in any form is prohibited.",
           },
           {
             label: "Authorized Access Only",
@@ -484,9 +489,9 @@ const sections = [
     content: (
       <div className="space-y-3">
         <p>
-          The PNP-RMS incorporates an integrated backup and recovery system
-          managed exclusively by the Super Administrator account. The following
-          provisions govern its use:
+          The PORTAL Information System incorporates an integrated backup and
+          recovery system managed exclusively by the Super Administrator
+          account. The following provisions govern its use:
         </p>
         <ul className="bullet-list">
           <li>
@@ -855,12 +860,6 @@ export default function TermsAndConditions() {
           border-radius: 2px;
         }
 
-        /* ============================================
-           RESPONSIVE DESIGN
-           Tablet: screens 768px wide or narrower
-           Mobile: screens 480px wide or narrower
-           ============================================ */
-
         @media (max-width: 768px) {
           .page-wrapper { padding: 32px 20px 60px; }
 
@@ -918,10 +917,14 @@ export default function TermsAndConditions() {
             Philippine National Police — Davao Norte Police Provincial Office
           </p>
           <h1>Terms and Conditions</h1>
-          <p className="system-name">PNP Records Management System (PNP-RMS)</p>
+          <p className="system-name">PORTAL Information System (PORTAL-IS)</p>
           <div className="meta-strip">
             <span>
-              <span className="meta-dot" /> Effective Date: Upon System Turnover
+              <span className="meta-dot" /> Development Start: February 25, 2026
+            </span>
+            <span>
+              <span className="meta-dot" /> Effective Date: June 23, 2026
+              (System Turnover)
             </span>
             <span>
               <span className="meta-dot" /> Version: 1.0
@@ -935,8 +938,8 @@ export default function TermsAndConditions() {
 
         {/* Intro */}
         <div className="intro-box">
-          Welcome to the PNP Records Management System (PNP-RMS). By accessing
-          or using this system, you — the authorized user, referring to PNP
+          Welcome to the PORTAL Information System (PORTAL-IS). By accessing or
+          using this system, you — the authorized user, referring to PNP
           personnel, designated government agents, or cleared data subjects —
           agree to be bound by the following Terms and Conditions. These terms
           govern access to and use of the system in full compliance with
@@ -971,7 +974,7 @@ export default function TermsAndConditions() {
         {/* Footer */}
         <div className="doc-footer">
           <div>
-            <p>PNP-RMS Terms and Conditions — Version 1.0</p>
+            <p>PORTAL Information System Terms and Conditions — Version 1.0</p>
             <p>Davao Norte Police Provincial Office</p>
           </div>
           <span className="footer-badge">For Official Use Only</span>

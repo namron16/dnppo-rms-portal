@@ -752,6 +752,7 @@ export default function MasterPage() {
     null
   );
   const [attachParentDocId, setAttachParentDocId] = useState<string>("");
+  const loadedAttachmentDocIds = useRef<Set<string>>(new Set());
 
   // ── Forward attachment state ───────────────────────────────────────────────
   // Tracks which specific attachment is being forwarded (table row or nested header)
@@ -810,8 +811,28 @@ export default function MasterPage() {
     },
     [toast]
   );
+  async function getApprovalsBatch(
+    documentIds: string[]
+  ): Promise<Map<string, DocumentApproval | null>> {
+    const map = new Map<string, DocumentApproval | null>();
+    if (documentIds.length === 0) return map;
 
-  // Load — filter by uploaded_by unless user is privileged
+    const { data, error } = await supabase
+      .from("document_approvals")
+      .select("*")
+      .eq("document_type", "master")
+      .in("document_id", documentIds);
+
+    if (error) {
+      console.warn("getApprovalsBatch error:", error.message);
+      return map;
+    }
+
+    for (const row of data ?? []) {
+      map.set(row.document_id, row as DocumentApproval);
+    }
+    return map;
+  }
   useEffect(() => {
     async function loadAll() {
       if (!user) return;
@@ -833,36 +854,26 @@ export default function MasterPage() {
           return d.uploaded_by === user.role;
         });
 
-        const enriched: DocEnriched[] = await Promise.all(
-          activeDocs.map(async (doc: DocWithUrl) => {
-            const approval = await getApproval(doc.id, "master");
-            return { ...doc, approval };
-          })
+        // FIX 4.1: one query for every document's approval, not one query per doc
+        const approvalsById = await getApprovalsBatch(
+          activeDocs.map((d) => d.id)
         );
+        const enriched: DocEnriched[] = activeDocs.map((doc: DocWithUrl) => ({
+          ...doc,
+          approval: approvalsById.get(doc.id) ?? null,
+        }));
         setDocuments(enriched);
 
-        if (docs.length > 0) {
-          const { data: allAtts } = await supabase
-            .from("master_document_attachments")
-            .select("*")
-            .in(
-              "master_document_id",
-              docs.map((d: DocWithUrl) => d.id)
-            )
-            .order("created_at", { ascending: true });
+        // FIX 4.2: don't fetch attachments for every document up front —
+        // only prime the map with empty arrays; real data loads on selection.
+        const emptyMap = new Map<string, DocAttachment[]>();
+        for (const d of activeDocs) emptyMap.set(d.id, []);
+        setAttachmentsMap(emptyMap);
 
-          const map = new Map<string, DocAttachment[]>();
-          for (const row of allAtts ?? []) {
-            const att = normaliseAttachment(row);
-            const key = att.parent_id ?? att.master_document_id;
-            const list = map.get(key) ?? [];
-            list.push(att);
-            map.set(key, list);
-          }
-          setAttachmentsMap(map);
+        if (enriched.length > 0) {
+          setSelection(enriched[0]);
+          await loadAttachmentsFor(enriched[0].id);
         }
-
-        if (enriched.length > 0) setSelection(enriched[0]);
       } catch (err) {
         console.error("loadAll error:", err);
       } finally {
@@ -871,6 +882,42 @@ export default function MasterPage() {
     }
     loadAll();
   }, [user, isPrivileged, isP1]);
+
+  // ── NEW: lazy-load attachments for one document, cache result ──────────────
+  async function loadAttachmentsFor(docId: string) {
+    // Already loaded (and non-empty, or explicitly known empty) — skip refetch.
+    // We use a small "loaded" marker via a Set kept in a ref outside this
+    // snippet (see loadedAttachmentDocIds below) to avoid re-fetching on every click.
+    if (loadedAttachmentDocIds.current.has(docId)) return;
+
+    const { data: atts, error } = await supabase
+      .from("master_document_attachments")
+      .select("*")
+      .eq("master_document_id", docId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("loadAttachmentsFor error:", error.message);
+      return;
+    }
+
+    const map = new Map<string, DocAttachment[]>();
+    for (const row of atts ?? []) {
+      const att = normaliseAttachment(row);
+      const key = att.parent_id ?? att.master_document_id;
+      const list = map.get(key) ?? [];
+      list.push(att);
+      map.set(key, list);
+    }
+
+    setAttachmentsMap((prev) => {
+      const next = new Map(prev);
+      for (const [k, v] of map) next.set(k, v);
+      return next;
+    });
+
+    loadedAttachmentDocIds.current.add(docId);
+  }
 
   useEffect(() => {
     if (selection) {
@@ -1276,6 +1323,7 @@ export default function MasterPage() {
   function handleSelectDocument(doc: DocEnriched) {
     setSelection(doc);
     setAttachmentNavStack([{ kind: "document", doc }]);
+    void loadAttachmentsFor(doc.id);
   }
 
   function handleDrillDown(att: DocAttachment) {
