@@ -18,9 +18,16 @@ const nextConfig: NextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              `script-src 'self' 'unsafe-inline'${
-                isDev ? " 'unsafe-eval'" : ""
-              }`,
+              // FIX 1.7 (gdrive-recovery-system-user-logs-audit-report.md):
+              // 'unsafe-inline' on script-src defeats most of CSP's XSS
+              // protection. Dev keeps 'unsafe-inline' + 'unsafe-eval' for
+              // Next.js's dev-mode hot reload / fast refresh scripts; the
+              // production build drops both. If a real need for an inline
+              // script arises in production, use a per-request nonce
+              // instead of re-adding 'unsafe-inline'.
+              isDev
+                ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+                : "script-src 'self'",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: blob: https:",
@@ -44,6 +51,7 @@ const nextConfig: NextConfig = {
               "form-action 'self' https://accounts.google.com",
               "frame-ancestors 'none'",
               "base-uri 'self'",
+              "object-src 'none'",
             ].join("; "),
           },
           { key: "X-Frame-Options", value: "DENY" },

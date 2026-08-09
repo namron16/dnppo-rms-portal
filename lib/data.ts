@@ -36,32 +36,6 @@ export type DailyJournalRecord = JournalEntry & {
 /* ════════════════════════════════════════════
    USERS — kept for authentication only
 ════════════════════════════════════════════ */
-export const USERS: User[] = [
-  {
-    id: "1",
-    name: "Ramon Dela Cruz",
-    email: "rdelacruz@ddnppo.gov.ph",
-    role: "admin",
-    initials: "RD",
-    avatarColor: "#f0b429",
-  },
-  {
-    id: "2",
-    name: "Ana Santos",
-    email: "asantos@ddnppo.gov.ph",
-    role: "officer",
-    initials: "AS",
-    avatarColor: "#3b63b8",
-  },
-  {
-    id: "3",
-    name: "Jose Reyes",
-    email: "jreyes@ddnppo.gov.ph",
-    role: "officer",
-    initials: "JR",
-    avatarColor: "#8b5cf6",
-  },
-];
 
 /* ════════════════════════════════════════════
    MASTER DOCUMENTS
