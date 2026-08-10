@@ -22,6 +22,7 @@ import { EditEmailModal } from "./EditEmailModal";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { CreateAccountModal } from "./CreateAccountModal";
 import { DeleteAccountModal } from "./DeleteAccountModal";
+import { EditRoleModal } from "./EditRoleModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ interface ActionMenuProps {
   onResetPW: (userId: string, displayName: string) => void;
   onEditEmail: (userId: string, displayName: string, email?: string) => void;
   onDelete: (u: ManagedUser) => void;
+  onEditRole: (role: string) => void;
 }
 
 function ActionMenu({
@@ -63,6 +65,7 @@ function ActionMenu({
   onResetPW,
   onEditEmail,
   onDelete,
+  onEditRole,
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -162,6 +165,31 @@ function ActionMenu({
             </svg>
             Reset password
           </button>
+
+          {isAdmin && !["admin", "PD", "DPDA", "DPDO"].includes(user.role) && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                close();
+                onEditRole(user.role);
+              }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[13px] text-slate-700 hover:bg-slate-50 transition text-left"
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                className="text-slate-400 shrink-0"
+              >
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+              Edit role & permissions
+            </button>
+          )}
 
           <div className="my-1 border-t border-slate-100" />
 
@@ -282,6 +310,7 @@ export default function UserManagementPage() {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [editRoleTarget, setEditRoleTarget] = useState<string | null>(null);
   const [message, setMessage] = useState<{
     type: "info" | "error";
     text: string;
@@ -837,6 +866,7 @@ export default function UserManagementPage() {
                               onResetPW={handleResetPassword}
                               onEditEmail={handleEditEmail}
                               onDelete={handleDeleteTarget}
+                              onEditRole={setEditRoleTarget}
                             />
                           </td>
                         </tr>
@@ -880,6 +910,7 @@ export default function UserManagementPage() {
                           onResetPW={handleResetPassword}
                           onEditEmail={handleEditEmail}
                           onDelete={handleDeleteTarget}
+                          onEditRole={setEditRoleTarget}
                         />
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -971,6 +1002,20 @@ export default function UserManagementPage() {
             setMessage({
               type: "info",
               text: `Account "${deleteTarget.role}" deleted. Don't forget to remove ${deleteTarget.email} from Google Cloud Console → Test Users.`,
+            });
+            void load();
+          }}
+        />
+      )}
+      {editRoleTarget && (
+        <EditRoleModal
+          role={editRoleTarget}
+          onClose={() => setEditRoleTarget(null)}
+          onSuccess={() => {
+            setEditRoleTarget(null);
+            setMessage({
+              type: "info",
+              text: `Role "${editRoleTarget}" updated.`,
             });
             void load();
           }}

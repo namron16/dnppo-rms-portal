@@ -9,80 +9,116 @@
 //
 //   admin, PD, DPDA, DPDO are view/review/approve roles — they do NOT upload.
 
-import { AdminRole } from "./auth"
+import { AdminRole } from "./auth";
 
-export const FULL_ACCESS_ROLES: AdminRole[] = ['DPDA', 'DPDO']
-export const VIEWER_ROLES: AdminRole[] = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10']
+export const FULL_ACCESS_ROLES: AdminRole[] = ["DPDA", "DPDO"];
+export const VIEWER_ROLES: AdminRole[] = [
+  "P1",
+  "P2",
+  "P3",
+  "P4",
+  "P5",
+  "P6",
+  "P7",
+  "P8",
+  "P9",
+  "P10",
+];
 
 // Roles that may upload, edit, delete, or archive documents
 const DOCUMENT_WRITER_ROLES_KNOWN = [
-  'P1','P2','P3','P4','P5','P6','P7','P8','P9','P10','WCPD','PPSMU',
-]
+  "P1",
+  "P2",
+  "P3",
+  "P4",
+  "P5",
+  "P6",
+  "P7",
+  "P8",
+  "P9",
+  "P10",
+  "WCPD",
+  "PPSMU",
+];
 
-const NON_WRITER_ROLES = ['admin', 'PD', 'DPDA', 'DPDO']
+const NON_WRITER_ROLES = ["admin", "PD", "DPDA", "DPDO"];
 
-export const ROLE_META: Record<AdminRole, { name: string; level: 'head' | 'deputy' | 'super_admin' | 'viewer' }> = {
-  PD:    { name: 'Provincial Director',              level: 'head'        },
-  DPDA:  { name: 'Deputy Director for Administration', level: 'deputy'    },
-  DPDO:  { name: 'Deputy Director for Operations',   level: 'deputy'      },
-  admin: { name: 'Super Admin',                      level: 'super_admin' },
-  P1:    { name: 'Records Officer',                  level: 'viewer'      },
-  P2:    { name: 'Admin Officer P2',                 level: 'viewer'      },
-  P3:    { name: 'Admin Officer P3',                 level: 'viewer'      },
-  P4:    { name: 'Admin Officer P4',                 level: 'viewer'      },
-  P5:    { name: 'Admin Officer P5',                 level: 'viewer'      },
-  P6:    { name: 'Admin Officer P6',                 level: 'viewer'      },
-  P7:    { name: 'Admin Officer P7',                 level: 'viewer'      },
-  P8:    { name: 'Admin Officer P8',                 level: 'viewer'      },
-  P9:    { name: 'Admin Officer P9',                 level: 'viewer'      },
-  P10:   { name: 'Admin Officer P10',                level: 'viewer'      },
-  WCPD:  { name: 'Admin Officer WCPD',               level: 'viewer'      },
-  PPSMU: { name: 'Admin Officer PPSMU',              level: 'viewer'      },
-}
+export const ROLE_META: Record<
+  AdminRole,
+  { name: string; level: "head" | "deputy" | "super_admin" | "viewer" }
+> = {
+  PD: { name: "Provincial Director", level: "head" },
+  DPDA: { name: "Deputy Director for Administration", level: "deputy" },
+  DPDO: { name: "Deputy Director for Operations", level: "deputy" },
+  admin: { name: "Super Admin", level: "super_admin" },
+  P1: { name: "Records Officer", level: "viewer" },
+  P2: { name: "Admin Officer P2", level: "viewer" },
+  P3: { name: "Admin Officer P3", level: "viewer" },
+  P4: { name: "Admin Officer P4", level: "viewer" },
+  P5: { name: "Admin Officer P5", level: "viewer" },
+  P6: { name: "Admin Officer P6", level: "viewer" },
+  P7: { name: "Admin Officer P7", level: "viewer" },
+  P8: { name: "Admin Officer P8", level: "viewer" },
+  P9: { name: "Admin Officer P9", level: "viewer" },
+  P10: { name: "Admin Officer P10", level: "viewer" },
+  WCPD: { name: "Admin Officer WCPD", level: "viewer" },
+  PPSMU: { name: "Admin Officer PPSMU", level: "viewer" },
+};
 
-export function getRoleMeta(role: string): { name: string; level: 'head' | 'deputy' | 'super_admin' | 'viewer' } {
-  return ROLE_META[role as AdminRole] ?? {
-    name:  role,       // Fall back to the role ID itself
-    level: 'viewer',
-  }
+export function getRoleMeta(role: string): {
+  name: string;
+  level: "head" | "deputy" | "super_admin" | "viewer";
+} {
+  return (
+    ROLE_META[role as AdminRole] ?? {
+      name: role, // Fall back to the role ID itself
+      level: "viewer",
+    }
+  );
 }
 
 // ── Document write permissions ────────────────────────────────────────────────
 
 /** True if this role may upload new documents to any module. */
-export function canUploadDocuments(role: AdminRole): boolean {
-  if (NON_WRITER_ROLES.includes(role)) return false
-  // Known roles first for explicit check
-  if (DOCUMENT_WRITER_ROLES_KNOWN.includes(role)) return true
-  // Any unrecognized role that isn't leadership = writer by default
-  return true
+export function canUploadDocuments(
+  role: AdminRole,
+  canUploadFromRegistry?: boolean
+): boolean {
+  if (canUploadFromRegistry !== undefined) return canUploadFromRegistry;
+  // fallback for any caller not yet passing the flag
+  if (NON_WRITER_ROLES.includes(role)) return false;
+  return true;
 }
 
-/** True if this role may edit existing document metadata. */
-export function canEditDocuments(role: AdminRole): boolean {
-  return canUploadDocuments(role)
+export function canEditDocuments(
+  role: AdminRole,
+  canUploadFromRegistry?: boolean
+) {
+  return canUploadDocuments(role, canUploadFromRegistry);
 }
-
-/** True if this role may permanently delete documents. */
-export function canDeleteDocuments(role: AdminRole): boolean {
-  return canUploadDocuments(role)
+export function canDeleteDocuments(
+  role: AdminRole,
+  canUploadFromRegistry?: boolean
+) {
+  return canUploadDocuments(role, canUploadFromRegistry);
 }
-
-/** True if this role may archive documents. */
-export function canArchiveDocuments(role: AdminRole): boolean {
-  return canUploadDocuments(role)
+export function canArchiveDocuments(
+  role: AdminRole,
+  canUploadFromRegistry?: boolean
+) {
+  return canUploadDocuments(role, canUploadFromRegistry);
 }
 
 /** True if this role may forward documents to other roles. */
 export function canForwardDocuments(role: AdminRole): boolean {
-  return canUploadDocuments(role)
+  return canUploadDocuments(role);
 }
 
 // ── Specialised permissions ───────────────────────────────────────────────────
 
 /** True if this role may review (but not final-approve) documents. */
 export function canReviewDocuments(role: AdminRole): boolean {
-  return ['DPDA', 'DPDO'].includes(role)
+  return ["DPDA", "DPDO"].includes(role);
 }
 
 /**
@@ -90,31 +126,30 @@ export function canReviewDocuments(role: AdminRole): boolean {
  * can see all documents regardless of who uploaded them.
  */
 export function hasFullDocumentAccess(role: AdminRole): boolean {
-  return FULL_ACCESS_ROLES.includes(role)
+  return FULL_ACCESS_ROLES.includes(role);
 }
 
 /** True if this role exclusively manages classified/confidential documents. */
 export function canManageClassifiedDocuments(role: AdminRole): boolean {
-  return role === 'P2'
+  return role === "P2";
 }
 
 /** True if this role may print classified documents. */
 export function canPrintClassifiedDocuments(role: AdminRole): boolean {
-  return role === 'P2'
+  return role === "P2";
 }
 
 /** True if this role may delete classified documents. */
 export function canDeleteClassifiedDocuments(role: AdminRole): boolean {
-  return role === 'P2'
+  return role === "P2";
 }
 
 /** True if this role may save forwarded inbox items into their own module. */
 export function canSaveFromInbox(role: AdminRole): boolean {
-  return ['P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10'].includes(role)
+  return ["P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10"].includes(role);
 }
 
 /** True if this role may assign document visibility tags. */
 export function canAssignVisibility(role: AdminRole): boolean {
-  return role === 'P1'
+  return role === "P1";
 }
-

@@ -81,7 +81,7 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
     }
 
     try {
-      assertCanUpload(user.role as AdminRole);
+      assertCanUpload(user.role as AdminRole, user.canUpload);
     } catch (err: any) {
       toast.error(err.message ?? "Upload denied.");
       return;

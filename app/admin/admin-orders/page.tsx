@@ -1437,7 +1437,7 @@ export default function AdminOrdersPage() {
   const { user } = useAuth();
 
   const canUpload = user?.role
-    ? canUploadDocuments(user.role as AdminRole)
+    ? canUploadDocuments(user.role as AdminRole, user.canUpload)
     : false;
   const canEditOrder = user ? !["DPDA", "DPDO"].includes(user.role) : false;
 

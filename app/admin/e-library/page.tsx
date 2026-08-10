@@ -500,14 +500,16 @@ export default function LibraryPage() {
 
   // FIX: use canUploadDocuments (P1–P10, WCPD, PPSMU) instead of P1-only check
   const canUploadLibrary = user?.role
-    ? canUploadDocuments(user.role as AdminRole)
+    ? canUploadDocuments(user.role as AdminRole, user.canUpload)
     : false;
-  const canEdit = user?.role ? canEditDocuments(user.role as AdminRole) : false;
+  const canEdit = user?.role
+    ? canEditDocuments(user.role as AdminRole, user.canUpload)
+    : false;
   const canDelete = user?.role
-    ? canDeleteDocuments(user.role as AdminRole)
+    ? canDeleteDocuments(user.role as AdminRole, user.canUpload)
     : false;
   const canArchive = user?.role
-    ? canArchiveDocuments(user.role as AdminRole)
+    ? canArchiveDocuments(user.role as AdminRole, user.canUpload)
     : false;
   const canForward = canUploadLibrary;
 

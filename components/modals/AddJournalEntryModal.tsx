@@ -165,7 +165,7 @@ export function AddJournalEntryModal({
     }
 
     try {
-      assertCanUpload(user.role as AdminRole);
+      assertCanUpload(user.role as AdminRole, user.canUpload);
     } catch (err: any) {
       toast.error(err.message ?? "Upload denied.");
       return;

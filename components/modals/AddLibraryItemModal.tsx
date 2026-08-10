@@ -1,179 +1,195 @@
-'use client'
+"use client";
 // components/modals/AddLibraryItemModal.tsx
 //
 // FIX (error message): uploadToDrive now returns { result, error } so the
 //      exact server error (e.g. "No Google Drive account connected") is shown
 //      instead of the generic fallback from stale uploadError state.
 
-import { useRef, useState } from 'react'
-import { Modal }    from '@/components/ui/Modal'
-import { Button }   from '@/components/ui/Button'
-import { useToast } from '@/components/ui/Toast'
-import { AddLibraryItemSchema, zodErrors } from '@/lib/validations'
-import { assertCanUpload } from '@/lib/rbac'
-import { useDriveUpload } from '@/hooks/useGDriveTool'
-import { useAuth } from '@/lib/auth'
-import type { AdminRole } from '@/lib/auth'
-import { addLibraryItem } from '@/lib/data'
-import { logAddLibraryItem } from '@/lib/adminLogger'
-import type { LibraryCategory, LibraryItemWithUrl } from '@/types'
+import { useRef, useState } from "react";
+import { Modal } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
+import { AddLibraryItemSchema, zodErrors } from "@/lib/validations";
+import { assertCanUpload } from "@/lib/rbac";
+import { useDriveUpload } from "@/hooks/useGDriveTool";
+import { useAuth } from "@/lib/auth";
+import type { AdminRole } from "@/lib/auth";
+import { addLibraryItem } from "@/lib/data";
+import { logAddLibraryItem } from "@/lib/adminLogger";
+import type { LibraryCategory, LibraryItemWithUrl } from "@/types";
 
 interface Props {
-  open: boolean
-  onClose: () => void
-  onAdd?: (item: LibraryItemWithUrl) => void
+  open: boolean;
+  onClose: () => void;
+  onAdd?: (item: LibraryItemWithUrl) => void;
 }
 
 export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
-  const { toast } = useToast()
-  const { user }  = useAuth()
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { uploadToDrive, uploading } = useDriveUpload()
+  const { uploadToDrive, uploading } = useDriveUpload();
 
-  const [errors,   setErrors]   = useState<Record<string, string>>({})
-  const [file,     setFile]     = useState<File | null>(null)
-  const [dragging, setDragging] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [form, setForm] = useState({
-    title:       '',
-    category:    'MANUAL' as LibraryCategory,
-    description: '',
-  })
+    title: "",
+    category: "MANUAL" as LibraryCategory,
+    description: "",
+  });
 
   const field = (key: string, value: string) => {
-    setForm(p => ({ ...p, [key]: value }))
-    setErrors(p => ({ ...p, [key]: '' }))
-  }
+    setForm((p) => ({ ...p, [key]: value }));
+    setErrors((p) => ({ ...p, [key]: "" }));
+  };
 
   function handleFileChange(nextFile: File | null) {
-    if (!nextFile) return
-    setFile(nextFile)
-    setErrors(prev => ({ ...prev, file: '' }))
+    if (!nextFile) return;
+    setFile(nextFile);
+    setErrors((prev) => ({ ...prev, file: "" }));
   }
 
   function resetAndClose() {
-    setForm({ title: '', category: 'MANUAL', description: '' })
-    setErrors({})
-    setFile(null)
-    setDragging(false)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-    onClose()
+    setForm({ title: "", category: "MANUAL", description: "" });
+    setErrors({});
+    setFile(null);
+    setDragging(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    onClose();
   }
 
   async function submit() {
-    if (!user) { toast.error('Not authenticated.'); return }
-
-    try {
-      assertCanUpload(user.role as AdminRole)
-    } catch (err: any) {
-      toast.error(err.message ?? 'Upload denied.')
-      return
+    if (!user) {
+      toast.error("Not authenticated.");
+      return;
     }
 
-    const nextErrors: Record<string, string> = {}
-    if (!form.title.trim())       nextErrors.title       = 'Title is required.'
-    if (!form.category.trim())    nextErrors.category    = 'Category is required.'
-    if (!form.description.trim()) nextErrors.description = 'Description is required.'
-    if (!file)                    nextErrors.file        = 'Attachment is required.'
+    try {
+      assertCanUpload(user.role as AdminRole, user.canUpload);
+    } catch (err: any) {
+      toast.error(err.message ?? "Upload denied.");
+      return;
+    }
+
+    const nextErrors: Record<string, string> = {};
+    if (!form.title.trim()) nextErrors.title = "Title is required.";
+    if (!form.category.trim()) nextErrors.category = "Category is required.";
+    if (!form.description.trim())
+      nextErrors.description = "Description is required.";
+    if (!file) nextErrors.file = "Attachment is required.";
 
     if (Object.keys(nextErrors).length > 0) {
-      setErrors(nextErrors)
-      return
+      setErrors(nextErrors);
+      return;
     }
 
-    const result = AddLibraryItemSchema.safeParse(form)
+    const result = AddLibraryItemSchema.safeParse(form);
     if (!result.success) {
-      setErrors(zodErrors(result.error))
-      return
+      setErrors(zodErrors(result.error));
+      return;
     }
 
-    setErrors({})
+    setErrors({});
 
     try {
-      const itemId = `lib-${Date.now()}`
-      const today  = new Date().toISOString().split('T')[0]
-      const now    = new Date().toISOString()
+      const itemId = `lib-${Date.now()}`;
+      const today = new Date().toISOString().split("T")[0];
+      const now = new Date().toISOString();
 
       // FIX: destructure { result, error } — error is always the real server
       // message, never stale state from a previous render cycle.
       const { result: driveResult, error: driveError } = await uploadToDrive(
         file!,
-        'library_items',
+        "library_items",
         {
           uploadedBy: user.role,
-          entityId:   itemId,
-          entityType: 'library_item',
+          entityId: itemId,
+          entityType: "library_item",
         }
-      )
+      );
 
       if (!driveResult) {
-        toast.error(driveError)
-        return
+        toast.error(driveError);
+        return;
       }
 
-      const fileSize = file!.size < 1024 * 1024
-        ? `${(file!.size / 1024).toFixed(1)} KB`
-        : `${(file!.size / 1024 / 1024).toFixed(1)} MB`
+      const fileSize =
+        file!.size < 1024 * 1024
+          ? `${(file!.size / 1024).toFixed(1)} KB`
+          : `${(file!.size / 1024 / 1024).toFixed(1)} MB`;
 
       const newItem: LibraryItemWithUrl = {
-        id:          itemId,
-        title:       result.data.title.trim(),
-        category:    result.data.category as LibraryCategory,
-        size:        fileSize,
-        dateAdded:   today,
-        fileUrl:     driveResult.fileUrl,
+        id: itemId,
+        title: result.data.title.trim(),
+        category: result.data.category as LibraryCategory,
+        size: fileSize,
+        dateAdded: today,
+        fileUrl: driveResult.fileUrl,
         description: form.description.trim() || undefined,
-        created_at:  now,
+        created_at: now,
         uploaded_by: user.role,
-        archived:    false,
-        gdrive_file_id:  driveResult.gdriveFileId,
-        gdrive_url:      driveResult.fileUrl,
+        archived: false,
+        gdrive_file_id: driveResult.gdriveFileId,
+        gdrive_url: driveResult.fileUrl,
         pool_account_id: driveResult.poolAccountId,
-        file_name:       file!.name,
+        file_name: file!.name,
         file_size_bytes: file!.size,
-        mime_type:       file!.type || undefined,
-      }
+        mime_type: file!.type || undefined,
+      };
 
-      await addLibraryItem(newItem)
-      await logAddLibraryItem(result.data.title)
+      await addLibraryItem(newItem);
+      await logAddLibraryItem(result.data.title);
 
-      toast.success(`"${result.data.title}" added to the Library.`)
-      onAdd?.(newItem)
-      resetAndClose()
+      toast.success(`"${result.data.title}" added to the Library.`);
+      onAdd?.(newItem);
+      resetAndClose();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
-      console.error('[AddLibraryItemModal] handleSubmit error:', err)
-      toast.error(message)
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again.";
+      console.error("[AddLibraryItemModal] handleSubmit error:", err);
+      toast.error(message);
     }
   }
 
   const hasMissingRequired =
-    !form.title.trim()       ||
-    !form.category.trim()    ||
+    !form.title.trim() ||
+    !form.category.trim() ||
     !form.description.trim() ||
-    !file
+    !file;
 
   const cls = (f: string) =>
     `w-full px-3 py-2.5 border-[1.5px] rounded-lg text-sm bg-slate-50 focus:outline-none focus:border-blue-500 focus:bg-white transition ${
-      errors[f] ? 'border-red-400 focus:border-red-400' : 'border-slate-200'
-    }`
+      errors[f] ? "border-red-400 focus:border-red-400" : "border-slate-200"
+    }`;
 
   return (
-    <Modal open={open} onClose={uploading ? () => {} : resetAndClose} title="Add to Library" width="max-w-md">
+    <Modal
+      open={open}
+      onClose={uploading ? () => {} : resetAndClose}
+      title="Add to Library"
+      width="max-w-md"
+    >
       <div className="p-6 space-y-4">
-
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
             Title <span className="text-red-500">*</span>
           </label>
           <input
-            className={cls('title')}
+            className={cls("title")}
             placeholder="e.g. PNP Anti-Corruption Manual 2024"
             value={form.title}
-            onChange={e => field('title', e.target.value)}
+            onChange={(e) => field("title", e.target.value)}
             disabled={uploading}
           />
-          {errors.title && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.title}</p>}
+          {errors.title && (
+            <p className="text-xs text-red-500 mt-1 font-medium">
+              ⚠ {errors.title}
+            </p>
+          )}
         </div>
 
         <div>
@@ -181,16 +197,20 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
             Category <span className="text-red-500">*</span>
           </label>
           <select
-            className={cls('category')}
+            className={cls("category")}
             value={form.category}
-            onChange={e => field('category', e.target.value)}
+            onChange={(e) => field("category", e.target.value)}
             disabled={uploading}
           >
             <option value="MANUAL">Manual</option>
             <option value="GUIDELINE">Guideline</option>
             <option value="TEMPLATE">Template</option>
           </select>
-          {errors.category && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.category}</p>}
+          {errors.category && (
+            <p className="text-xs text-red-500 mt-1 font-medium">
+              ⚠ {errors.category}
+            </p>
+          )}
         </div>
 
         <div>
@@ -199,13 +219,17 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
           </label>
           <textarea
             rows={3}
-            className={`${cls('description')} resize-none`}
+            className={`${cls("description")} resize-none`}
             placeholder="Brief description of this library item…"
             value={form.description}
-            onChange={e => field('description', e.target.value)}
+            onChange={(e) => field("description", e.target.value)}
             disabled={uploading}
           />
-          {errors.description && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.description}</p>}
+          {errors.description && (
+            <p className="text-xs text-red-500 mt-1 font-medium">
+              ⚠ {errors.description}
+            </p>
+          )}
         </div>
 
         <input
@@ -213,7 +237,7 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
           type="file"
           accept=".pdf,.jpg,.jpeg,.png"
           className="hidden"
-          onChange={e => handleFileChange(e.target.files?.[0] ?? null)}
+          onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
         />
 
         {file ? (
@@ -221,13 +245,20 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
             <div className="flex items-center gap-3 min-w-0">
               <span className="text-2xl flex-shrink-0">📗</span>
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-800 truncate">{file.name}</p>
-                <p className="text-xs text-slate-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                <p className="text-sm font-semibold text-slate-800 truncate">
+                  {file.name}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {(file.size / 1024 / 1024).toFixed(2)} MB
+                </p>
               </div>
             </div>
             {!uploading && (
               <button
-                onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
+                onClick={() => {
+                  setFile(null);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
                 className="text-slate-400 hover:text-red-500 font-bold text-sm ml-3 flex-shrink-0"
               >
                 ✕
@@ -236,44 +267,65 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
           </div>
         ) : (
           <div
-            onDragOver={e  => { e.preventDefault(); setDragging(true) }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
             onDragLeave={() => setDragging(false)}
-            onDrop={e => {
-              e.preventDefault()
-              setDragging(false)
-              handleFileChange(e.dataTransfer.files?.[0] ?? null)
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              handleFileChange(e.dataTransfer.files?.[0] ?? null);
             }}
             onClick={() => !uploading && fileInputRef.current?.click()}
             className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition ${
               errors.file
-                ? 'border-red-400 bg-red-50'
+                ? "border-red-400 bg-red-50"
                 : dragging
-                  ? 'border-blue-400 bg-blue-50'
-                  : 'border-slate-200 hover:border-blue-400 hover:bg-blue-50'
-            } ${uploading ? 'pointer-events-none opacity-50' : ''}`}
+                ? "border-blue-400 bg-blue-50"
+                : "border-slate-200 hover:border-blue-400 hover:bg-blue-50"
+            } ${uploading ? "pointer-events-none opacity-50" : ""}`}
           >
             <div className="text-2xl mb-1.5">📗</div>
-            <p className="text-sm font-medium text-slate-600 mb-0.5">Click to browse or drag &amp; drop</p>
+            <p className="text-sm font-medium text-slate-600 mb-0.5">
+              Click to browse or drag &amp; drop
+            </p>
             <p className="text-xs text-slate-400">PDF, JPG, PNG — max 50 MB</p>
           </div>
         )}
 
-        {errors.file && <p className="text-xs text-red-500 mt-1 font-medium">⚠ {errors.file}</p>}
+        {errors.file && (
+          <p className="text-xs text-red-500 mt-1 font-medium">
+            ⚠ {errors.file}
+          </p>
+        )}
 
         {uploading && (
           <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
             <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-            <p className="text-sm text-blue-700 font-medium">Uploading to Google Drive…</p>
+            <p className="text-sm text-blue-700 font-medium">
+              Uploading to Google Drive…
+            </p>
           </div>
         )}
 
         <div className="flex justify-end gap-2.5 pt-1">
-          <Button variant="outline" onClick={resetAndClose} disabled={uploading}>Cancel</Button>
-          <Button variant="primary" onClick={submit} disabled={hasMissingRequired || uploading}>
-            {uploading ? 'Uploading…' : '📚 Add to Library'}
+          <Button
+            variant="outline"
+            onClick={resetAndClose}
+            disabled={uploading}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={submit}
+            disabled={hasMissingRequired || uploading}
+          >
+            {uploading ? "Uploading…" : "📚 Add to Library"}
           </Button>
         </div>
       </div>
     </Modal>
-  )
+  );
 }

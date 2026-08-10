@@ -713,7 +713,7 @@ export default function MasterPage() {
   const { user } = useAuth();
 
   const canUpload = user?.role
-    ? canUploadDocuments(user.role as AdminRole)
+    ? canUploadDocuments(user.role as AdminRole, user.canUpload)
     : false;
   const isP1 = user?.role === "P1";
   const isPrivileged = user
