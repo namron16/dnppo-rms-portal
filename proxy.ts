@@ -1,130 +1,137 @@
 // proxy.ts (middleware entry point)
 //
-// FIX: now reads `nav_group` and `is_viewer_only` from user_metadata (JWT),
+// Reads `nav_group` and `is_viewer_only` from user_metadata (JWT),
 // so route access works for any dynamically created role without a DB call.
 //
 // When a new account is created via createAccount() in actions.ts, those
 // fields are written into user_metadata. The JWT carries them on every request,
 // so the middleware can enforce the correct routes instantly.
+//
+// FIX: inferNavGroup() fallback now also maps role 'PD' → 'pd', matching the
+// new dedicated Provincial Director nav_group. This fallback only matters for
+// accounts whose JWT is missing nav_group entirely (pre-migration accounts);
+// once 017_pd_nav_group_and_admin_metadata_fix.sql backfills the JWT, the
+// metadata itself carries 'pd' directly and this fallback isn't consulted.
 
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
-import { updateSession } from './lib/supabase/middleware'
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { updateSession } from "./lib/supabase/middleware";
 import {
   getDefaultAdminRoute,
   isAllowedAdminPath,
   type RoleInfo,
-} from './lib/adminRouteAccess'
+} from "./lib/adminRouteAccess";
 
 export async function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl
-  const { supabaseResponse, user } = await updateSession(request)
+  const { pathname } = request.nextUrl;
+  const { supabaseResponse, user } = await updateSession(request);
 
-  const isLoggedIn = !!user
+  const isLoggedIn = !!user;
 
   // ── Read role info from JWT user_metadata ─────────────────────────────────
   // user_metadata is embedded in the JWT — no extra DB round-trip needed.
   // nav_group and is_viewer_only are written at account creation (actions.ts)
   // and also synced into user_metadata via register_role / createAccount.
-  const meta = user?.user_metadata ?? {}
+  const meta = user?.user_metadata ?? {};
 
-  const role: string | undefined =
-    meta.role ?? user?.app_metadata?.role
+  const role: string | undefined = meta.role ?? user?.app_metadata?.role;
 
   // Build a RoleInfo object so the route helpers can use nav_group.
   // Fall back gracefully if metadata is missing (e.g. old accounts).
   const roleInfo: RoleInfo | undefined = role
     ? {
         role,
-        nav_group:     meta.nav_group     ?? inferNavGroup(role),
+        nav_group: meta.nav_group ?? inferNavGroup(role),
         is_viewer_only: meta.is_viewer_only ?? true,
       }
-    : undefined
+    : undefined;
 
   function redirectTo(path: string) {
-    const url = new URL(path, request.url)
-    return NextResponse.redirect(url, { status: 303 })
+    const url = new URL(path, request.url);
+    return NextResponse.redirect(url, { status: 303 });
   }
 
   function redirectAndClearSession(path: string) {
-    const url = new URL(path, request.url)
-    const response = NextResponse.redirect(url, { status: 303 })
+    const url = new URL(path, request.url);
+    const response = NextResponse.redirect(url, { status: 303 });
 
     const namesToClear = new Set<string>([
-      ...request.cookies.getAll().map(c => c.name),
-      ...supabaseResponse.cookies.getAll().map(c => c.name),
-    ])
+      ...request.cookies.getAll().map((c) => c.name),
+      ...supabaseResponse.cookies.getAll().map((c) => c.name),
+    ]);
 
-    namesToClear.forEach(name => {
-      response.cookies.set(name, '', {
-        maxAge:   0,
-        path:     '/',
+    namesToClear.forEach((name) => {
+      response.cookies.set(name, "", {
+        maxAge: 0,
+        path: "/",
         httpOnly: true,
-        sameSite: 'lax',
-        secure:   process.env.NODE_ENV === 'production',
-      })
-    })
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+      });
+    });
 
-    return response
+    return response;
   }
 
   // ── Root ──────────────────────────────────────────────────────────────────
-  if (pathname === '/') {
+  if (pathname === "/") {
     return isLoggedIn && roleInfo
       ? redirectTo(getDefaultAdminRoute(roleInfo))
-      : redirectTo('/login')
+      : redirectTo("/login");
   }
 
   // ── Login page ────────────────────────────────────────────────────────────
-  if (pathname.startsWith('/login')) {
+  if (pathname.startsWith("/login")) {
     if (isLoggedIn && roleInfo) {
-      const isActive = meta.is_active ?? true
-      if (!isActive) return supabaseResponse
-      return redirectTo(getDefaultAdminRoute(roleInfo))
+      const isActive = meta.is_active ?? true;
+      if (!isActive) return supabaseResponse;
+      return redirectTo(getDefaultAdminRoute(roleInfo));
     }
-    return supabaseResponse
+    return supabaseResponse;
   }
 
   // ── Admin routes ──────────────────────────────────────────────────────────
-  if (pathname.startsWith('/admin')) {
+  if (pathname.startsWith("/admin")) {
     if (!isLoggedIn || !roleInfo) {
-      const loginUrl = new URL('/login', request.url)
-      loginUrl.searchParams.set('from', pathname)
-      return NextResponse.redirect(loginUrl, { status: 303 })
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("from", pathname);
+      return NextResponse.redirect(loginUrl, { status: 303 });
     }
 
-    const isActive = meta.is_active ?? true
+    const isActive = meta.is_active ?? true;
     if (!isActive) {
-      const loginUrl = new URL('/login', request.url)
-      loginUrl.searchParams.set('reason', 'account_disabled')
-      return redirectAndClearSession(loginUrl.pathname + loginUrl.search)
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("reason", "account_disabled");
+      return redirectAndClearSession(loginUrl.pathname + loginUrl.search);
     }
 
-    if (pathname === '/admin') {
-      return redirectTo(getDefaultAdminRoute(roleInfo))
+    if (pathname === "/admin") {
+      return redirectTo(getDefaultAdminRoute(roleInfo));
     }
 
     if (!isAllowedAdminPath(pathname, roleInfo)) {
-      return redirectTo(getDefaultAdminRoute(roleInfo))
+      return redirectTo(getDefaultAdminRoute(roleInfo));
     }
 
-    return supabaseResponse
+    return supabaseResponse;
   }
 
-  return supabaseResponse
+  return supabaseResponse;
 }
 
 // ── Fallback: infer nav_group from legacy hardcoded role names ────────────────
 // Only used if nav_group is missing from user_metadata (accounts created before
-// this fix). New accounts always have nav_group in user_metadata.
+// this fix, or before the 017 migration backfill runs). New accounts always
+// have nav_group in user_metadata.
 function inferNavGroup(role: string): string {
-  if (role === 'admin')               return 'admin'
-  if (role === 'DPDA' || role === 'DPDO') return 'dpda-dpdo'
-  return 'documents'
+  if (role === "admin") return "admin";
+  if (role === "DPDA" || role === "DPDO") return "dpda-dpdo";
+  if (role === "PD") return "pd";
+  return "documents";
 }
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
-}
+};

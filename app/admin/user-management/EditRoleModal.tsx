@@ -12,7 +12,8 @@ export function EditRoleModal({ role, onClose, onSuccess }: Props) {
   const [form, setForm] = useState({
     display_name: "",
     title: "",
-    nav_group: "documents" as "documents" | "admin" | "dpda-dpdo",
+    // FIX: nav_group now supports 'pd' — Provincial Director
+    nav_group: "documents" as "documents" | "admin" | "dpda-dpdo" | "pd",
     can_upload: true,
     is_viewer_only: true,
   });
@@ -117,7 +118,8 @@ export function EditRoleModal({ role, onClose, onSuccess }: Props) {
                   className={inputCls}
                 >
                   <option value="documents">Documents (P1–P10, etc.)</option>
-                  <option value="dpda-dpdo">DPDA/DPDO</option>
+                  <option value="dpda-dpdo">Deputy (DPDA / DPDO)</option>
+                  <option value="pd">PD (Provincial Director)</option>
                   <option value="admin">Admin-only</option>
                 </select>
               </div>

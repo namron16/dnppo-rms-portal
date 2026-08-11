@@ -69,6 +69,11 @@ const DPDA_NAV: NavItem[] = [
   { label: "Forwarded", icon: "📮", href: "/admin/inbox" },
 ];
 
+// PD (Provincial Director): view-only access to all documents, using the
+// SAME nav list and Forwarded Files page as a regular viewer account —
+// NOT the DPDA/DPDO-only inbox.
+const PD_NAV: NavItem[] = VIEWER_NAV;
+
 function NavLink({
   item,
   active,
@@ -119,7 +124,7 @@ export function Sidebar() {
   const [localDisplayName, setLocalDisplayName] = useState<string | null>(null);
   const [localAvatarUrl, setLocalAvatarUrl] = useState<string | null>(null);
 
-  // FIX: initialise navGroup directly from user.nav_group (JWT value set in
+  // Initialise navGroup directly from user.nav_group (JWT value set in
   // auth.tsx). This means the correct nav renders on the very first paint —
   // no flash of the wrong menu while the DB fetch is in flight.
   // The useEffect below still syncs from DB so any registry change is picked
@@ -268,6 +273,8 @@ export function Sidebar() {
   // Nav group flags — derived from navGroup state which is seeded from JWT
   const isAdmin = navGroup === "admin";
   const isDPDAorDPDO = navGroup === "dpda-dpdo";
+  // FIX: new PD nav_group — view-only docs + normal Forwarded Files page
+  const isPD = navGroup === "pd";
   const isViewerNo201 =
     navGroup === "documents" && user?.role !== "P1" && user?.role !== "P2";
   const isP1 = user?.role === "P1";
@@ -427,7 +434,7 @@ export function Sidebar() {
         )}
 
         {/* Documents nav */}
-        {!isAdmin && !isDPDAorDPDO && (
+        {!isAdmin && !isDPDAorDPDO && !isPD && (
           <div className="px-3 pt-5 pb-2">
             <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">
               Documents
@@ -473,6 +480,29 @@ export function Sidebar() {
                     }
                   />
                 ))}
+          </div>
+        )}
+
+        {/* PD nav — view-only documents + normal Forwarded Files page,
+            same route set as a viewer account (NOT the DPDA/DPDO inbox) */}
+        {isPD && (
+          <div className="px-3 pt-5 pb-2">
+            <div className="px-3 mb-3 text-[11px] font-bold tracking-wider uppercase text-gray-400">
+              Documents
+            </div>
+            {PD_NAV.map((item) => (
+              <NavLink
+                key={item.href}
+                item={item}
+                active={pathname === item.href || pendingHref === item.href}
+                onNavigate={setPendingHref}
+                badgeCount={
+                  item.href === "/admin/forwarded"
+                    ? unreadInboxCount
+                    : undefined
+                }
+              />
+            ))}
           </div>
         )}
 

@@ -1,4 +1,4 @@
-'use client'
+"use client";
 // app/admin/system-settings/page.tsx
 // Super-admin only. Controls app-wide settings — starting with session duration.
 //
@@ -9,131 +9,145 @@
 //        a) Updates system_settings
 //        b) Pulls back expires_at on ALL active sessions that now exceed the limit
 //      So users already logged in get kicked on their next 30-second poll.
+//
+// FIX (dale account bug): the final render guard used to check
+// `user?.role !== 'admin'` — a hardcoded literal role name. That blocked any
+// dynamically-created admin-group account (role name isn't literally "admin",
+// e.g. "dale") even though its nav_group was correctly "admin". Now checks
+// nav_group, consistent with backup-recovery/page.tsx and every route guard.
 
-import { useEffect, useState } from 'react'
-import { createClient }        from '@/lib/supabase/client'
-import { useAuth }             from '@/lib/auth'
-import { useRouter }           from 'next/navigation'
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/lib/auth";
+import { useRouter } from "next/navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface SystemSettings {
-  session_duration_hours: number
-  updated_at:             string
-  updated_by:             string
+  session_duration_hours: number;
+  updated_at: string;
+  updated_by: string;
 }
 
 // ── Duration options shown in the dropdown ────────────────────────────────────
 // Label is what the user sees; value is what gets saved to the DB.
 const DURATION_OPTIONS: { label: string; value: number }[] = [
-  { label: '4 hours',   value: 4   },
-  { label: '8 hours',   value: 8   },
-  { label: '12 hours',  value: 12  },
-  { label: '24 hours',  value: 24  },
-  { label: '48 hours',  value: 48  },
-  { label: '7 days',    value: 168 },
-]
+  { label: "4 hours", value: 4 },
+  { label: "8 hours", value: 8 },
+  { label: "12 hours", value: 12 },
+  { label: "24 hours", value: 24 },
+  { label: "48 hours", value: 48 },
+  { label: "7 days", value: 168 },
+];
 
 // ── Helper: readable date ─────────────────────────────────────────────────────
 function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleString('en-PH', {
-    year:   'numeric',
-    month:  'short',
-    day:    'numeric',
-    hour:   '2-digit',
-    minute: '2-digit',
-  })
+  return new Date(iso).toLocaleString("en-PH", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SystemSettingsPage() {
-  const { user }   = useAuth()
-  const router     = useRouter()
-  const supabase   = createClient()
+  const { user } = useAuth();
+  const router = useRouter();
+  const supabase = createClient();
 
-  const [settings,     setSettings]     = useState<SystemSettings | null>(null)
-  const [selected,     setSelected]     = useState<number>(24)
-  const [isFetching,   setIsFetching]   = useState(true)
-  const [isSaving,     setIsSaving]     = useState(false)
-  const [saveStatus,   setSaveStatus]   = useState<'idle' | 'success' | 'error'>('idle')
-  const [errorMessage, setErrorMessage] = useState('')
+  const [settings, setSettings] = useState<SystemSettings | null>(null);
+  const [selected, setSelected] = useState<number>(24);
+  const [isFetching, setIsFetching] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">(
+    "idle"
+  );
+  const [errorMessage, setErrorMessage] = useState("");
 
-  // ── Guard: only admin may see this page ────────────────────────────────────
+  // ── Guard: only nav_group='admin' accounts may see this page ──────────────
+  // FIX: was `user?.nav_group !== 'admin'` already here in the redirect effect —
+  // the bug was only in the final render guard below. Kept consistent.
   useEffect(() => {
-    if (user && user?.nav_group !== 'admin') {
-      router.replace('/admin/log-history')
+    if (user && user?.nav_group !== "admin") {
+      router.replace("/admin/log-history");
     }
-  }, [user, router])
+  }, [user, router]);
 
   // ── Fetch current settings on mount ───────────────────────────────────────
   useEffect(() => {
     async function load() {
-      setIsFetching(true)
+      setIsFetching(true);
       const { data, error } = await supabase
-        .from('system_settings')
-        .select('session_duration_hours, updated_at, updated_by')
-        .eq('id', 1)
-        .single()
+        .from("system_settings")
+        .select("session_duration_hours, updated_at, updated_by")
+        .eq("id", 1)
+        .single();
 
       if (!error && data) {
-        setSettings(data as SystemSettings)
-        setSelected(data.session_duration_hours)
+        setSettings(data as SystemSettings);
+        setSelected(data.session_duration_hours);
       }
-      setIsFetching(false)
+      setIsFetching(false);
     }
-    void load()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    void load();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Save handler ───────────────────────────────────────────────────────────
   async function handleSave() {
-    if (!user) return
-    setIsSaving(true)
-    setSaveStatus('idle')
-    setErrorMessage('')
+    if (!user) return;
+    setIsSaving(true);
+    setSaveStatus("idle");
+    setErrorMessage("");
 
     // Call the SECURITY DEFINER RPC which:
     //   • Updates system_settings
     //   • Shortens expires_at on any session that now exceeds the new limit
-    const { error } = await supabase.rpc('update_session_duration', {
-      p_hours:    selected,
+    const { error } = await supabase.rpc("update_session_duration", {
+      p_hours: selected,
       p_admin_by: user.role,
-    })
+    });
 
     if (error) {
-      setSaveStatus('error')
-      setErrorMessage(error.message)
-      setIsSaving(false)
-      return
+      setSaveStatus("error");
+      setErrorMessage(error.message);
+      setIsSaving(false);
+      return;
     }
 
     // Refresh local state so the "last updated" line reflects the change
     const { data } = await supabase
-      .from('system_settings')
-      .select('session_duration_hours, updated_at, updated_by')
-      .eq('id', 1)
-      .single()
+      .from("system_settings")
+      .select("session_duration_hours, updated_at, updated_by")
+      .eq("id", 1)
+      .single();
 
-    if (data) setSettings(data as SystemSettings)
-    setSaveStatus('success')
-    setIsSaving(false)
+    if (data) setSettings(data as SystemSettings);
+    setSaveStatus("success");
+    setIsSaving(false);
 
     // Auto-clear the success banner after 4 seconds
-    setTimeout(() => setSaveStatus('idle'), 4000)
+    setTimeout(() => setSaveStatus("idle"), 4000);
   }
 
-  const hasChanged = settings?.session_duration_hours !== selected
+  const hasChanged = settings?.session_duration_hours !== selected;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  if (user?.role !== 'admin') return null  // flash-of-content guard
+  // FIX: was `user?.role !== 'admin'` — blocked any admin-group account whose
+  // role name wasn't literally "admin" (e.g. a custom account like "dale").
+  // Now checks nav_group, the actual permission wristband.
+  if (user?.nav_group !== "admin") return null; // flash-of-content guard
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
-
       {/* ── Page header ── */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">System Settings</h1>
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+          System Settings
+        </h1>
         <p className="text-gray-500 text-sm mt-1">
           App-wide configuration. Changes take effect immediately for all users.
         </p>
@@ -141,21 +155,22 @@ export default function SystemSettingsPage() {
 
       {/* ── Session Duration card ── */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-
         {/* Card header */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
           <span className="text-xl">🔐</span>
           <div>
-            <h2 className="text-[15px] font-semibold text-gray-900">Session Duration</h2>
+            <h2 className="text-[15px] font-semibold text-gray-900">
+              Session Duration
+            </h2>
             <p className="text-[12px] text-gray-500 mt-0.5">
-              How long a user stays logged in before being automatically signed out.
+              How long a user stays logged in before being automatically signed
+              out.
             </p>
           </div>
         </div>
 
         {/* Card body */}
         <div className="px-6 py-5">
-
           {isFetching ? (
             <div className="flex items-center gap-2 text-gray-400 text-sm py-4">
               <span className="animate-spin">⏳</span> Loading current settings…
@@ -164,10 +179,11 @@ export default function SystemSettingsPage() {
             <>
               {/* Explanation box — plain-English for non-technical admins */}
               <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 mb-5 text-[13px] text-blue-700 leading-relaxed">
-                <strong>How this works:</strong> Every time someone logs in, they receive
-                a session that lasts this long. When you change the duration, anyone already
-                logged in whose session exceeds the new limit will be signed out automatically
-                within 30 seconds — no action needed on their end.
+                <strong>How this works:</strong> Every time someone logs in,
+                they receive a session that lasts this long. When you change the
+                duration, anyone already logged in whose session exceeds the new
+                limit will be signed out automatically within 30 seconds — no
+                action needed on their end.
               </div>
 
               {/* Dropdown */}
@@ -181,9 +197,9 @@ export default function SystemSettingsPage() {
                 <select
                   id="session-duration"
                   value={selected}
-                  onChange={e => {
-                    setSelected(Number(e.target.value))
-                    setSaveStatus('idle')
+                  onChange={(e) => {
+                    setSelected(Number(e.target.value));
+                    setSaveStatus("idle");
                   }}
                   className="
                     border border-gray-300 rounded-lg px-3 py-2 text-[13px] text-gray-900
@@ -191,7 +207,7 @@ export default function SystemSettingsPage() {
                     focus:border-blue-500 transition-colors cursor-pointer
                   "
                 >
-                  {DURATION_OPTIONS.map(opt => (
+                  {DURATION_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
@@ -202,35 +218,44 @@ export default function SystemSettingsPage() {
               {/* Last updated info */}
               {settings && (
                 <p className="text-[11px] text-gray-400 mb-5 ml-48">
-                  Last updated {fmtDate(settings.updated_at)} by <strong>{settings.updated_by}</strong>
+                  Last updated {fmtDate(settings.updated_at)} by{" "}
+                  <strong>{settings.updated_by}</strong>
                 </p>
               )}
 
               {/* Warning when shortening — clarifies the immediate-kick behaviour */}
-              {hasChanged && selected < (settings?.session_duration_hours ?? 24) && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 text-[12px] text-amber-800 flex items-start gap-2">
-                  <span className="mt-0.5 flex-shrink-0">⚠️</span>
-                  <span>
-                    You're <strong>reducing</strong> the session duration. Any user currently
-                    logged in for longer than <strong>{DURATION_OPTIONS.find(o => o.value === selected)?.label}</strong> will
-                    be signed out within 30 seconds of saving.
-                  </span>
-                </div>
-              )}
+              {hasChanged &&
+                selected < (settings?.session_duration_hours ?? 24) && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 text-[12px] text-amber-800 flex items-start gap-2">
+                    <span className="mt-0.5 flex-shrink-0">⚠️</span>
+                    <span>
+                      You're <strong>reducing</strong> the session duration. Any
+                      user currently logged in for longer than{" "}
+                      <strong>
+                        {
+                          DURATION_OPTIONS.find((o) => o.value === selected)
+                            ?.label
+                        }
+                      </strong>{" "}
+                      will be signed out within 30 seconds of saving.
+                    </span>
+                  </div>
+                )}
 
               {/* Success banner */}
-              {saveStatus === 'success' && (
+              {saveStatus === "success" && (
                 <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 mb-4 text-[13px] text-green-700 flex items-center gap-2">
                   <span>✅</span>
-                  Session duration updated. All active sessions have been adjusted.
+                  Session duration updated. All active sessions have been
+                  adjusted.
                 </div>
               )}
 
               {/* Error banner */}
-              {saveStatus === 'error' && (
+              {saveStatus === "error" && (
                 <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 mb-4 text-[13px] text-red-700 flex items-center gap-2">
                   <span>❌</span>
-                  {errorMessage || 'Something went wrong. Please try again.'}
+                  {errorMessage || "Something went wrong. Please try again."}
                 </div>
               )}
 
@@ -246,11 +271,13 @@ export default function SystemSettingsPage() {
                     focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1
                   "
                 >
-                  {isSaving ? 'Saving…' : 'Save Changes'}
+                  {isSaving ? "Saving…" : "Save Changes"}
                 </button>
 
                 {!hasChanged && (
-                  <span className="text-[12px] text-gray-400">No changes to save</span>
+                  <span className="text-[12px] text-gray-400">
+                    No changes to save
+                  </span>
                 )}
               </div>
             </>
@@ -262,7 +289,6 @@ export default function SystemSettingsPage() {
       <div className="mt-6 border border-dashed border-gray-200 rounded-xl px-6 py-8 text-center text-gray-400 text-[13px]">
         More system settings can be added here in future updates.
       </div>
-
     </div>
-  )
+  );
 }

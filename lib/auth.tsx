@@ -27,7 +27,7 @@ export interface AdminUser {
   initials: string;
   avatarColor: string;
   avatarUrl?: string;
-  // FIX: added so AuthGuard can build a RoleInfo object for route checks
+  // Added so AuthGuard can build a RoleInfo object for route checks
   nav_group: string;
   is_viewer_only: boolean;
   canUpload: boolean;
@@ -96,15 +96,19 @@ function permissionsForRole(role: AdminRole): AdminUser["permissions"] {
 
 function levelForRole(role: AdminRole): RoleLevel {
   if (role === "admin") return "super_admin";
+  if (role === "PD") return "head";
   if (role === "DPDA" || role === "DPDO") return "deputy";
   return "admin";
 }
 
 // FIX: infer nav_group from hardcoded role names as a fallback for accounts
 // that pre-date the dynamic role system (no nav_group in user_metadata yet).
+// 'PD' now maps to the dedicated 'pd' nav_group instead of falling through
+// to 'documents'.
 function inferNavGroup(role: AdminRole): string {
   if (role === "admin") return "admin";
   if (role === "DPDA" || role === "DPDO") return "dpda-dpdo";
+  if (role === "PD") return "pd";
   return "documents";
 }
 
@@ -118,7 +122,7 @@ interface ProfileRow {
   is_active: boolean;
 }
 
-// FIX: buildAdminUser now accepts user_metadata so it can read nav_group
+// buildAdminUser accepts user_metadata so it can read nav_group
 // and is_viewer_only from the JWT instead of guessing from the role name.
 function buildAdminUser(
   user: User,
@@ -166,7 +170,7 @@ async function fetchProfile(
       .maybeSingle();
 
     const canUpload = registryRow?.can_upload ?? true;
-    // FIX: pass user_metadata so nav_group is read from the JWT
+    // Pass user_metadata so nav_group is read from the JWT
     return buildAdminUser(
       user,
       data as ProfileRow,

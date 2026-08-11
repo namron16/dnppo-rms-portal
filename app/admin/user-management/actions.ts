@@ -12,9 +12,8 @@ function getAdminClient() {
 }
 
 // ── Guard: only accounts with nav_group='admin' in role_registry may call these
-// FIX: no longer checks role === 'admin' (hardcoded string).
-// Instead checks nav_group from role_registry, so any dynamically created
-// admin-group account (e.g. 'DN', 'SYSADMIN') can manage users too.
+// Checks nav_group from role_registry (not a hardcoded role name), so any
+// dynamically created admin-group account (e.g. 'DN', 'dale') can manage users.
 
 async function assertSuperAdmin() {
   const supabase = await createServerClient();
@@ -175,8 +174,11 @@ export async function adminUpdateEmail(
 }
 
 // ── Create a brand-new account ─────────────────────────────────────────────────
-// FIX: nav_group and is_viewer_only are written into user_metadata so the
+// nav_group and is_viewer_only are written into user_metadata so the
 // JWT carries them — the middleware can enforce routes without a DB call.
+//
+// FIX: nav_group now supports 'pd' (Provincial Director) alongside
+// 'documents' | 'admin' | 'dpda-dpdo'.
 
 export async function createAccount(input: {
   email: string;
@@ -186,7 +188,7 @@ export async function createAccount(input: {
   title: string;
   initials: string;
   avatar_color: string;
-  nav_group: "documents" | "admin" | "dpda-dpdo";
+  nav_group: "documents" | "admin" | "dpda-dpdo" | "pd";
   can_upload: boolean;
   is_viewer_only: boolean;
 }) {
@@ -323,12 +325,18 @@ export async function getRoleRegistryRow(role: string) {
 // currently on this role, so the JWT reflects the change without re-login
 // for is_viewer_only (can_upload is read fresh from role_registry on every
 // login via fetchProfile(), so no JWT patch needed for that one).
+//
+// FIX: nav_group now supports 'pd' (Provincial Director) alongside
+// 'documents' | 'admin' | 'dpda-dpdo'. NOTE: PD, DPDA, DPDO, admin remain
+// in PROTECTED_ROLES below and can't be edited through this action — the
+// PD nav_group upgrade for the existing PD role is handled via the
+// 017_pd_nav_group_and_admin_metadata_fix.sql migration instead.
 
 export async function updateRolePermissions(input: {
   role: string;
   display_name: string;
   title: string;
-  nav_group: "documents" | "admin" | "dpda-dpdo";
+  nav_group: "documents" | "admin" | "dpda-dpdo" | "pd";
   can_upload: boolean;
   is_viewer_only: boolean;
 }) {
