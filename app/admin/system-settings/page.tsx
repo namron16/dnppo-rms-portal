@@ -1,37 +1,24 @@
 "use client";
 // app/admin/system-settings/page.tsx
-// Super-admin only. Controls app-wide settings — starting with session duration.
-//
-// How it works:
-//   1. On load, fetch current session_duration_hours from system_settings.
-//   2. Admin picks a new duration from the dropdown and clicks Save.
-//   3. We call the update_session_duration RPC which:
-//        a) Updates system_settings
-//        b) Pulls back expires_at on ALL active sessions that now exceed the limit
-//      So users already logged in get kicked on their next 30-second poll.
-//
-// FIX (dale account bug): the final render guard used to check
-// `user?.role !== 'admin'` — a hardcoded literal role name. That blocked any
-// dynamically-created admin-group account (role name isn't literally "admin",
-// e.g. "dale") even though its nav_group was correctly "admin". Now checks
-// nav_group, consistent with backup-recovery/page.tsx and every route guard.
+// Super-admin only. App-wide configuration:
+//   1. Session Duration (existing)
+//   2. Security — password rules, account lockout, force-logout-everyone
+//   3. Data & Retention — log retention, default backup retention
+//   4. Organization Info — office name / letterhead
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import {
+  getSystemSettings,
+  saveSystemSettings,
+  updateSessionDurationSetting,
+  forceLogoutEveryone,
+  type FullSystemSettings,
+} from "./actions";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface SystemSettings {
-  session_duration_hours: number;
-  updated_at: string;
-  updated_by: string;
-}
-
-// ── Duration options shown in the dropdown ────────────────────────────────────
-// Label is what the user sees; value is what gets saved to the DB.
-const DURATION_OPTIONS: { label: string; value: number }[] = [
+const DURATION_OPTIONS = [
   { label: "4 hours", value: 4 },
   { label: "8 hours", value: 8 },
   { label: "12 hours", value: 12 },
@@ -40,7 +27,6 @@ const DURATION_OPTIONS: { label: string; value: number }[] = [
   { label: "7 days", value: 168 },
 ];
 
-// ── Helper: readable date ─────────────────────────────────────────────────────
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString("en-PH", {
     year: "numeric",
@@ -51,99 +37,183 @@ function fmtDate(iso: string): string {
   });
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
+function Card({
+  icon,
+  title,
+  description,
+  children,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-6">
+      <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+        <span className="text-xl">{icon}</span>
+        <div>
+          <h2 className="text-[15px] font-semibold text-gray-900">{title}</h2>
+          <p className="text-[12px] text-gray-500 mt-0.5">{description}</p>
+        </div>
+      </div>
+      <div className="px-6 py-5">{children}</div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-4 mb-4 last:mb-0">
+      <div className="w-52 flex-shrink-0 pt-2">
+        <label className="text-[13px] font-medium text-gray-700">{label}</label>
+        {hint && <p className="text-[11px] text-gray-400 mt-0.5">{hint}</p>}
+      </div>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+}
+
+const inputCls =
+  "border border-gray-300 rounded-lg px-3 py-2 text-[13px] text-gray-900 bg-white shadow-sm " +
+  "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors";
 
 export default function SystemSettingsPage() {
   const { user } = useAuth();
   const router = useRouter();
   const supabase = createClient();
 
-  const [settings, setSettings] = useState<SystemSettings | null>(null);
-  const [selected, setSelected] = useState<number>(24);
+  const [settings, setSettings] = useState<FullSystemSettings | null>(null);
+  const [form, setForm] = useState<FullSystemSettings | null>(null);
+  const [sessionHours, setSessionHours] = useState(24);
+
   const [isFetching, setIsFetching] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">(
-    "idle"
-  );
-  const [errorMessage, setErrorMessage] = useState("");
+  const [isForcingLogout, setIsForcingLogout] = useState(false);
+  const [confirmForceLogout, setConfirmForceLogout] = useState(false);
+  const [banner, setBanner] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
 
-  // ── Guard: only nav_group='admin' accounts may see this page ──────────────
-  // FIX: was `user?.nav_group !== 'admin'` already here in the redirect effect —
-  // the bug was only in the final render guard below. Kept consistent.
+  // Guard: only nav_group='admin' accounts may see this page
   useEffect(() => {
     if (user && user?.nav_group !== "admin") {
       router.replace("/admin/log-history");
     }
   }, [user, router]);
 
-  // ── Fetch current settings on mount ───────────────────────────────────────
   useEffect(() => {
     async function load() {
       setIsFetching(true);
-      const { data, error } = await supabase
-        .from("system_settings")
-        .select("session_duration_hours, updated_at, updated_by")
-        .eq("id", 1)
-        .single();
-
-      if (!error && data) {
-        setSettings(data as SystemSettings);
-        setSelected(data.session_duration_hours);
+      try {
+        const s = await getSystemSettings();
+        setSettings(s);
+        setForm(s);
+        setSessionHours(s.session_duration_hours);
+      } catch (e: unknown) {
+        setBanner({
+          type: "error",
+          text: e instanceof Error ? e.message : "Failed to load settings.",
+        });
+      } finally {
+        setIsFetching(false);
       }
-      setIsFetching(false);
     }
     void load();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── Save handler ───────────────────────────────────────────────────────────
-  async function handleSave() {
-    if (!user) return;
-    setIsSaving(true);
-    setSaveStatus("idle");
-    setErrorMessage("");
-
-    // Call the SECURITY DEFINER RPC which:
-    //   • Updates system_settings
-    //   • Shortens expires_at on any session that now exceeds the new limit
-    const { error } = await supabase.rpc("update_session_duration", {
-      p_hours: selected,
-      p_admin_by: user.role,
-    });
-
-    if (error) {
-      setSaveStatus("error");
-      setErrorMessage(error.message);
-      setIsSaving(false);
-      return;
-    }
-
-    // Refresh local state so the "last updated" line reflects the change
-    const { data } = await supabase
-      .from("system_settings")
-      .select("session_duration_hours, updated_at, updated_by")
-      .eq("id", 1)
-      .single();
-
-    if (data) setSettings(data as SystemSettings);
-    setSaveStatus("success");
-    setIsSaving(false);
-
-    // Auto-clear the success banner after 4 seconds
-    setTimeout(() => setSaveStatus("idle"), 4000);
+  function set<K extends keyof FullSystemSettings>(
+    key: K,
+    value: FullSystemSettings[K]
+  ) {
+    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
   }
 
-  const hasChanged = settings?.session_duration_hours !== selected;
+  const hasChanges =
+    !!form &&
+    !!settings &&
+    JSON.stringify({ ...form, updated_at: "", session_duration_hours: 0 }) !==
+      JSON.stringify({
+        ...settings,
+        updated_at: "",
+        session_duration_hours: 0,
+      });
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  const sessionChanged = sessionHours !== settings?.session_duration_hours;
 
-  // FIX: was `user?.role !== 'admin'` — blocked any admin-group account whose
-  // role name wasn't literally "admin" (e.g. a custom account like "dale").
-  // Now checks nav_group, the actual permission wristband.
-  if (user?.nav_group !== "admin") return null; // flash-of-content guard
+  async function handleSaveAll() {
+    if (!form) return;
+    setIsSaving(true);
+    setBanner(null);
+    try {
+      if (sessionChanged) {
+        await updateSessionDurationSetting(sessionHours);
+      }
+      await saveSystemSettings({
+        min_password_length: form.min_password_length,
+        require_uppercase: form.require_uppercase,
+        require_number: form.require_number,
+        require_symbol: form.require_symbol,
+        lockout_max_attempts: form.lockout_max_attempts,
+        lockout_duration_minutes: form.lockout_duration_minutes,
+        log_retention_days: form.log_retention_days,
+        default_backup_retention_days: form.default_backup_retention_days,
+        org_name: form.org_name,
+        org_letterhead_text: form.org_letterhead_text,
+      });
+
+      const fresh = await getSystemSettings();
+      setSettings(fresh);
+      setForm(fresh);
+      setSessionHours(fresh.session_duration_hours);
+      setBanner({
+        type: "success",
+        text: "Settings saved. Changes apply immediately.",
+      });
+    } catch (e: unknown) {
+      setBanner({
+        type: "error",
+        text: e instanceof Error ? e.message : "Save failed.",
+      });
+    } finally {
+      setIsSaving(false);
+      setTimeout(() => setBanner(null), 5000);
+    }
+  }
+
+  async function handleForceLogout() {
+    setIsForcingLogout(true);
+    try {
+      const { sessionsCleared } = await forceLogoutEveryone();
+      setBanner({
+        type: "success",
+        text: `Force-logged-out ${sessionsCleared} active session(s).`,
+      });
+    } catch (e: unknown) {
+      setBanner({
+        type: "error",
+        text: e instanceof Error ? e.message : "Force logout failed.",
+      });
+    } finally {
+      setIsForcingLogout(false);
+      setConfirmForceLogout(false);
+      setTimeout(() => setBanner(null), 5000);
+    }
+  }
+
+  if (user?.nav_group !== "admin") return null;
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
-      {/* ── Page header ── */}
+    <div className="p-6 max-w-3xl mx-auto pb-20">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
           System Settings
@@ -153,142 +223,255 @@ export default function SystemSettingsPage() {
         </p>
       </div>
 
-      {/* ── Session Duration card ── */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        {/* Card header */}
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
-          <span className="text-xl">🔐</span>
-          <div>
-            <h2 className="text-[15px] font-semibold text-gray-900">
-              Session Duration
-            </h2>
-            <p className="text-[12px] text-gray-500 mt-0.5">
-              How long a user stays logged in before being automatically signed
-              out.
-            </p>
-          </div>
+      {banner && (
+        <div
+          className={`rounded-lg px-4 py-3 mb-5 text-[13px] flex items-center gap-2 ${
+            banner.type === "success"
+              ? "bg-green-50 border border-green-200 text-green-700"
+              : "bg-red-50 border border-red-200 text-red-700"
+          }`}
+        >
+          <span>{banner.type === "success" ? "✅" : "❌"}</span>
+          {banner.text}
         </div>
+      )}
 
-        {/* Card body */}
-        <div className="px-6 py-5">
-          {isFetching ? (
-            <div className="flex items-center gap-2 text-gray-400 text-sm py-4">
-              <span className="animate-spin">⏳</span> Loading current settings…
-            </div>
-          ) : (
-            <>
-              {/* Explanation box — plain-English for non-technical admins */}
-              <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 mb-5 text-[13px] text-blue-700 leading-relaxed">
-                <strong>How this works:</strong> Every time someone logs in,
-                they receive a session that lasts this long. When you change the
-                duration, anyone already logged in whose session exceeds the new
-                limit will be signed out automatically within 30 seconds — no
-                action needed on their end.
+      {isFetching || !form ? (
+        <div className="flex items-center gap-2 text-gray-400 text-sm py-10 justify-center">
+          <span className="animate-spin">⏳</span> Loading current settings…
+        </div>
+      ) : (
+        <>
+          {/* ── Session Duration ── */}
+          <Card
+            icon="🔐"
+            title="Session Duration"
+            description="How long a user stays logged in before automatic sign-out."
+          >
+            <Field label="Max session length">
+              <select
+                value={sessionHours}
+                onChange={(e) => setSessionHours(Number(e.target.value))}
+                className={inputCls}
+              >
+                {DURATION_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </Card>
+
+          {/* ── Security ── */}
+          <Card
+            icon="🔒"
+            title="Security"
+            description="Password rules, account lockout, and emergency sign-out."
+          >
+            <Field label="Minimum password length" hint="8–64 characters">
+              <input
+                type="number"
+                min={8}
+                max={64}
+                value={form.min_password_length}
+                onChange={(e) =>
+                  set("min_password_length", Number(e.target.value))
+                }
+                className={`${inputCls} w-28`}
+              />
+            </Field>
+            <Field label="Complexity requirements">
+              <div className="flex flex-col gap-2">
+                {(
+                  [
+                    [
+                      "require_uppercase",
+                      "Require at least one uppercase letter",
+                    ],
+                    ["require_number", "Require at least one number"],
+                    ["require_symbol", "Require at least one symbol"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label
+                    key={key}
+                    className="flex items-center gap-2 text-[13px] text-gray-700 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={form[key]}
+                      onChange={(e) => set(key, e.target.checked)}
+                      className="w-4 h-4 rounded"
+                    />
+                    {label}
+                  </label>
+                ))}
               </div>
+            </Field>
+            <Field
+              label="Lockout after"
+              hint="Failed attempts before an account is temporarily locked"
+            >
+              <input
+                type="number"
+                min={3}
+                max={20}
+                value={form.lockout_max_attempts}
+                onChange={(e) =>
+                  set("lockout_max_attempts", Number(e.target.value))
+                }
+                className={`${inputCls} w-28`}
+              />{" "}
+              <span className="text-[12px] text-gray-500 ml-2">attempts</span>
+            </Field>
+            <Field
+              label="Lockout duration"
+              hint="How long the account stays locked"
+            >
+              <input
+                type="number"
+                min={1}
+                max={1440}
+                value={form.lockout_duration_minutes}
+                onChange={(e) =>
+                  set("lockout_duration_minutes", Number(e.target.value))
+                }
+                className={`${inputCls} w-28`}
+              />{" "}
+              <span className="text-[12px] text-gray-500 ml-2">minutes</span>
+            </Field>
 
-              {/* Dropdown */}
-              <div className="flex items-center gap-4 mb-2">
-                <label
-                  htmlFor="session-duration"
-                  className="text-[13px] font-medium text-gray-700 w-44 flex-shrink-0"
-                >
-                  Max session length
-                </label>
-                <select
-                  id="session-duration"
-                  value={selected}
-                  onChange={(e) => {
-                    setSelected(Number(e.target.value));
-                    setSaveStatus("idle");
-                  }}
-                  className="
-                    border border-gray-300 rounded-lg px-3 py-2 text-[13px] text-gray-900
-                    bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500
-                    focus:border-blue-500 transition-colors cursor-pointer
-                  "
-                >
-                  {DURATION_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Last updated info */}
-              {settings && (
-                <p className="text-[11px] text-gray-400 mb-5 ml-48">
-                  Last updated {fmtDate(settings.updated_at)} by{" "}
-                  <strong>{settings.updated_by}</strong>
-                </p>
-              )}
-
-              {/* Warning when shortening — clarifies the immediate-kick behaviour */}
-              {hasChanged &&
-                selected < (settings?.session_duration_hours ?? 24) && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 text-[12px] text-amber-800 flex items-start gap-2">
-                    <span className="mt-0.5 flex-shrink-0">⚠️</span>
-                    <span>
-                      You're <strong>reducing</strong> the session duration. Any
-                      user currently logged in for longer than{" "}
-                      <strong>
-                        {
-                          DURATION_OPTIONS.find((o) => o.value === selected)
-                            ?.label
-                        }
-                      </strong>{" "}
-                      will be signed out within 30 seconds of saving.
+            <div className="border-t border-gray-100 mt-5 pt-5">
+              <Field
+                label="Force logout everyone"
+                hint="Emergency use only — e.g. a leaked password."
+              >
+                {!confirmForceLogout ? (
+                  <button
+                    onClick={() => setConfirmForceLogout(true)}
+                    className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition"
+                  >
+                    🚨 Force Logout Everyone
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] text-red-700 font-medium">
+                      Sign out ALL active sessions right now?
                     </span>
+                    <button
+                      onClick={handleForceLogout}
+                      disabled={isForcingLogout}
+                      className="px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-60"
+                    >
+                      {isForcingLogout
+                        ? "Signing out…"
+                        : "Yes, sign everyone out"}
+                    </button>
+                    <button
+                      onClick={() => setConfirmForceLogout(false)}
+                      disabled={isForcingLogout}
+                      className="px-3 py-1.5 rounded-lg text-[12px] border border-gray-200 text-gray-600 hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
                   </div>
                 )}
+              </Field>
+            </div>
+          </Card>
 
-              {/* Success banner */}
-              {saveStatus === "success" && (
-                <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 mb-4 text-[13px] text-green-700 flex items-center gap-2">
-                  <span>✅</span>
-                  Session duration updated. All active sessions have been
-                  adjusted.
-                </div>
-              )}
+          {/* ── Data & Retention ── */}
+          <Card
+            icon="🗄️"
+            title="Data & Retention"
+            description="How long logs and backups are kept before automatic cleanup."
+          >
+            <Field
+              label="Log retention period"
+              hint="Activity logs older than this are deleted nightly."
+            >
+              <input
+                type="number"
+                min={7}
+                max={3650}
+                value={form.log_retention_days}
+                onChange={(e) =>
+                  set("log_retention_days", Number(e.target.value))
+                }
+                className={`${inputCls} w-28`}
+              />{" "}
+              <span className="text-[12px] text-gray-500 ml-2">days</span>
+            </Field>
+            <Field
+              label="Default backup retention"
+              hint="Used as the default when a module's backup schedule doesn't override it."
+            >
+              <input
+                type="number"
+                min={7}
+                max={3650}
+                value={form.default_backup_retention_days}
+                onChange={(e) =>
+                  set("default_backup_retention_days", Number(e.target.value))
+                }
+                className={`${inputCls} w-28`}
+              />{" "}
+              <span className="text-[12px] text-gray-500 ml-2">days</span>
+            </Field>
+          </Card>
 
-              {/* Error banner */}
-              {saveStatus === "error" && (
-                <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 mb-4 text-[13px] text-red-700 flex items-center gap-2">
-                  <span>❌</span>
-                  {errorMessage || "Something went wrong. Please try again."}
-                </div>
-              )}
+          {/* ── Organization Info ── */}
+          <Card
+            icon="🏢"
+            title="Organization Info"
+            description="Used on letterheads and headers of generated documents."
+          >
+            <Field label="Office name">
+              <input
+                type="text"
+                value={form.org_name}
+                onChange={(e) => set("org_name", e.target.value)}
+                className={`${inputCls} w-full`}
+                placeholder="e.g. Davao Norte Provincial Police Office"
+              />
+            </Field>
+            <Field
+              label="Letterhead text"
+              hint="Shown under the office name on generated documents."
+            >
+              <textarea
+                value={form.org_letterhead_text}
+                onChange={(e) => set("org_letterhead_text", e.target.value)}
+                rows={3}
+                className={`${inputCls} w-full`}
+                placeholder="e.g. Republic of the Philippines, Department of the Interior and Local Government..."
+              />
+            </Field>
+          </Card>
 
-              {/* Save button */}
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleSave}
-                  disabled={isSaving || !hasChanged}
-                  className="
-                    px-4 py-2 rounded-lg text-[13px] font-semibold transition-all
-                    bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98]
-                    disabled:opacity-40 disabled:cursor-not-allowed
-                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1
-                  "
-                >
-                  {isSaving ? "Saving…" : "Save Changes"}
-                </button>
-
-                {!hasChanged && (
-                  <span className="text-[12px] text-gray-400">
-                    No changes to save
-                  </span>
-                )}
-              </div>
-            </>
+          {/* ── Save bar ── */}
+          {settings && (
+            <p className="text-[11px] text-gray-400 mb-4">
+              Last updated {fmtDate(settings.updated_at)} by{" "}
+              <strong>{settings.updated_by}</strong>
+            </p>
           )}
-        </div>
-      </div>
-
-      {/* ── Placeholder for future settings cards ── */}
-      <div className="mt-6 border border-dashed border-gray-200 rounded-xl px-6 py-8 text-center text-gray-400 text-[13px]">
-        More system settings can be added here in future updates.
-      </div>
+          <div className="sticky bottom-4 flex items-center gap-3 bg-white border border-gray-200 rounded-xl shadow-md px-5 py-3">
+            <button
+              onClick={handleSaveAll}
+              disabled={isSaving || !(hasChanges || sessionChanged)}
+              className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              {isSaving ? "Saving…" : "Save Changes"}
+            </button>
+            {!(hasChanges || sessionChanged) && (
+              <span className="text-[12px] text-gray-400">
+                No changes to save
+              </span>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

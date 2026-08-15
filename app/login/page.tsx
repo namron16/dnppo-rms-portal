@@ -183,7 +183,52 @@ function LoginForm() {
     void loadRoles();
   }, []);
 
+  const [pwPolicy, setPwPolicy] = useState({
+    minLength: 12,
+    requireUppercase: false,
+    requireNumber: false,
+    requireSymbol: false,
+  });
+
+  useEffect(() => {
+    async function loadPolicy() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("system_settings")
+        .select(
+          "min_password_length, require_uppercase, require_number, require_symbol"
+        )
+        .eq("id", 1)
+        .single();
+      if (data) {
+        setPwPolicy({
+          minLength: data.min_password_length,
+          requireUppercase: data.require_uppercase,
+          requireNumber: data.require_number,
+          requireSymbol: data.require_symbol,
+        });
+      }
+    }
+    void loadPolicy();
+  }, []);
+
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function validatePasswordPolicy(pw: string): string | null {
+    if (pw.length < pwPolicy.minLength) {
+      return `Password must be at least ${pwPolicy.minLength} characters.`;
+    }
+    if (pwPolicy.requireUppercase && !/[A-Z]/.test(pw)) {
+      return "Password must include at least one uppercase letter.";
+    }
+    if (pwPolicy.requireNumber && !/[0-9]/.test(pw)) {
+      return "Password must include at least one number.";
+    }
+    if (pwPolicy.requireSymbol && !/[^A-Za-z0-9]/.test(pw)) {
+      return "Password must include at least one symbol.";
+    }
+    return null;
+  }
 
   function resetLoginFlow() {
     setView("login_otp_request");
@@ -388,8 +433,9 @@ function LoginForm() {
       setFpError("Please enter a new password.");
       return;
     }
-    if (newPw.length < 12) {
-      setFpError("Password must be at least 12 characters.");
+    const policyError = validatePasswordPolicy(newPw);
+    if (policyError) {
+      setFpError(policyError);
       return;
     }
     if (!confirmPw) {
@@ -968,7 +1014,21 @@ function LoginForm() {
                 Set New Password
               </h2>
               <p className="text-slate-500 text-xs">
-                Choose a strong password — minimum 12 characters.
+                Choose a strong password — minimum {pwPolicy.minLength}{" "}
+                characters
+                {pwPolicy.requireUppercase ||
+                pwPolicy.requireNumber ||
+                pwPolicy.requireSymbol
+                  ? ", including " +
+                    [
+                      pwPolicy.requireUppercase && "an uppercase letter",
+                      pwPolicy.requireNumber && "a number",
+                      pwPolicy.requireSymbol && "a symbol",
+                    ]
+                      .filter(Boolean)
+                      .join(", ")
+                  : ""}
+                .
               </p>
             </div>
             {fpError && errorBox(fpError)}

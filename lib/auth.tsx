@@ -304,6 +304,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [supabase]
   );
 
+  async function checkLockout(
+    supabase: ReturnType<typeof createClient>,
+    role: string
+  ): Promise<{
+    locked: boolean;
+    lockedUntil: string | null;
+    attemptsRemaining: number;
+  }> {
+    const { data, error } = await supabase.rpc("is_account_locked", {
+      p_role: role,
+    });
+    if (error || !data || data.length === 0) {
+      // Fail open on infra errors — don't block logins if the RPC itself is down
+      return { locked: false, lockedUntil: null, attemptsRemaining: 99 };
+    }
+    const row = data[0];
+    return {
+      locked: row.locked,
+      lockedUntil: row.locked_until,
+      attemptsRemaining: row.attempts_remaining,
+    };
+  }
+
   // ── Login ─────────────────────────────────────────────────────────────────
 
   const loginPassword = useCallback(
@@ -314,11 +337,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           error: "Account not found. Please check your role selection.",
         };
 
+      // ── Lockout check ────────────────────────────────────────────────────
+      const lockStatus = await checkLockout(supabase, role);
+      if (lockStatus.locked) {
+        const until = lockStatus.lockedUntil
+          ? new Date(lockStatus.lockedUntil).toLocaleTimeString("en-PH", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "shortly";
+        return {
+          error: `Too many failed attempts. This account is locked until ${until}.`,
+        };
+      }
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
-      if (error) return { error: error.message };
+      if (error) {
+        const { data: attemptData } = await supabase.rpc(
+          "record_failed_login",
+          { p_role: role }
+        );
+        const remaining = attemptData?.[0]?.attempts_remaining;
+        const lockedNow = attemptData?.[0]?.locked;
+        if (lockedNow) {
+          return {
+            error:
+              "Too many failed attempts. This account has been temporarily locked.",
+          };
+        }
+        return {
+          error:
+            remaining !== undefined
+              ? `${error.message} (${remaining} attempt${
+                  remaining === 1 ? "" : "s"
+                } remaining before lockout)`
+              : error.message,
+        };
+      }
       if (!data.user) return { error: "No user returned." };
 
       const adminUser = await fetchProfile(supabase, data.user);
@@ -350,6 +407,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       await setAdminActive(data.user.id);
+      await supabase.rpc("reset_failed_logins", { p_role: role });
       setCurrentLogger(adminUser.role, adminUser.id);
       await logLogin(adminUser.role);
 
