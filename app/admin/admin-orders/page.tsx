@@ -81,6 +81,8 @@ import type { AdminRole } from "@/lib/auth";
 import { canUploadDocuments } from "@/lib/permissions";
 import { useRealtimeSpecialOrders } from "@/hooks/useRealtimeSpecialOrders";
 import type { SpecialOrder } from "@/types";
+import { useCachedLoad } from "@/hooks/useCachedLoad";
+import { scopedKey } from "@/lib/pageCache";
 
 // ── Privileged roles that can see ALL orders regardless of uploader ──────────
 const PRIVILEGED_ROLES = ["admin", "DPDA", "DPDO"];
@@ -1444,7 +1446,6 @@ export default function AdminOrdersPage() {
   const [orders, setOrders] = useState<SOWithUrl[]>([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
-  const [loading, setLoading] = useState(true);
   const [attachmentsMap, setAttachmentsMap] = useState<
     Map<string, SOAttachment[]>
   >(new Map());
@@ -1493,65 +1494,65 @@ export default function AdminOrdersPage() {
   }, [currentEntry, attachmentsMap]);
 
   // Load — filter by uploaded_by unless user is privileged
-  useEffect(() => {
-    async function loadAll() {
-      if (!user) return;
-      try {
-        const [data, archived] = await Promise.all([
-          getSpecialOrders(),
-          getArchivedDocs(),
-        ]);
-        const archivedIds = new Set(
-          (archived ?? [])
-            .map((a: any) => String(a.id ?? ""))
-            .filter((id: string) => id.startsWith("arc-so-"))
-            .map((id: string) => id.replace("arc-so-", ""))
+  const { loading } = useCachedLoad<{
+    orders: SOWithUrl[];
+    attachments: SOAttachment[];
+  }>(
+    user ? scopedKey(user.id, "admin-orders") : null,
+    async () => {
+      const role = user!.role;
+      // orders, archive list and attachments all load at the same time
+      const [data, archived, attRes] = await Promise.all([
+        getSpecialOrders(),
+        getArchivedDocs("arc-so-"),
+        supabase
+          .from("special_order_attachments")
+          .select("*")
+          .order("created_at", { ascending: true }),
+      ]);
+
+      const archivedIds = new Set(
+        (archived ?? []).map((a: any) => String(a.id).replace("arc-so-", ""))
+      );
+      const orders = data.filter((o: SOWithUrl) => {
+        if (o.status === "ARCHIVED" || archivedIds.has(o.id)) return false;
+        return (
+          canSeeAllDocuments(role) || !o.uploaded_by || o.uploaded_by === role
         );
+      });
 
-        const activeOrders = data.filter((o: SOWithUrl) => {
-          if (o.status === "ARCHIVED" || archivedIds.has(o.id)) return false;
-          if (canSeeAllDocuments(user.role)) return true;
-          return !o.uploaded_by || o.uploaded_by === user.role;
-        });
+      if (attRes.error)
+        console.error("Failed to load attachments:", attRes.error.message);
+      const visible = new Set(orders.map((o: SOWithUrl) => o.id));
+      const attachments = (attRes.data ?? [])
+        .filter((r: any) => visible.has(r.special_order_id))
+        .map(normaliseAttachment);
 
-        setOrders(activeOrders);
+      return { orders, attachments };
+    },
+    ({ orders, attachments }) => {
+      setOrders(orders);
 
-        const allIds = activeOrders.map((o: SOWithUrl) => o.id);
-        if (allIds.length > 0) {
-          const { data: allAtts, error } = await supabase
-            .from("special_order_attachments")
-            .select("*")
-            .in("special_order_id", allIds)
-            .order("created_at", { ascending: true });
-
-          if (error) {
-            console.error("Failed to load attachments:", error.message);
-          } else {
-            const map = new Map<string, SOAttachment[]>();
-            for (const row of allAtts ?? []) {
-              const att = normaliseAttachment(row);
-              const key = att.parent_id ?? att.special_order_id;
-              const list = map.get(key) ?? [];
-              list.push(att);
-              map.set(key, list);
-            }
-            setAttachmentsMap(map);
-          }
-        }
-
-        if (activeOrders.length > 0) {
-          const first = activeOrders[0];
-          setSelectedOrder(first);
-          setNavStack([{ kind: "order", order: first }]);
-        }
-      } catch (err) {
-        console.error("loadAll error:", err);
-      } finally {
-        setLoading(false);
+      const map = new Map<string, SOAttachment[]>();
+      for (const att of attachments) {
+        const key = att.parent_id ?? att.special_order_id;
+        map.set(key, [...(map.get(key) ?? []), att]);
       }
+      setAttachmentsMap(map);
+
+      // keep the current selection / drill-down on background refresh
+      setSelectedOrder(
+        (prev) => orders.find((o) => o.id === prev?.id) ?? orders[0] ?? null
+      );
+      setNavStack((prev) =>
+        prev.length > 0
+          ? prev
+          : orders[0]
+          ? [{ kind: "order", order: orders[0] }]
+          : []
+      );
     }
-    loadAll();
-  }, [user]);
+  );
 
   function handleSelectOrder(order: SOWithUrl) {
     setSelectedOrder(order);

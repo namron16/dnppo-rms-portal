@@ -1,67 +1,59 @@
 // components/dpda-inbox/DPDAFilterBar.tsx
 // Filter, search, and sort controls for DPDA Inbox
 
-'use client'
+"use client";
 
-import React, { useState } from 'react'
 import {
-  Search,
-  Filter,
-  ChevronDown,
-  X,
-  ArrowUpDown,
-} from 'lucide-react'
+  fetchActiveRoles,
+  peekActiveRoles,
+  type ActiveRole,
+} from "@/lib/activeRoles";
+import { Search, Filter, ChevronDown, X, ArrowUpDown } from "lucide-react";
+import { useEffect, useState } from "react";
 
 interface DPDAFilterBarProps {
-  onSearch: (query: string) => void
-  onStatusChange: (status: string) => void
-  onSenderChange: (sender: string) => void
-  onPriorityChange: (priority: string) => void
-  onSortChange: (sort: string) => void
-  activeStatus: string
-  activeSender: string
-  activePriority: string
-  activeSort: string
+  onSearch: (query: string) => void;
+  onStatusChange: (status: string) => void;
+  onSenderChange: (sender: string) => void;
+  onPriorityChange: (priority: string) => void;
+  onSortChange: (sort: string) => void;
+  activeStatus: string;
+  activeSender: string;
+  activePriority: string;
+  activeSort: string;
 }
 
-const SENDERS = [
-  { value: 'all', label: 'All Senders' },
-  { value: 'P1', label: 'P1 - Records Officer' },
-  { value: 'P2', label: 'P2 - Admin Officer' },
-  { value: 'P3', label: 'P3 - Admin Officer' },
-  { value: 'P4', label: 'P4 - Admin Officer' },
-  { value: 'P5', label: 'P5 - Admin Officer' },
-  { value: 'P6', label: 'P6 - Admin Officer' },
-  { value: 'P7', label: 'P7 - Admin Officer' },
-  { value: 'P8', label: 'P8 - Admin Officer' },
-  { value: 'P9', label: 'P9 - Admin Officer' },
-  { value: 'P10', label: 'P10 - Admin Officer' },
-]
-
 const STATUS_OPTIONS = [
-  { value: 'all', label: 'All Status' },
-  { value: 'pending', label: 'Pending Review' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'disapproved', label: 'Disapproved' },
-  { value: 'returned_with_comments', label: 'Returned with Comments' },
-  { value: 'returned', label: 'Returned to Sender' },
-]
+  { value: "all", label: "All Status" },
+  { value: "pending", label: "Pending Review" },
+  { value: "approved", label: "Approved" },
+  { value: "disapproved", label: "Disapproved" },
+  { value: "returned_with_comments", label: "Returned with Comments" },
+  { value: "returned", label: "Returned to Sender" },
+];
 
 const PRIORITY_OPTIONS = [
-  { value: 'all', label: 'All Priorities' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'urgent', label: 'Urgent' },
-]
+  { value: "all", label: "All Priorities" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "urgent", label: "Urgent" },
+];
 
 const SORT_OPTIONS = [
-  { value: 'date-desc', label: 'Newest First' },
-  { value: 'date-asc', label: 'Oldest First' },
-  { value: 'priority-high', label: 'Highest Priority' },
-  { value: 'sender', label: 'By Sender' },
-]
-
+  { value: "date-desc", label: "Newest First" },
+  { value: "date-asc", label: "Oldest First" },
+  { value: "priority-high", label: "Highest Priority" },
+  { value: "sender", label: "By Sender" },
+];
+function toSenderOptions(roles: ActiveRole[]) {
+  return [
+    { value: "all", label: "All Senders" },
+    ...roles
+      .filter((r) => r.can_upload) // only accounts that can forward files
+      .map((r) => ({ value: r.role, label: `${r.role} - ${r.display_name}` })),
+  ];
+}
 export function DPDAFilterBar({
   onSearch,
   onStatusChange,
@@ -73,22 +65,39 @@ export function DPDAFilterBar({
   activePriority,
   activeSort,
 }: DPDAFilterBarProps) {
-  const [searchQuery, setSearchQuery] = useState('')
-  const [showMobileFilters, setShowMobileFilters] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [senders, setSenders] = useState(() =>
+    toSenderOptions(peekActiveRoles() ?? [])
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchActiveRoles()
+      .then((roles) => {
+        if (!cancelled) setSenders(toSenderOptions(roles));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSearchChange = (value: string) => {
-    setSearchQuery(value)
-    onSearch(value)
-  }
+    setSearchQuery(value);
+    onSearch(value);
+  };
 
   const hasActiveFilters =
-    activeStatus !== 'all' || activeSender !== 'all' || activePriority !== 'all'
+    activeStatus !== "all" ||
+    activeSender !== "all" ||
+    activePriority !== "all";
 
   const activeFilterCount = [
-    activeStatus !== 'all' ? 1 : 0,
-    activeSender !== 'all' ? 1 : 0,
-    activePriority !== 'all' ? 1 : 0,
-  ].reduce((a, b) => a + b, 0)
+    activeStatus !== "all" ? 1 : 0,
+    activeSender !== "all" ? 1 : 0,
+    activePriority !== "all" ? 1 : 0,
+  ].reduce((a, b) => a + b, 0);
 
   return (
     <div className="space-y-4">
@@ -108,7 +117,9 @@ export function DPDAFilterBar({
       <div className="hidden md:flex items-center gap-3 bg-white p-4 rounded-lg border border-slate-200">
         {/* Status Filter */}
         <div className="flex-1">
-          <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">Status</label>
+          <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">
+            Status
+          </label>
           <div className="relative">
             <select
               value={activeStatus}
@@ -127,14 +138,16 @@ export function DPDAFilterBar({
 
         {/* Sender Filter */}
         <div className="flex-1">
-          <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">Sender</label>
+          <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">
+            Sender
+          </label>
           <div className="relative">
             <select
               value={activeSender}
               onChange={(e) => onSenderChange(e.target.value)}
               className="w-full appearance-none px-3 py-2 pr-8 border border-slate-300 rounded-lg text-slate-900 font-medium cursor-pointer hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-sm"
             >
-              {SENDERS.map((option) => (
+              {senders.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -146,7 +159,9 @@ export function DPDAFilterBar({
 
         {/* Priority Filter */}
         <div className="flex-1">
-          <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">Priority</label>
+          <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">
+            Priority
+          </label>
           <div className="relative">
             <select
               value={activePriority}
@@ -165,7 +180,9 @@ export function DPDAFilterBar({
 
         {/* Sort Filter */}
         <div className="flex-1">
-          <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">Sort</label>
+          <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">
+            Sort
+          </label>
           <div className="relative">
             <select
               value={activeSort}
@@ -187,10 +204,10 @@ export function DPDAFilterBar({
           <div className="flex items-end">
             <button
               onClick={() => {
-                onStatusChange('all')
-                onSenderChange('all')
-                onPriorityChange('all')
-                onSortChange('date-desc')
+                onStatusChange("all");
+                onSenderChange("all");
+                onPriorityChange("all");
+                onSortChange("date-desc");
               }}
               className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors border border-slate-300 whitespace-nowrap"
             >
@@ -206,12 +223,12 @@ export function DPDAFilterBar({
           onClick={() => setShowMobileFilters(!showMobileFilters)}
           className={`w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-colors ${
             showMobileFilters || hasActiveFilters
-              ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+              ? "bg-blue-600 text-white hover:bg-blue-700"
+              : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
           }`}
         >
           <Filter className="w-4 h-4" />
-          {hasActiveFilters ? 'Filters Active' : 'Show Filters'}
+          {hasActiveFilters ? "Filters Active" : "Show Filters"}
           {activeFilterCount > 0 && (
             <span className="ml-1 px-2 py-0.5 text-xs bg-slate-900 text-white rounded-full font-bold">
               {activeFilterCount}
@@ -224,7 +241,9 @@ export function DPDAFilterBar({
           <div className="mt-3 p-4 bg-white rounded-lg border border-slate-200 space-y-4">
             {/* Status Filter */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Status</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">
+                Status
+              </label>
               <div className="relative">
                 <select
                   value={activeStatus}
@@ -243,14 +262,16 @@ export function DPDAFilterBar({
 
             {/* Sender Filter */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Sender</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">
+                Sender
+              </label>
               <div className="relative">
                 <select
                   value={activeSender}
                   onChange={(e) => onSenderChange(e.target.value)}
                   className="w-full appearance-none px-3 py-2 pr-8 border border-slate-300 rounded-lg text-slate-900 font-medium cursor-pointer hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
                 >
-                  {SENDERS.map((option) => (
+                  {senders.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
@@ -262,7 +283,9 @@ export function DPDAFilterBar({
 
             {/* Priority Filter */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Priority</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">
+                Priority
+              </label>
               <div className="relative">
                 <select
                   value={activePriority}
@@ -281,7 +304,9 @@ export function DPDAFilterBar({
 
             {/* Sort Filter */}
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Sort By</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">
+                Sort By
+              </label>
               <div className="relative">
                 <select
                   value={activeSort}
@@ -302,10 +327,10 @@ export function DPDAFilterBar({
             {hasActiveFilters && (
               <button
                 onClick={() => {
-                  onStatusChange('all')
-                  onSenderChange('all')
-                  onPriorityChange('all')
-                  onSortChange('date-desc')
+                  onStatusChange("all");
+                  onSenderChange("all");
+                  onPriorityChange("all");
+                  onSortChange("date-desc");
                 }}
                 className="w-full px-4 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors border border-slate-300"
               >
@@ -316,5 +341,5 @@ export function DPDAFilterBar({
         )}
       </div>
     </div>
-  )
+  );
 }

@@ -163,12 +163,6 @@ export function Sidebar() {
     setLocalAvatarUrl(null);
   }, [user?.avatarUrl]);
 
-  // Prefetch all routes
-  useEffect(() => {
-    const allRoutes = [...DOC_NAV, ...ADMIN_NAV].map((i) => i.href);
-    allRoutes.forEach((href) => router.prefetch(href));
-  }, [router]);
-
   useEffect(() => {
     setPendingHref(null);
   }, [pathname]);

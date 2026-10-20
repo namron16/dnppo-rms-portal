@@ -13,6 +13,9 @@ import { createClient } from "@/lib/supabase/client";
 import type { AdminRole } from "@/lib/auth";
 import type { LogActionType } from "@/lib/adminLogger";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { useAuth } from "@/lib/auth";
+import { useCachedLoad } from "@/hooks/useCachedLoad";
+import { scopedKey } from "@/lib/pageCache";
 
 // ── Types ─────────────────────────────────────
 interface AdminLog {
@@ -23,6 +26,22 @@ interface AdminLog {
   description: string;
   created_at: string;
 }
+const DEFAULT_ROLE_ORDER = [
+  "admin",
+  "PD",
+  "DPDA",
+  "DPDO",
+  "P1",
+  "P2",
+  "P3",
+  "P4",
+  "P5",
+  "P6",
+  "P7",
+  "P8",
+  "P9",
+  "P10",
+];
 
 const ROLE_META: Record<string, { color: string; name: string }> = {
   admin: { color: "#dc2626", name: "Super Admin" },
@@ -394,39 +413,34 @@ function StatsBar({ logs }: { logs: AdminLog[] }) {
 
 // ── Main Page ──────────────────────────────────
 export default function LogHistoryPage() {
+  const { user } = useAuth();
   const { toast } = useToast();
   const supabase = useMemo(() => createClient(), []);
 
   const [roleMeta, setRoleMeta] =
     useState<Record<string, { color: string; name: string }>>(ROLE_META);
   const [logs, setLogs] = useState<AdminLog[]>([]);
-  const [loading, setLoading] = useState(true);
   const [realtime, setRealtime] = useState(false);
 
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("ALL");
   const [actionFilter, setActionFilter] = useState("ALL");
   const [dateFilter, setDateFilter] = useState("");
+  const [roleOrder, setRoleOrder] = useState<string[]>(DEFAULT_ROLE_ORDER);
 
-  // ── Load logs ────────────────────────────────
-  const loadLogs = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("admin_logs")
-      .select("id, user_id, role, action, description, created_at")
-      .order("created_at", { ascending: false })
-      .limit(500);
-
-    if (error) {
-      console.error("Failed to load logs:", error.message);
-    } else {
-      setLogs((data ?? []) as AdminLog[]);
-    }
-    setLoading(false);
-  }, [supabase]);
-
-  useEffect(() => {
-    loadLogs();
-  }, [loadLogs]);
+  const { loading, reload: loadLogs } = useCachedLoad<AdminLog[]>(
+    user ? scopedKey(user.id, "log-history") : null,
+    async () => {
+      const { data, error } = await supabase
+        .from("admin_logs")
+        .select("id, user_id, role, action, description, created_at")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return (data ?? []) as AdminLog[];
+    },
+    setLogs
+  );
 
   // ── Real-time subscription ───────────────────
   useEffect(() => {
@@ -509,9 +523,13 @@ export default function LogHistoryPage() {
   }
 
   // ── Filter options ───────────────────────────
-  const allRoles = Object.keys(roleMeta).sort((a, b) =>
-    a.localeCompare(b, undefined, { numeric: true })
-  );
+  const allRoles = [
+    ...roleOrder,
+    // roles that only exist in old logs (deleted accounts) go last
+    ...Object.keys(roleMeta)
+      .filter((r) => !roleOrder.includes(r))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+  ];
   // Build action label options from ACTION_CONFIG.
   // Labels that are intentionally hidden from the filter dropdown:
   // they either share a label with another action (covered by that entry)
@@ -540,8 +558,11 @@ export default function LogHistoryPage() {
       .from("role_registry")
       .select("role, display_name")
       .eq("is_active", true)
+      .order("sort_order")
+      .order("created_at", { ascending: true })
       .then(({ data }) => {
         if (!data) return;
+        setRoleOrder(data.map((r) => r.role));
         setRoleMeta((prev) => {
           const merged = { ...prev };
           data.forEach((r, i) => {

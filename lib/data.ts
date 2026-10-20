@@ -823,11 +823,13 @@ export async function addActivityLog(log: ActivityLog): Promise<void> {
 /* ════════════════════════════════════════════
    ARCHIVED DOCUMENTS
 ════════════════════════════════════════════ */
-export async function getArchivedDocs() {
-  const { data, error } = await supabase
+export async function getArchivedDocs(idPrefix?: string) {
+  let q = supabase
     .from("archived_docs")
     .select("*")
     .order("created_at", { ascending: false });
+  if (idPrefix) q = q.like("id", `${idPrefix}%`);
+  const { data, error } = await q;
   if (error) {
     console.warn("Supabase unavailable (archived_docs):", error.message);
     return [];

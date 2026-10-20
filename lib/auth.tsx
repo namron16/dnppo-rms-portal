@@ -13,6 +13,7 @@ import { setCurrentLogger, logLogin } from "./adminLogger";
 import { clearSession, registerSession } from "./sessionLock";
 import { setAdminActive, setAdminInactive } from "./accessRequests";
 import type { Session, User } from "@supabase/supabase-js";
+import { clearPageCache } from "./pageCache";
 
 export type AdminRole = string;
 export type RoleLevel = "head" | "deputy" | "super_admin" | "viewer" | "admin";
@@ -256,11 +257,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
 
         if (s?.user) {
-          const { data: profileRow } = await supabase
-            .from("profiles")
-            .select("is_active")
-            .eq("id", s.user.id)
-            .single();
+          // run both lookups at the same time instead of one after the other
+          const [{ data: profileRow }, adminUser] = await Promise.all([
+            supabase
+              .from("profiles")
+              .select("is_active")
+              .eq("id", s.user.id)
+              .single(),
+            fetchProfile(supabase, s.user),
+          ]);
+          if (cancelled) return;
 
           if (profileRow?.is_active === false) {
             await safeSignOutGlobal(supabase);
@@ -268,11 +274,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
           }
 
-          const adminUser = await fetchProfile(supabase, s.user);
-          if (cancelled) return;
-
           if (adminUser) {
-            await setAdminActive(s.user.id);
+            void setAdminActive(s.user.id); // don't make the page wait for this
             setCurrentLogger(adminUser.role, adminUser.id);
             setUser(adminUser);
             setSession(s);
@@ -411,6 +414,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setCurrentLogger(adminUser.role, adminUser.id);
       await logLogin(adminUser.role);
 
+      clearPageCache();
       setUser(adminUser);
       setSession(data.session);
 
@@ -451,6 +455,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    clearPageCache();
     setCurrentLogger(null);
     setUser(null);
     setSession(null);

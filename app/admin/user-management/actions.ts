@@ -2,6 +2,7 @@
 "use server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { compareRoleOrder } from "@/lib/roleOrder";
 
 function getAdminClient() {
   return createAdminClient(
@@ -46,37 +47,52 @@ async function assertSuperAdmin() {
   if (!isAdmin) throw new Error("Forbidden");
 }
 
-// ── List ALL users ─────────────────────────────────────────────────────────────
-
 export async function listAllUsers() {
-  await assertSuperAdmin();
-
   const admin = getAdminClient();
-  const { data, error } = await admin.auth.admin.listUsers();
-  if (error) throw error;
 
-  const { data: profiles } = await admin
-    .from("profiles")
-    .select("id, role, display_name, is_active");
+  // Run the permission check and all three lookups at the same time
+  const [, authRes, profilesRes, registryRes] = await Promise.all([
+    assertSuperAdmin(),
+    admin.auth.admin.listUsers({ perPage: 1000 }), // default was only 50 users
+    admin
+      .from("profiles")
+      .select(
+        "id, role, display_name, is_active, initials, avatar_color, title"
+      ),
+    admin.from("role_registry").select("role, sort_order, created_at"),
+  ]);
+  if (authRes.error) throw authRes.error;
 
-  const profileMap = Object.fromEntries((profiles ?? []).map((p) => [p.id, p]));
+  const profileMap = Object.fromEntries(
+    (profilesRes.data ?? []).map((p) => [p.id, p])
+  );
+  const registryMap = new Map((registryRes.data ?? []).map((r) => [r.role, r]));
 
-  return data.users.map((u) => ({
-    id: u.id,
-    email: u.email,
-    lastSignIn: u.last_sign_in_at,
-    createdAt: u.created_at,
-    role: profileMap[u.id]?.role ?? "unknown",
-    displayName: profileMap[u.id]?.display_name ?? u.email,
-    isActive: profileMap[u.id]?.is_active ?? true,
-  }));
+  return authRes.data.users
+    .map((u) => {
+      const p = profileMap[u.id];
+      const r = p ? registryMap.get(p.role) : undefined;
+      const role = p?.role ?? "unknown";
+      return {
+        id: u.id,
+        email: u.email,
+        lastSignIn: u.last_sign_in_at,
+        createdAt: u.created_at,
+        role,
+        displayName: p?.display_name ?? u.email,
+        isActive: p?.is_active ?? true,
+        initials: p?.initials ?? role.slice(0, 2).toUpperCase(),
+        avatarColor: p?.avatar_color ?? "#6b7280",
+        title: p?.title ?? undefined,
+        sortOrder: r?.sort_order ?? undefined,
+        roleCreatedAt: r?.created_at ?? undefined,
+      };
+    })
+    .sort(compareRoleOrder);
 }
-
-// ── Fetch a single user by ID ──────────────────────────────────────────────────
 
 export async function getSingleUser(userId: string) {
   await assertSuperAdmin();
-
   const admin = getAdminClient();
 
   const { data: authUser, error } = await admin.auth.admin.getUserById(userId);
@@ -87,6 +103,14 @@ export async function getSingleUser(userId: string) {
     .select("id, role, display_name, is_active, initials, avatar_color, title")
     .eq("id", userId)
     .single();
+
+  const { data: reg } = profile?.role
+    ? await admin
+        .from("role_registry")
+        .select("sort_order, created_at")
+        .eq("role", profile.role)
+        .maybeSingle()
+    : { data: null };
 
   const u = authUser.user;
   return {
@@ -101,6 +125,8 @@ export async function getSingleUser(userId: string) {
       profile?.initials ?? (profile?.role ?? "UN").slice(0, 2).toUpperCase(),
     avatarColor: profile?.avatar_color ?? "#6b7280",
     title: profile?.title ?? undefined,
+    sortOrder: reg?.sort_order ?? undefined,
+    roleCreatedAt: reg?.created_at ?? undefined,
   };
 }
 

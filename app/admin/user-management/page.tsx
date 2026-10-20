@@ -23,6 +23,11 @@ import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { CreateAccountModal } from "./CreateAccountModal";
 import { DeleteAccountModal } from "./DeleteAccountModal";
 import { EditRoleModal } from "./EditRoleModal";
+import { useMemo } from "react"; // add to the existing react import
+import { useCachedLoad } from "@/hooks/useCachedLoad";
+import { scopedKey } from "@/lib/pageCache";
+import { compareRoleOrder } from "@/lib/roleOrder";
+import { invalidateActiveRolesCache } from "@/lib/activeRoles";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +43,8 @@ interface ManagedUser {
   initials: string;
   avatarColor: string;
   title?: string;
+  sortOrder?: number;
+  roleCreatedAt?: string;
 }
 
 // ─── Action Menu ──────────────────────────────────────────────────────────────
@@ -308,7 +315,6 @@ export default function UserManagementPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [users, setUsers] = useState<ManagedUser[]>([]);
-  const [loading, setLoading] = useState(true);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [editRoleTarget, setEditRoleTarget] = useState<string | null>(null);
   const [message, setMessage] = useState<{
@@ -336,7 +342,38 @@ export default function UserManagementPage() {
   const usersRef = useRef<ManagedUser[]>([]);
   usersRef.current = users;
 
-  const { query, setQuery, filtered } = useSearch(users, [
+  const { loading, reload } = useCachedLoad<ManagedUser[]>(
+    user ? scopedKey(user.id, "user-management") : null,
+    async () => {
+      const supabase = createClient();
+      // users (with profile + role order) and presence load at the same time
+      const [raw, presenceRes] = await Promise.all([
+        listAllUsers(),
+        supabase.from("admin_presence").select("user_id, is_active, last_seen"),
+      ]);
+      const presenceMap = new Map(
+        (presenceRes.data ?? []).map((p) => [p.user_id, p])
+      );
+      return raw.map((u) => {
+        const presence = presenceMap.get(u.id);
+        return {
+          ...u,
+          presenceActive: presence?.is_active ?? false,
+          lastSeen: presence?.last_seen ?? undefined,
+        } as ManagedUser;
+      });
+    },
+    setUsers,
+    (e) =>
+      setMessage({
+        type: "error",
+        text: e instanceof Error ? e.message : "Failed to load users.",
+      })
+  );
+
+  const sortedUsers = useMemo(() => [...users].sort(compareRoleOrder), [users]);
+
+  const { query, setQuery, filtered } = useSearch(sortedUsers, [
     "displayName",
     "role",
     "title",
@@ -360,62 +397,9 @@ export default function UserManagementPage() {
     });
   }, []);
 
-  // ── Initial load ──────────────────────────────────────────────────────────
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const raw = await listAllUsers();
-      const supabase = createClient();
-
-      const { data: presenceRows } = await supabase
-        .from("admin_presence")
-        .select("user_id, is_active, last_seen");
-
-      const presenceMap = new Map(
-        (presenceRows ?? []).map((p) => [p.user_id, p])
-      );
-
-      const { data: profileRows } = await supabase
-        .from("profiles")
-        .select("id, initials, avatar_color, title");
-
-      const profileMap = new Map((profileRows ?? []).map((p) => [p.id, p]));
-
-      setUsers(
-        (
-          raw as Omit<
-            ManagedUser,
-            "presenceActive" | "lastSeen" | "initials" | "avatarColor" | "title"
-          >[]
-        ).map((u) => {
-          const presence = presenceMap.get(u.id);
-          const profile = profileMap.get(u.id);
-          return {
-            ...u,
-            presenceActive: presence?.is_active ?? false,
-            lastSeen: presence?.last_seen ?? undefined,
-            initials: profile?.initials ?? u.role.slice(0, 2).toUpperCase(),
-            avatarColor: profile?.avatar_color ?? "#6b7280",
-            title: profile?.title ?? undefined,
-          };
-        })
-      );
-    } catch (e: unknown) {
-      setMessage({
-        type: "error",
-        text: e instanceof Error ? e.message : "Failed to load users.",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   // ── Realtime subscriptions ────────────────────────────────────────────────
 
   useEffect(() => {
-    void load();
-
     const supabase = createClient();
 
     const presenceChannel = supabase
@@ -505,7 +489,7 @@ export default function UserManagementPage() {
       supabase.removeChannel(presenceChannel);
       supabase.removeChannel(profileChannel);
     };
-  }, [load, patchUser, upsertUser]);
+  }, [patchUser, upsertUser]);
 
   // ── Toggle active / inactive ──────────────────────────────────────────────
 
@@ -985,7 +969,8 @@ export default function UserManagementPage() {
               type: "info",
               text: `Account "${role}" created successfully. Reloading…`,
             });
-            void load();
+            invalidateActiveRolesCache();
+            void reload();
           }}
         />
       )}
@@ -1003,7 +988,8 @@ export default function UserManagementPage() {
               type: "info",
               text: `Account "${deleteTarget.role}" deleted. Don't forget to remove ${deleteTarget.email} from Google Cloud Console → Test Users.`,
             });
-            void load();
+            invalidateActiveRolesCache();
+            void reload();
           }}
         />
       )}
@@ -1017,7 +1003,8 @@ export default function UserManagementPage() {
               type: "info",
               text: `Role "${editRoleTarget}" updated.`,
             });
-            void load();
+            invalidateActiveRolesCache();
+            void reload();
           }}
         />
       )}

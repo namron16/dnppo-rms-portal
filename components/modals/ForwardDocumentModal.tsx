@@ -43,6 +43,12 @@ import {
 import { AdminRole } from "@/lib/auth";
 import { useToast } from "@/components/ui/Toast";
 import { FileText, Users, AlertTriangle } from "lucide-react";
+import {
+  fetchActiveRoles,
+  peekActiveRoles,
+  invalidateActiveRolesCache,
+  type ActiveRole,
+} from "@/lib/activeRoles";
 
 interface ForwardDocumentModalProps {
   open: boolean;
@@ -62,60 +68,6 @@ interface ForwardDocumentModalProps {
   attachmentsMap: Map<string, any[]>;
   onForwarded: () => void;
   senderRole: AdminRole;
-}
-
-// ── Shape returned by the `get_active_roles` RPC ───────────────────────────
-// Matches the columns selected in supabase/migrations/011_dynamic_roles.sql.
-interface ActiveRole {
-  role: string;
-  display_name: string;
-}
-
-// ── FIX 4.6: module-level cache shared by every instance of this modal ────
-// Roles rarely change within a session, so we don't need a fresh network
-// round trip on every single "Forward" click.
-const ACTIVE_ROLES_CACHE_TTL_MS = 60_000; // 60s
-let activeRolesCache: { data: ActiveRole[]; fetchedAt: number } | null = null;
-let inFlightRolesRequest: Promise<ActiveRole[]> | null = null;
-
-/** Call this after creating/deactivating an account to force a fresh fetch. */
-export function invalidateActiveRolesCache() {
-  activeRolesCache = null;
-}
-
-async function fetchActiveRoles(): Promise<ActiveRole[]> {
-  const now = Date.now();
-
-  if (
-    activeRolesCache &&
-    now - activeRolesCache.fetchedAt < ACTIVE_ROLES_CACHE_TTL_MS
-  ) {
-    return activeRolesCache.data;
-  }
-
-  // Dedupe concurrent callers (e.g. two modals opened back-to-back) into a
-  // single in-flight request instead of firing multiple RPCs at once.
-  if (inFlightRolesRequest) return inFlightRolesRequest;
-
-  inFlightRolesRequest = (async () => {
-    const { createClient } = await import("@/lib/supabase/client");
-    const supabase = createClient();
-    const { data, error } = await supabase.rpc("get_active_roles");
-
-    if (error) {
-      throw error;
-    }
-
-    const roles = (data ?? []) as ActiveRole[];
-    activeRolesCache = { data: roles, fetchedAt: Date.now() };
-    return roles;
-  })();
-
-  try {
-    return await inFlightRolesRequest;
-  } finally {
-    inFlightRolesRequest = null;
-  }
 }
 
 // ── Helper: checks whether a string field actually has a usable value ─────────
@@ -141,30 +93,18 @@ export function ForwardDocumentModal({
 
   // ── Dynamic recipient list (FIX 4.6: cached, TTL-based) ────────────────
   const [allRoles, setAllRoles] = useState<ActiveRole[]>(
-    () => activeRolesCache?.data ?? []
+    () => peekActiveRoles() ?? []
   );
   const [rolesLoading, setRolesLoading] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-
     let cancelled = false;
-
-    // Serve from cache instantly if fresh — no spinner, no round trip.
-    if (
-      activeRolesCache &&
-      Date.now() - activeRolesCache.fetchedAt < ACTIVE_ROLES_CACHE_TTL_MS
-    ) {
-      setAllRoles(activeRolesCache.data);
-      return;
-    }
-
-    setRolesLoading(true);
+    if (!peekActiveRoles()) setRolesLoading(true); // spinner only if nothing to show
 
     fetchActiveRoles()
       .then((roles) => {
-        if (cancelled) return;
-        setAllRoles(roles);
+        if (!cancelled) setAllRoles(roles);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -175,8 +115,7 @@ export function ForwardDocumentModal({
         toast.error("Could not load the recipient list. Please try again.");
       })
       .finally(() => {
-        if (cancelled) return;
-        setRolesLoading(false);
+        if (!cancelled) setRolesLoading(false);
       });
 
     return () => {

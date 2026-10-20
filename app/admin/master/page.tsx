@@ -77,6 +77,8 @@ import {
 import { hasFullDocumentAccess, canUploadDocuments } from "@/lib/permissions";
 import type { MasterDocument, DocLevel } from "@/types";
 import type { AdminRole } from "@/lib/auth";
+import { useCachedLoad } from "@/hooks/useCachedLoad";
+import { scopedKey } from "@/lib/pageCache";
 
 type DocWithUrl = MasterDocument & { fileUrl?: string; uploaded_by?: string };
 type DocEnriched = DocWithUrl & {
@@ -129,6 +131,27 @@ function formatBytes(bytes: number | null): string {
 
 function displayName(att: DocAttachment): string {
   return att.title || att.file_name || att.gdrive_file_id;
+}
+async function fetchAttachments(docId: string): Promise<DocAttachment[]> {
+  const { data, error } = await supabase
+    .from("master_document_attachments")
+    .select("*")
+    .eq("master_document_id", docId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error("fetchAttachments error:", error.message);
+    return [];
+  }
+  return (data ?? []).map(normaliseAttachment);
+}
+
+function groupAttachments(atts: DocAttachment[]): Map<string, DocAttachment[]> {
+  const map = new Map<string, DocAttachment[]>();
+  for (const att of atts) {
+    const key = att.parent_id ?? att.master_document_id;
+    map.set(key, [...(map.get(key) ?? []), att]);
+  }
+  return map;
 }
 
 function normaliseAttachment(row: any): DocAttachment {
@@ -726,7 +749,6 @@ export default function MasterPage() {
   const [documents, setDocuments] = useState<DocEnriched[]>([]);
   const [query, setQuery] = useState("");
   const [levelFilter, setLevel] = useState<DocLevel | "ALL">("ALL");
-  const [loading, setLoading] = useState(true);
   const [attachmentsMap, setAttachmentsMap] = useState<
     Map<string, DocAttachment[]>
   >(new Map());
@@ -833,89 +855,72 @@ export default function MasterPage() {
     }
     return map;
   }
-  useEffect(() => {
-    async function loadAll() {
-      if (!user) return;
-      try {
-        const [docs, archived] = await Promise.all([
-          getMasterDocuments(),
-          getArchivedDocs(),
-        ]);
-        const archivedIds = new Set(
-          (archived ?? [])
-            .map((a: any) => String(a.id ?? ""))
-            .filter((id: string) => id.startsWith("arc-md-"))
-            .map((id: string) => id.replace("arc-md-", ""))
-        );
+  const { loading } = useCachedLoad<{
+    docs: DocEnriched[];
+    firstAtts: DocAttachment[];
+  }>(
+    user ? scopedKey(user.id, "master-docs") : null,
+    async () => {
+      const role = user!.role;
+      const [docs, archived] = await Promise.all([
+        getMasterDocuments(),
+        getArchivedDocs("arc-md-"),
+      ]);
+      const archivedIds = new Set(
+        (archived ?? []).map((a: any) => String(a.id).replace("arc-md-", ""))
+      );
+      const activeDocs = docs.filter(
+        (d: DocWithUrl) =>
+          !archivedIds.has(d.id) &&
+          (canSeeAllDocuments(role) || d.uploaded_by === role)
+      );
+      const first = activeDocs[0];
 
-        const activeDocs = docs.filter((d: DocWithUrl) => {
-          if (archivedIds.has(d.id)) return false;
-          if (canSeeAllDocuments(user.role)) return true;
-          return d.uploaded_by === user.role;
-        });
+      // approvals and the first document's attachments load at the same time
+      const [approvalsById, firstAtts] = await Promise.all([
+        getApprovalsBatch(activeDocs.map((d) => d.id)),
+        first
+          ? fetchAttachments(first.id)
+          : Promise.resolve([] as DocAttachment[]),
+      ]);
 
-        // FIX 4.1: one query for every document's approval, not one query per doc
-        const approvalsById = await getApprovalsBatch(
-          activeDocs.map((d) => d.id)
-        );
-        const enriched: DocEnriched[] = activeDocs.map((doc: DocWithUrl) => ({
-          ...doc,
-          approval: approvalsById.get(doc.id) ?? null,
-        }));
-        setDocuments(enriched);
-
-        // FIX 4.2: don't fetch attachments for every document up front —
-        // only prime the map with empty arrays; real data loads on selection.
-        const emptyMap = new Map<string, DocAttachment[]>();
-        for (const d of activeDocs) emptyMap.set(d.id, []);
-        setAttachmentsMap(emptyMap);
-
-        if (enriched.length > 0) {
-          setSelection(enriched[0]);
-          await loadAttachmentsFor(enriched[0].id);
+      return {
+        docs: activeDocs.map((d: DocWithUrl) => ({
+          ...d,
+          approval: approvalsById.get(d.id) ?? null,
+        })) as DocEnriched[],
+        firstAtts,
+      };
+    },
+    ({ docs, firstAtts }) => {
+      setDocuments(docs);
+      setAttachmentsMap((prev) => {
+        const next = new Map(prev);
+        for (const d of docs) if (!next.has(d.id)) next.set(d.id, []);
+        if (docs[0]) {
+          next.set(docs[0].id, []);
+          for (const [k, v] of groupAttachments(firstAtts)) next.set(k, v);
         }
-      } catch (err) {
-        console.error("loadAll error:", err);
-      } finally {
-        setLoading(false);
-      }
+        return next;
+      });
+      if (docs[0]) loadedAttachmentDocIds.current.add(docs[0].id);
+      // keep the user's current selection when this is a background refresh
+      setSelection(
+        (prev) => docs.find((d) => d.id === prev?.id) ?? docs[0] ?? null
+      );
     }
-    loadAll();
-  }, [user, isPrivileged, isP1]);
+  );
 
   // ── NEW: lazy-load attachments for one document, cache result ──────────────
   async function loadAttachmentsFor(docId: string) {
-    // Already loaded (and non-empty, or explicitly known empty) — skip refetch.
-    // We use a small "loaded" marker via a Set kept in a ref outside this
-    // snippet (see loadedAttachmentDocIds below) to avoid re-fetching on every click.
     if (loadedAttachmentDocIds.current.has(docId)) return;
-
-    const { data: atts, error } = await supabase
-      .from("master_document_attachments")
-      .select("*")
-      .eq("master_document_id", docId)
-      .order("created_at", { ascending: true });
-
-    if (error) {
-      console.error("loadAttachmentsFor error:", error.message);
-      return;
-    }
-
-    const map = new Map<string, DocAttachment[]>();
-    for (const row of atts ?? []) {
-      const att = normaliseAttachment(row);
-      const key = att.parent_id ?? att.master_document_id;
-      const list = map.get(key) ?? [];
-      list.push(att);
-      map.set(key, list);
-    }
-
+    const atts = await fetchAttachments(docId);
     setAttachmentsMap((prev) => {
       const next = new Map(prev);
-      for (const [k, v] of map) next.set(k, v);
+      next.set(docId, []);
+      for (const [k, v] of groupAttachments(atts)) next.set(k, v);
       return next;
     });
-
     loadedAttachmentDocIds.current.add(docId);
   }
 
