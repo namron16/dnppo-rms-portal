@@ -1195,16 +1195,19 @@ function EditProfileModal({
             >
               <option value="">None</option>
               {[
-                "P/Col.",
-                "P/Lt. Col.",
-                "P/Maj.",
-                "P/Capt.",
-                "P/Lt.",
-                "P/Insp.",
-                "PSMS",
-                "PMMS",
-                "PEMS",
-                "PNCOP",
+                "Police Colonel (PCOL)",
+                "Police Lieutenant Colonel (PLTCOL)",
+                "Police Major (PMAJ)",
+                "Police Captain ( PCPT)",
+                "Police Lietuenant (PLT)",
+                "Police Executive  Master Sergeant (PEMS)",
+                "Police Chief Master Sergeant (PCMS)",
+                "Police Senior Master Sergeant (PSMS)",
+                "Police Master Sergeant (PMSg)",
+                "Police Staff Sergeant (PSSg)",
+                "Police Corporal (PCpl)",
+                "Patrolman (Pat)",
+                "Non-Uniformed Personnel (NUP)",
               ].map((r) => (
                 <option key={r}>{r}</option>
               ))}
