@@ -574,7 +574,7 @@ export default function ForwardedInboxPage() {
 
       if (json.success) {
         fetchInbox();
-
+        if (json.warning) setSaveError({ id: doc.id, message: json.warning });
         if (json.attachmentErrors?.length) {
           setSaveError({
             id: doc.id,

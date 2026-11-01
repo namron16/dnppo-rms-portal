@@ -190,11 +190,25 @@ export function ForwardDocumentModal({
             result.count !== 1 ? "s" : ""
           }.`
         );
+        if (result.skipped?.length)
+          toast.warning(
+            `Skipped (already waiting in their inbox): ${result.skipped.join(
+              ", "
+            )}.`
+          );
+        if (result.errors.length)
+          toast.warning(
+            `Some failed: ${result.errors
+              .map((e) => `${e.recipient}: ${e.error}`)
+              .join("; ")}`
+          );
         onForwarded();
         onClose();
         setSelectedRecipients(new Set());
       } else {
-        toast.error("Forward failed. Please try again.");
+        toast.error(
+          result.errors[0]?.error ?? "Forward failed. Please try again."
+        );
       }
     } catch (err) {
       console.error("Forward error:", err);

@@ -34,9 +34,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { logSaveForwardedDocument, setCurrentLogger } from "@/lib/adminLogger";
 import { AdminRole } from "@/lib/auth";
-import { uploadViaPool } from "@/lib/gdrive-pool/migrate-modal";
+import { uploadViaPool, deleteViaPool } from "@/lib/gdrive-pool/migrate-modal";
 import { getDriveClient } from "@/lib/gdrive-pool";
 import { getPoolAccountsByUsername } from "@/lib/gdrive-pool/db";
+
 import type { DocumentCategory } from "@/lib/gdrive-pool/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -337,7 +338,9 @@ export async function POST(
 
   // ── Check recipient has a connected Drive account ──────────────────────────
   const recipientAccount = await getPoolAccountsByUsername(profile.role);
-  const recipientDriveAccounts = recipientAccount ? [recipientAccount] : [];
+  const recipientDriveAccounts = (
+    await getPoolAccountsByUsername(profile.role)
+  ).filter((a) => a.is_active);
 
   if (recipientDriveAccounts.length === 0) {
     return NextResponse.json(
@@ -406,176 +409,248 @@ export async function POST(
     ? fwd.mime_type
     : "application/octet-stream";
 
-  // ── Generate doc ID once, reuse in Drive upload and DB insert ──────────────
-  const newDocId = generateDocId(fwd.document_type);
+  const staleBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // a crashed claim expires
+  const { data: claimed, error: claimError } = await supabase
+    .from("forwarded_documents")
+    .update({ claimed_at: new Date().toISOString() })
+    .eq("id", fwd.id)
+    .eq("recipient_role", profile.role)
+    .eq("status", "pending")
+    .or(`claimed_at.is.null,claimed_at.lt.${staleBefore}`)
+    .select("id");
 
-  // ── Re-upload to recipient's Drive — FATAL on failure ─────────────────────
-  let driveResult: Awaited<ReturnType<typeof reuploadToRecipientDrive>>;
-
-  try {
-    driveResult = await reuploadToRecipientDrive({
-      gdriveFileId: fwd.gdrive_file_id,
-      poolAccountId: fwd.pool_account_id,
-      fileName: fwd.file_name ?? fwd.title,
-      mimeType,
-      fileSizeBytes: fwd.file_size_bytes ?? 0,
-      recipientRole: profile.role,
-      documentType: fwd.document_type,
-      newDocId,
-    });
-  } catch (err: any) {
-    console.error(
-      `[ForwardSave] Drive re-upload failed for forwarded doc ${id}:`,
-      err?.message
-    );
+  if (claimError) {
+    return NextResponse.json({ error: claimError.message }, { status: 500 });
+  }
+  if (!claimed || claimed.length === 0) {
     return NextResponse.json(
       {
         error:
-          `Failed to copy the file to your Google Drive: ${
-            err?.message ?? "Unknown error"
-          }. ` +
-          `Ensure your Drive account is connected and has available storage at /admin/gdrive.`,
-        code: "DRIVE_REUPLOAD_FAILED",
+          "This file is already being saved or was just saved. Refresh your inbox.",
       },
-      { status: 502 }
+      { status: 409 }
     );
   }
 
-  // ── Build and insert the document row ──────────────────────────────────────
-  const payload = buildDocumentPayload(
-    fwd,
-    profile.role,
-    newDocId,
-    driveResult
-  );
+  let pointOfNoReturn = false; // becomes true once the new document exists
 
-  const { data: newDoc, error: docError } = await supabase
-    .from(targetTable)
-    .insert(payload)
-    .select()
-    .single();
+  try {
+    const newDocId = generateDocId(fwd.document_type);
 
-  if (docError || !newDoc) {
-    console.error(
-      "[ForwardSave] Document insert error:",
-      docError?.message,
-      "Payload keys:",
-      Object.keys(payload)
+    let driveResult: Awaited<ReturnType<typeof reuploadToRecipientDrive>>;
+    try {
+      driveResult = await reuploadToRecipientDrive({
+        gdriveFileId: fwd.gdrive_file_id,
+        poolAccountId: fwd.pool_account_id,
+        fileName: fwd.file_name ?? fwd.title,
+        mimeType,
+        fileSizeBytes: fwd.file_size_bytes ?? 0,
+        recipientRole: profile.role,
+        documentType: fwd.document_type,
+        newDocId,
+      });
+    } catch (err: any) {
+      return NextResponse.json(
+        {
+          error: `Failed to copy the file to your Google Drive: ${
+            err?.message ?? "Unknown error"
+          }.`,
+          code: "DRIVE_REUPLOAD_FAILED",
+        },
+        { status: 502 }
+      );
+    }
+
+    const payload = buildDocumentPayload(
+      fwd,
+      profile.role,
+      newDocId,
+      driveResult
     );
-    console.error(
-      `[ForwardSave] ORPHANED Drive file: gdriveFileId=${driveResult.gdriveFileId}, ` +
-        `poolAccountId=${driveResult.poolAccountId}. Manual cleanup may be required.`
-    );
-    return NextResponse.json(
-      { error: docError?.message ?? "Failed to save document metadata" },
-      { status: 500 }
-    );
-  }
+    const { data: newDoc, error: docError } = await supabase
+      .from(targetTable)
+      .insert(payload)
+      .select()
+      .single();
 
-  // ── Re-upload and insert attachments ────────────────────────────────────────
-  // FIX 4.4 (admin-orders-audit.md): previously a strictly sequential
-  // `for...of` loop — each attachment's download+upload had to finish before
-  // the next started. Now runs with bounded concurrency so multiple
-  // attachments transfer at once, cutting wall-clock time roughly by a
-  // factor of ATTACHMENT_UPLOAD_CONCURRENCY for multi-attachment forwards.
-  const attachments = fwd.forwarded_attachments ?? [];
-  const attErrors: string[] = [];
+    if (docError || !newDoc) {
+      // UNDO: remove the Drive copy we just made, so no orphan is left
+      try {
+        await deleteViaPool({
+          gdriveFileId: driveResult.gdriveFileId,
+          poolAccountId: driveResult.poolAccountId,
+          recordId: driveResult.recordId,
+        });
+      } catch (cleanupErr: any) {
+        console.error(
+          `[ForwardSave] ORPHAN ${driveResult.gdriveFileId}:`,
+          cleanupErr?.message
+        );
+      }
+      return NextResponse.json(
+        { error: docError?.message ?? "Failed to save document metadata" },
+        { status: 500 }
+      );
+    }
 
-  if (attachments.length > 0 && attachmentTable && attachmentFk) {
-    await mapWithConcurrency(
-      attachments,
-      ATTACHMENT_UPLOAD_CONCURRENCY,
-      async (att: any) => {
-        // Skip attachments that also have missing Drive metadata
-        if (!hasValue(att.gdrive_file_id) || !hasValue(att.pool_account_id)) {
-          console.warn(
-            `[ForwardSave] Skipping attachment "${att.title}" — missing Drive metadata ` +
-              `(gdrive_file_id="${att.gdrive_file_id}", pool_account_id="${att.pool_account_id}")`
-          );
-          attErrors.push(`"${att.title}": missing Drive metadata (skipped)`);
-          return;
+    pointOfNoReturn = true; // the document exists now, so never release the claim
+
+    // ── Attachments: copied level by level so nested files keep their parent ──
+    const attErrors: string[] = [];
+    try {
+      const attachments: any[] = fwd.forwarded_attachments ?? [];
+
+      if (attachments.length > 0 && attachmentTable && attachmentFk) {
+        const idMap = new Map<string, string>(); // sender's attachment id → new id
+        const byDepth = new Map<number, any[]>();
+        for (const a of attachments) {
+          const d = a.depth ?? 0;
+          byDepth.set(d, [...(byDepth.get(d) ?? []), a]);
         }
 
-        const attMimeType = hasValue(att.mime_type)
-          ? att.mime_type
-          : "application/octet-stream";
+        for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
+          await mapWithConcurrency(
+            byDepth.get(depth)!,
+            ATTACHMENT_UPLOAD_CONCURRENCY,
+            async (att: any) => {
+              if (
+                !hasValue(att.gdrive_file_id) ||
+                !hasValue(att.pool_account_id)
+              ) {
+                attErrors.push(
+                  `"${att.title}": missing Drive metadata (skipped)`
+                );
+                return;
+              }
 
-        let attDriveResult: Awaited<
-          ReturnType<typeof reuploadToRecipientDrive>
-        > | null = null;
+              let newParentId: string | null = null;
+              if (att.parent_attachment_id) {
+                newParentId = idMap.get(att.parent_attachment_id) ?? null;
+                if (!newParentId) {
+                  attErrors.push(
+                    `"${att.title}": skipped because its parent file was not copied`
+                  );
+                  return;
+                }
+              }
 
-        try {
-          attDriveResult = await reuploadToRecipientDrive({
-            gdriveFileId: att.gdrive_file_id,
-            poolAccountId: att.pool_account_id,
-            fileName: att.file_name ?? att.title,
-            mimeType: attMimeType,
-            fileSizeBytes: att.file_size_bytes ?? 0,
-            recipientRole: profile.role,
-            documentType: fwd.document_type,
-            newDocId: newDoc.id,
-          });
-        } catch (err: any) {
-          console.error(
-            `[ForwardSave] Attachment re-upload failed for "${att.title}":`,
-            err?.message
-          );
-          attErrors.push(
-            `"${att.title}": Drive upload failed — ${err?.message}`
-          );
-          return;
-        }
+              const attMimeType = hasValue(att.mime_type)
+                ? att.mime_type
+                : "application/octet-stream";
+              let attDriveResult: Awaited<
+                ReturnType<typeof reuploadToRecipientDrive>
+              > | null = null;
+              try {
+                attDriveResult = await reuploadToRecipientDrive({
+                  gdriveFileId: att.gdrive_file_id,
+                  poolAccountId: att.pool_account_id,
+                  fileName: att.file_name ?? att.title,
+                  mimeType: attMimeType,
+                  fileSizeBytes: att.file_size_bytes ?? 0,
+                  recipientRole: profile.role,
+                  documentType: fwd.document_type,
+                  newDocId: newDoc.id,
+                });
+              } catch (err: any) {
+                attErrors.push(
+                  `"${att.title}": Drive upload failed — ${err?.message}`
+                );
+                return;
+              }
 
-        const { error: attError } = await supabase
-          .from(attachmentTable)
-          .insert({
-            [attachmentFk]: newDoc.id,
-            title: att.title,
-            file_name: att.file_name ?? null,
-            file_size_bytes: attDriveResult.sizeBytes,
-            mime_type: attMimeType,
-            gdrive_file_id: attDriveResult.gdriveFileId,
-            gdrive_url: attDriveResult.fileUrl,
-            pool_account_id: attDriveResult.poolAccountId,
-            parent_id: att.parent_attachment_id ?? null,
-            depth: att.depth ?? 0,
-          });
+              const { data: insertedAtt, error: attError } = await supabase
+                .from(attachmentTable)
+                .insert({
+                  [attachmentFk]: newDoc.id,
+                  title: att.title,
+                  file_name: att.file_name ?? null,
+                  file_size_bytes: attDriveResult.sizeBytes,
+                  mime_type: attMimeType,
+                  gdrive_file_id: attDriveResult.gdriveFileId,
+                  gdrive_url: attDriveResult.fileUrl,
+                  pool_account_id: attDriveResult.poolAccountId,
+                  parent_id: newParentId,
+                  depth: att.depth ?? 0,
+                })
+                .select("id")
+                .single();
 
-        if (attError) {
-          console.error(
-            "[ForwardSave] Attachment DB insert error (non-fatal):",
-            attError.message
-          );
-          attErrors.push(
-            `"${att.title}": DB insert failed — ${attError.message}`
+              if (attError || !insertedAtt) {
+                // UNDO this one Drive copy so no orphan file is left behind
+                try {
+                  await deleteViaPool({
+                    gdriveFileId: attDriveResult.gdriveFileId,
+                    poolAccountId: attDriveResult.poolAccountId,
+                    recordId: attDriveResult.recordId,
+                  });
+                } catch {
+                  /* logged by the gateway */
+                }
+                attErrors.push(
+                  `"${att.title}": DB insert failed — ${attError?.message}`
+                );
+                return;
+              }
+
+              if (att.original_attachment_id)
+                idMap.set(att.original_attachment_id, insertedAtt.id);
+            }
           );
         }
       }
-    );
+    } catch (attErr: any) {
+      attErrors.push(`Attachments: ${attErr?.message ?? "unexpected error"}`);
+    }
+
+    // ── Mark as saved (3 tries) and clear the claim ───────────────────────────
+    let marked = false;
+    for (let attempt = 1; attempt <= 3 && !marked; attempt++) {
+      const { error: updateError } = await supabase
+        .from("forwarded_documents")
+        .update({
+          status: "saved",
+          saved_at: new Date().toISOString(),
+          saved_doc_id: newDoc.id,
+          claimed_at: null,
+        })
+        .eq("id", fwd.id)
+        .eq("status", "pending");
+      if (!updateError) marked = true;
+      else {
+        console.error(
+          `[ForwardSave] mark-saved attempt ${attempt} failed:`,
+          updateError.message
+        );
+        await new Promise((r) => setTimeout(r, 300 * attempt));
+      }
+    }
+
+    try {
+      await logSaveForwardedDocument(fwd.title, fwd.sender_role, targetTable);
+    } catch {
+      /* never block */
+    }
+
+    return NextResponse.json({
+      success: true,
+      savedDocId: newDoc.id,
+      table: targetTable,
+      driveReupload: "success",
+      recipientDriveId: driveResult.gdriveFileId,
+      attachmentErrors: attErrors.length > 0 ? attErrors : undefined,
+      warning: marked
+        ? undefined
+        : "The file was saved, but its inbox entry could not be updated. Do NOT save it again. Refresh your inbox.",
+    });
+  } finally {
+    // Failed BEFORE the document was created → let the user try again.
+    if (!pointOfNoReturn) {
+      await supabase
+        .from("forwarded_documents")
+        .update({ claimed_at: null })
+        .eq("id", fwd.id)
+        .eq("recipient_role", profile.role)
+        .eq("status", "pending");
+    }
   }
-
-  // ── Mark forwarded record as saved ──────────────────────────────────────────
-  const { error: updateError } = await supabase
-    .from("forwarded_documents")
-    .update({
-      status: "saved",
-      saved_at: new Date().toISOString(),
-      saved_doc_id: newDoc.id,
-    })
-    .eq("id", fwd.id);
-
-  if (updateError) {
-    console.error("[ForwardSave] Status update error:", updateError.message);
-  }
-
-  await logSaveForwardedDocument(fwd.title, fwd.sender_role, targetTable);
-
-  return NextResponse.json({
-    success: true,
-    savedDocId: newDoc.id,
-    table: targetTable,
-    driveReupload: "success",
-    recipientDriveId: driveResult.gdriveFileId,
-    attachmentErrors: attErrors.length > 0 ? attErrors : undefined,
-  });
 }
