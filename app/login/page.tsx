@@ -131,7 +131,13 @@ function LoginForm() {
     { id: string; label: string }[]
   >([]);
 
-  const { loginPassword, sendPasswordResetOTP, verifyOTPAndReset } = useAuth();
+  const {
+    verifyPassword,
+    commitLogin,
+    abortLogin,
+    sendPasswordResetOTP,
+    verifyOTPAndReset,
+  } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const reason = searchParams.get("reason");
@@ -332,34 +338,29 @@ function LoginForm() {
         setLoginError("Please enter your password.");
         return;
       }
-
       setLoading(true);
 
-      // 3a. Verify password — loginPassword signs in via Supabase and sets
-      //     the user in AuthContext only if both checks pass (see step 3b).
-      //     We temporarily intercept by checking error first.
-      const { error: pwError } = await loginPassword(roleId, password);
+      // A. Check password (nothing is committed yet)
+      const { error: pwError } = await verifyPassword(roleId, password);
       if (pwError) {
         setLoading(false);
         setLoginError(
-          pwError.toLowerCase().includes("disabled")
+          pwError.toLowerCase().includes("disabled") ||
+            pwError.toLowerCase().includes("locked")
             ? pwError
             : "Invalid credentials. Please check your password."
         );
         return;
       }
 
-      // 3b. Verify OTP — now that password is confirmed, verify the code the
-      //     user entered in step 2. We use verifyOTPAndReset's internal path
-      //     but we need direct supabase access here for type:'email' verify.
-      //     Re-resolve email from role via the same RPC used by auth.tsx.
+      // B. Check the 6-digit code
       const supabase = createClient();
       const { data: emailData } = await supabase.rpc("get_email_by_role", {
         p_role: roleId,
       });
       const resolvedEmail = emailData as string | null;
-
       if (!resolvedEmail) {
+        await abortLogin(roleId);
         setLoading(false);
         setLoginError("Could not verify identity. Please restart the sign-in.");
         return;
@@ -371,27 +372,45 @@ function LoginForm() {
         type: "email",
       });
 
-      setLoading(false);
-
       if (otpError) {
-        // OTP failed — sign out the password session so the user isn't
-        // partially authenticated, then send them back to re-enter the code.
-        await supabase.auth.signOut({ scope: "local" });
+        const { locked } = await abortLogin(roleId, true); // wrong code counts as a failed attempt
         setOtpCode("");
+        setLoading(false);
         setView("login_otp_verify");
+        if (locked) {
+          setLoginError(
+            "Too many failed attempts. This account is temporarily locked."
+          );
+          return;
+        }
+        const { error: resendError } = await sendPasswordResetOTP(roleId);
         setLoginError(
-          "Incorrect or expired code. A new code has been sent — please check your email."
+          resendError
+            ? "Incorrect or expired code. We couldn't send a new one yet. Wait a minute, then tap “Resend code”."
+            : "Incorrect or expired code. A new code has been sent. Please check your email."
         );
-        // Re-send a fresh code so they're not stuck with an expired one
-        void sendPasswordResetOTP(roleId);
         return;
       }
 
-      // Both factors passed — loginPassword already committed the session to
-      // AuthContext, so we can redirect now.
+      // C. Both checks passed, so commit the login now
+      const { error: commitError } = await commitLogin(roleId);
+      setLoading(false);
+      if (commitError) {
+        setLoginError(commitError);
+        return;
+      }
       router.replace(getDefaultAdminRoute(roleId as SessionRole));
     },
-    [roleId, password, otpCode, loginPassword, sendPasswordResetOTP, router]
+    [
+      roleId,
+      password,
+      otpCode,
+      verifyPassword,
+      abortLogin,
+      commitLogin,
+      sendPasswordResetOTP,
+      router,
+    ]
   );
 
   // ── Forgot password handlers (unchanged logic) ────────────────────────────
@@ -455,6 +474,8 @@ function LoginForm() {
     setLoading(false);
     if (error) {
       setFpError(error);
+      setFpOtpCode("");
+      setView("forgot_otp"); // the old code is used up
       return;
     }
     resetLoginFlow();

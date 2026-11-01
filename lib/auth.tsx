@@ -7,6 +7,7 @@ import React, {
   useState,
   useCallback,
   useEffect,
+  useRef,
 } from "react";
 import { createClient } from "./supabase/client";
 import { setCurrentLogger, logLogin } from "./adminLogger";
@@ -216,10 +217,15 @@ interface AuthContextValue {
   user: AdminUser | null;
   session: Session | null;
   isLoading: boolean;
-  loginPassword: (
+  verifyPassword: (
     role: string,
     password: string
   ) => Promise<{ error: string | null }>;
+  commitLogin: (role: string) => Promise<{ error: string | null }>;
+  abortLogin: (
+    role: string,
+    countAsFailure?: boolean
+  ) => Promise<{ locked: boolean }>;
   logout: () => Promise<void>;
   changePassword: (
     current: string,
@@ -243,6 +249,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AdminUser | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const pendingLoginRef = useRef<AdminUser | null>(null);
 
   // ── On mount: restore existing session ───────────────────────────────────
 
@@ -332,8 +339,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // ── Login ─────────────────────────────────────────────────────────────────
 
-  const loginPassword = useCallback(
+  const verifyPassword = useCallback(
     async (role: string, password: string) => {
+      pendingLoginRef.current = null;
       const email = await resolveEmailByRole(role);
       if (!email)
         return {
@@ -382,10 +390,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!data.user) return { error: "No user returned." };
 
       const adminUser = await fetchProfile(supabase, data.user);
-      if (!adminUser)
+      if (!adminUser) {
+        await safeSignOutLocal(supabase);
         return {
           error: "Account profile not found. Contact your administrator.",
         };
+      }
 
       const { data: profileRow } = await supabase
         .from("profiles")
@@ -400,24 +410,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      try {
-        await registerSession(adminUser.role, adminUser.id);
-      } catch {
+      if (profileRow?.is_active === false) {
         await safeSignOutGlobal(supabase);
         return {
-          error: "Could not establish a session lock. Please try again.",
+          error: "Your account has been disabled. Contact your administrator.",
         };
       }
 
-      await setAdminActive(data.user.id);
-      await supabase.rpc("reset_failed_logins", { p_role: role });
-      setCurrentLogger(adminUser.role, adminUser.id);
-      await logLogin(adminUser.role);
-
-      clearPageCache();
-      setUser(adminUser);
-      setSession(data.session);
-
+      pendingLoginRef.current = adminUser;
       return { error: null };
     },
     [supabase, resolveEmailByRole]
@@ -545,6 +545,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     },
     [supabase, resolveEmailByRole]
   );
+  const commitLogin = useCallback(
+    async (role: string) => {
+      const adminUser = pendingLoginRef.current;
+      if (!adminUser || adminUser.role !== role) {
+        return { error: "Sign-in expired. Please start again." };
+      }
+
+      const {
+        data: { session: s },
+      } = await supabase.auth.getSession();
+      if (!s?.user || s.user.id !== adminUser.id) {
+        pendingLoginRef.current = null;
+        await safeSignOutLocal(supabase);
+        return { error: "Sign-in expired. Please start again." };
+      }
+
+      try {
+        await registerSession(adminUser.role, adminUser.id);
+      } catch {
+        pendingLoginRef.current = null;
+        await safeSignOutLocal(supabase); // local: don't kick the user's other devices
+        return {
+          error: "Could not establish a session lock. Please try again.",
+        };
+      }
+
+      await setAdminActive(adminUser.id);
+      await supabase.rpc("reset_failed_logins", { p_role: role });
+      setCurrentLogger(adminUser.role, adminUser.id);
+      await logLogin(adminUser.role);
+
+      clearPageCache();
+      setUser(adminUser);
+      setSession(s);
+      pendingLoginRef.current = null;
+      return { error: null };
+    },
+    [supabase]
+  );
+
+  const abortLogin = useCallback(
+    async (role: string, countAsFailure = false) => {
+      pendingLoginRef.current = null;
+      let locked = false;
+      if (countAsFailure) {
+        const { data } = await supabase.rpc("record_failed_login", {
+          p_role: role,
+        });
+        locked = !!data?.[0]?.locked;
+      }
+      await safeSignOutLocal(supabase);
+      return { locked };
+    },
+    [supabase]
+  );
 
   return (
     <AuthContext.Provider
@@ -552,7 +607,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         session,
         isLoading,
-        loginPassword,
+        verifyPassword,
+        commitLogin,
+        abortLogin,
         logout,
         changePassword,
         sendPasswordResetOTP,
