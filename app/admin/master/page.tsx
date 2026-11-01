@@ -65,6 +65,7 @@ import {
   addArchivedDoc,
   getArchivedDocs,
   deleteDriveFile,
+  archiveDocument,
 } from "@/lib/data";
 import { getApproval, createApproval, type DocumentApproval } from "@/lib/rbac";
 import {
@@ -968,46 +969,19 @@ export default function MasterPage() {
     setIsArchiving(true);
     try {
       const doc = selection;
-      const date = new Date().toISOString().split("T")[0];
-
-      const gdriveFileId = (doc as any).gdrive_file_id;
-      const poolAccountId = (doc as any).pool_account_id;
-
-      if (gdriveFileId && poolAccountId) {
-        const res = await fetch("/api/gdrive/archive", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            gdriveFileId,
-            poolAccountId,
-            category: "master_documents",
-          }),
-        });
-
-        if (!res.ok) {
-          const json = await res.json().catch(() => ({}));
-          toast.error(
-            json.error ??
-              "Could not move file to the archive. Please try again."
-          );
-        }
-      }
-
-      await addArchivedDoc({
-        id: `arc-md-${doc.id}`,
+      await archiveDocument({
+        table: "master_documents",
+        docId: doc.id,
         title: doc.title,
-        type: "Master Document",
-        archivedDate: date,
         archivedBy: user?.role ?? "P1",
       });
-
-      await archiveMasterDocument(doc.id);
       await logArchiveDocument(doc.title, "master document");
-
       setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
       setSelection(null);
       toast.success("Document archived.");
       archiveDisc.close();
+    } catch (err: any) {
+      toast.error(err?.message ?? "Could not archive the document.");
     } finally {
       setIsArchiving(false);
     }
@@ -1137,6 +1111,12 @@ export default function MasterPage() {
       });
       toast.success(`"${displayName(att)}" deleted.`);
       deleteAttDisc.close();
+    } catch (err: any) {
+      toast.error(
+        err?.message ??
+          "Could not delete the file from Google Drive. Nothing was removed."
+      );
+      return;
     } finally {
       setIsDeleting(false);
     }

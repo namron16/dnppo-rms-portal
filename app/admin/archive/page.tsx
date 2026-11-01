@@ -18,7 +18,7 @@ import type { AdminRole } from "@/lib/auth";
 import { logDeleteDocument } from "@/lib/adminLogger";
 import {
   getArchivedDocs,
-  deleteArchivedDoc,
+  purgeArchivedDoc,
   restoreArchivedDoc,
 } from "@/lib/data";
 
@@ -41,14 +41,18 @@ export default function ArchivePage() {
 
   const restoreDisc = useDisclosure<ArchivedItem>();
   const deleteDisc = useDisclosure<ArchivedItem>();
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const {
     query,
     setQuery,
     filtered: searched,
   } = useSearch(items, ["title", "archivedBy"] as Array<keyof ArchivedItem>);
+  const canSeeClassified = user?.role === "P2";
   const filtered = searched.filter(
-    (i) => typeFilter === "All Types" || i.type === typeFilter
+    (i) =>
+      (typeFilter === "All Types" || i.type === typeFilter) &&
+      (i.type !== "Classified Document" || canSeeClassified)
   );
 
   const {
@@ -99,11 +103,21 @@ export default function ArchivePage() {
   async function handleDelete() {
     const item = deleteDisc.payload;
     if (!item) return;
-    await deleteArchivedDoc(item.id);
-    await logDeleteDocument(item.title, `archived ${item.type.toLowerCase()}`);
-    setItems((prev) => prev.filter((i) => i.id !== item.id));
-    toast.success(`"${item.title}" permanently deleted.`);
-    deleteDisc.close();
+    setIsDeleting(true);
+    try {
+      await purgeArchivedDoc(item.id);
+      await logDeleteDocument(
+        item.title,
+        `archived ${item.type.toLowerCase()}`
+      );
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      toast.success(`"${item.title}" and its files were permanently deleted.`);
+      deleteDisc.close();
+    } catch (err: any) {
+      toast.error(err?.message ?? `Could not delete "${item.title}".`);
+    } finally {
+      setIsDeleting(false);
+    }
   }
 
   return (
@@ -127,7 +141,7 @@ export default function ArchivePage() {
             >
               <option>All Types</option>
               <option>Special Order</option>
-              <option>Classified Document</option>
+              {canSeeClassified && <option>Classified Document</option>}
               <option>Master Document</option>
               <option>Library Item</option>
             </ToolbarSelect>
@@ -271,9 +285,10 @@ export default function ArchivePage() {
       <ConfirmDialog
         open={deleteDisc.isOpen}
         title="Permanently Delete"
-        message={`Permanently delete "${deleteDisc.payload?.title}"? This cannot be undone.`}
+        message={`Permanently delete "${deleteDisc.payload?.title}"? This also deletes its file(s) from Google Drive and cannot be undone.`}
         confirmLabel="Delete Forever"
         variant="danger"
+        isLoading={isDeleting}
         onConfirm={handleDelete}
         onCancel={deleteDisc.close}
       />

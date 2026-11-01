@@ -44,10 +44,9 @@ import {
 } from "@/lib/adminLogger";
 import {
   getLibraryItems,
+  archiveDocument,
   updateLibraryItem,
   deleteLibraryItem,
-  addArchivedDoc,
-  archiveLibraryItem,
   getArchivedDocs,
   deleteDriveFile,
 } from "@/lib/data";
@@ -584,48 +583,18 @@ export default function LibraryPage() {
     if (!item) return;
     setIsArchiving(true);
     try {
-      // Step 1: Move file in Google Drive to the archive folder
-      const gdriveFileId = item.gdrive_file_id;
-      const poolAccountId = item.pool_account_id;
-
-      if (gdriveFileId && poolAccountId) {
-        const res = await fetch("/api/gdrive/archive", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            gdriveFileId,
-            poolAccountId,
-            category: "library_items",
-          }),
-        });
-
-        if (!res.ok) {
-          const json = await res.json().catch(() => ({}));
-          toast.error(
-            json.error ??
-              "Could not move file to the archive. Please try again."
-          );
-        }
-      }
-
-      // Step 2: Add to archived_docs table
-      const today = new Date().toISOString().split("T")[0];
-      await addArchivedDoc({
-        id: `arc-lib-${item.id}`,
+      await archiveDocument({
+        table: "library_items",
+        docId: item.id,
         title: item.title,
-        type: "Library Item",
-        archivedDate: today,
         archivedBy: user?.role ?? "P1",
       });
-
-      // Step 3: Mark as archived
-      await archiveLibraryItem(item.id);
       await logArchiveLibraryItem(item.title);
-
-      // Step 4: Remove from UI
       setItems((prev) => prev.filter((i) => i.id !== item.id));
       toast.success(`"${item.title}" has been archived.`);
       archiveDisc.close();
+    } catch (err: any) {
+      toast.error(err?.message ?? "Could not archive the item.");
     } finally {
       setIsArchiving(false);
     }

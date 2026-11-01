@@ -44,9 +44,8 @@ import type { AdminRole } from "@/lib/auth";
 import type { AddJournalEntryInput } from "@/lib/validations";
 import type { JournalEntry } from "@/types";
 import {
-  addArchivedDoc,
   addDailyJournal,
-  archiveDailyJournal,
+  archiveDocument,
   deleteDailyJournal,
   deleteDriveFile,
   getDailyJournals,
@@ -649,9 +648,6 @@ export default function DailyJournalsPage() {
   }
 
   // ── Archive ────────────────────────────────────────────────────────────────
-  // FIX (duplicate keys / consistency): no longer calls
-  // setEntries(prev => prev.filter(...)) — the realtime UPDATE handler will
-  // see archived=true and remove the row from `entries` once persisted.
   async function handleArchive() {
     if (!canArchive) {
       toast.error("You do not have permission to archive journal entries.");
@@ -661,49 +657,19 @@ export default function DailyJournalsPage() {
     if (!item) return;
     setIsArchiving(true);
     try {
-      // Step 1: Move file in Google Drive to the archive folder
-      const gdriveFileId = item.gdrive_file_id;
-      const poolAccountId = item.pool_account_id;
-
-      if (gdriveFileId && poolAccountId) {
-        const res = await fetch("/api/gdrive/archive", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            gdriveFileId,
-            poolAccountId,
-            category: "daily_journals",
-          }),
-        });
-
-        if (!res.ok) {
-          const json = await res.json().catch(() => ({}));
-          toast.error(
-            json.error ??
-              "Could not move file to the archive. Please try again."
-          );
-        }
-      }
-
-      // Step 2: Add to archived_docs table
-      const today = new Date().toISOString().split("T")[0];
-      await addArchivedDoc({
-        id: `arc-dj-${item.id}`,
+      await archiveDocument({
+        table: "daily_journals",
+        docId: item.id,
         title: item.title,
-        type: "Daily Journal",
-        archivedDate: today,
         archivedBy: user?.role ?? "P1",
       });
-
-      // Step 3: Mark as archived
-      await archiveDailyJournal(item.id);
       await logArchiveJournal(item.title);
-
-      // Step 4: Close modals (removal from `entries` is handled by the
-      // realtime UPDATE handler once `archived = true` is observed).
+      // the row leaves the list through the realtime UPDATE handler, as before
       if (viewDisc.payload?.id === item.id) viewDisc.close();
       archiveDisc.close();
       toast.success(`"${item.title}" has been archived.`);
+    } catch (err: any) {
+      toast.error(err?.message ?? "Could not archive the entry.");
     } finally {
       setIsArchiving(false);
     }

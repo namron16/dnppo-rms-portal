@@ -62,7 +62,7 @@ import {
   addSpecialOrder,
   updateSpecialOrder,
   deleteSpecialOrder,
-  archiveSpecialOrder,
+  archiveDocument,
   addArchivedDoc,
   getArchivedDocs,
   deleteDriveFile,
@@ -1662,48 +1662,21 @@ export default function AdminOrdersPage() {
     if (!so) return;
     setIsArchiving(true);
     try {
-      const gdriveFileId = (so as any).gdrive_file_id;
-      const poolAccountId = (so as any).pool_account_id;
-
-      if (gdriveFileId && poolAccountId) {
-        const res = await fetch("/api/gdrive/archive", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            gdriveFileId,
-            poolAccountId,
-            category: "special_orders",
-          }),
-        });
-        if (!res.ok) {
-          const json = await res.json().catch(() => ({}));
-          toast.error(
-            json.error ??
-              "Could not move file to the archive. Please try again."
-          );
-        }
-      }
-
-      const today = new Date().toISOString().split("T")[0];
-      await addArchivedDoc({
-        id: `arc-so-${so.id}`,
-        title: `${so.reference} – ${so.subject}`,
-        type: "Special Order",
-        archivedDate: today,
+      const title = `${so.reference} – ${so.subject}`;
+      await archiveDocument({
+        table: "special_orders",
+        docId: so.id,
+        title,
         archivedBy: user?.role ?? "P1",
       });
-
-      await archiveSpecialOrder(so.id);
-      await logArchiveDocument(
-        `${so.reference} – ${so.subject}`,
-        "special order"
-      );
-
+      await logArchiveDocument(title, "special order");
       setOrders((prev) => prev.filter((o) => o.id !== so.id));
       setSelectedOrder(null);
       setNavStack([]);
       toast.success(`"${so.reference}" has been moved to the Archive.`);
       archiveDisc.close();
+    } catch (err: any) {
+      toast.error(err?.message ?? "Could not archive the order.");
     } finally {
       setIsArchiving(false);
     }
@@ -1849,6 +1822,12 @@ export default function AdminOrdersPage() {
       ) {
         setNavStack((prev) => prev.slice(0, -1));
       }
+    } catch (err: any) {
+      toast.error(
+        err?.message ??
+          "Could not delete the file from Google Drive. Nothing was removed."
+      );
+      return;
     } finally {
       setIsDeletingAtt(false);
     }
