@@ -14,7 +14,7 @@ import { assertCanUpload } from "@/lib/rbac";
 import { useDriveUpload } from "@/hooks/useGDriveTool";
 import { useAuth } from "@/lib/auth";
 import type { AdminRole } from "@/lib/auth";
-import { addLibraryItem } from "@/lib/data";
+import { addLibraryItem, deleteDriveFile } from "@/lib/data";
 import { logAddLibraryItem } from "@/lib/adminLogger";
 import type { LibraryCategory, LibraryItemWithUrl } from "@/types";
 
@@ -139,7 +139,17 @@ export function AddLibraryItemModal({ open, onClose, onAdd }: Props) {
         mime_type: file!.type || undefined,
       };
 
-      await addLibraryItem(newItem);
+      
+      try {
+        await addLibraryItem(newItem);
+      } catch (saveErr) {
+        // the database save failed, so remove the file we just uploaded
+        await deleteDriveFile(
+          driveResult.gdriveFileId,
+          driveResult.poolAccountId
+        ).catch(() => {});
+        throw saveErr; // the existing catch shows the toast
+      }
       await logAddLibraryItem(result.data.title);
 
       toast.success(`"${result.data.title}" added to the Library.`);

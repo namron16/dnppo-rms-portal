@@ -33,6 +33,10 @@ export type DailyJournalRecord = JournalEntry & {
   created_at?: string;
 };
 
+function must(error: { message: string } | null, action: string): void {
+  if (error) throw new Error(`${action} failed: ${error.message}`);
+}
+
 /* ════════════════════════════════════════════
    MASTER DOCUMENTS
 ════════════════════════════════════════════ */
@@ -112,8 +116,7 @@ export async function addMasterDocument(
     file_size_bytes: doc.file_size_bytes ?? null,
     mime_type: doc.mime_type ?? null,
   });
-  if (error)
-    console.warn("Supabase unavailable (add master_document):", error.message);
+  if (error) must(error, "Saving master document");
 }
 
 export async function updateMasterDocument(
@@ -129,11 +132,7 @@ export async function updateMasterDocument(
       tag: doc.tag,
     })
     .eq("id", doc.id);
-  if (error)
-    console.warn(
-      "Supabase unavailable (update master_document):",
-      error.message
-    );
+  if (error) must(error, "Updating master document");
 }
 
 export async function archiveMasterDocument(id: string): Promise<void> {
@@ -153,11 +152,7 @@ export async function deleteMasterDocument(id: string): Promise<void> {
     .from("master_documents")
     .delete()
     .eq("id", id);
-  if (error)
-    console.warn(
-      "Supabase unavailable (delete master_document):",
-      error.message
-    );
+  if (error) must(error, "Deleting master document");
 }
 
 /* ════════════════════════════════════════════
@@ -232,8 +227,7 @@ export async function addSpecialOrder(
     file_size_bytes: so.file_size_bytes ?? null,
     mime_type: so.mime_type ?? null,
   });
-  if (error)
-    console.warn("Supabase unavailable (add special_order):", error.message);
+  if (error) must(error, "Saving special order");
 }
 
 export async function updateSpecialOrder(
@@ -248,8 +242,7 @@ export async function updateSpecialOrder(
       status: so.status,
     })
     .eq("id", so.id);
-  if (error)
-    console.warn("Supabase unavailable (update special_order):", error.message);
+  if (error) must(error, "Updating special order");
 }
 
 export async function updateSpecialOrderAttachment(
@@ -424,11 +417,7 @@ export async function archiveSpecialOrder(id: string): Promise<void> {
     .from("special_orders")
     .update({ status: "ARCHIVED" })
     .eq("id", id);
-  if (error)
-    console.warn(
-      "Supabase unavailable (archive special_order):",
-      error.message
-    );
+  if (error) must(error, "Deleting special order");
 }
 
 /* ════════════════════════════════════════════
@@ -508,7 +497,7 @@ export async function addDailyJournal(
     mime_type: entry.mime_type ?? null,
   });
 
-  if (error) throw new Error(`Unable to save daily journal: ${error.message}`);
+  if (error) must(error, "Saving library item");
 }
 
 export async function updateDailyJournal(
@@ -531,8 +520,7 @@ export async function updateDailyJournal(
     })
     .eq("id", entry.id);
 
-  if (error)
-    throw new Error(`Unable to update daily journal: ${error.message}`);
+  if (error) must(error, "Updating library item");
 }
 
 export async function archiveDailyJournal(id: string): Promise<void> {
@@ -548,8 +536,7 @@ export async function archiveDailyJournal(id: string): Promise<void> {
 export async function deleteDailyJournal(id: string): Promise<void> {
   const { error } = await supabase.from("daily_journals").delete().eq("id", id);
 
-  if (error)
-    throw new Error(`Unable to delete daily journal: ${error.message}`);
+  if (error) must(error, "Deleting library item");
 }
 
 /* ════════════════════════════════════════════
@@ -647,11 +634,7 @@ export async function deleteConfidentialDoc(id: string): Promise<void> {
     .from("confidential_docs")
     .delete()
     .eq("id", id);
-  if (error)
-    console.warn(
-      "Supabase unavailable (delete confidential_doc):",
-      error.message
-    );
+  if (error) must(error, "Deleting classified document");
 }
 
 export async function archiveConfidentialDoc(id: string): Promise<boolean> {
@@ -843,7 +826,7 @@ export async function addArchivedDoc(item: {
   type: string;
   archivedDate: string;
   archivedBy: string;
-}): Promise<boolean> {
+}): Promise<void> {
   const { error } = await supabase.from("archived_docs").insert({
     id: item.id,
     title: item.title,
@@ -851,245 +834,256 @@ export async function addArchivedDoc(item: {
     archived_date: item.archivedDate,
     archived_by: item.archivedBy,
   });
-  if (error) {
-    console.warn("Supabase unavailable (add archived_doc):", error.message);
-    return false;
-  }
-
-  return true;
+  must(error, "Adding archive entry");
 }
 
 export async function deleteArchivedDoc(id: string): Promise<void> {
   const { error } = await supabase.from("archived_docs").delete().eq("id", id);
-  if (error)
-    console.warn("Supabase unavailable (delete archived_doc):", error.message);
+  if (error) must(error, "Deleting archive entry");
 }
 
-// ── archived_docs.id prefix → source table mapping ───────────────────────────
-// Used by restoreArchivedDoc to look up the original document row for its
-// Drive metadata (gdrive_file_id, pool_account_id) before calling the
-// /api/gdrive/restore endpoint.
-const PREFIX_TO_TABLE: Record<string, string> = {
-  "arc-so-": "special_orders",
-  "arc-cd-": "confidential_docs",
-  "arc-md-": "master_documents",
-  "arc-lib-": "library_items",
-  "arc-dj-": "daily_journals",
-};
+const ARCHIVE_TABLES = {
+  master_documents: {
+    prefix: "arc-md-",
+    type: "Master Document",
+    category: "master_documents",
+  },
+  special_orders: {
+    prefix: "arc-so-",
+    type: "Special Order",
+    category: "special_orders",
+  },
+  daily_journals: {
+    prefix: "arc-dj-",
+    type: "Daily Journal",
+    category: "daily_journals",
+  },
+  library_items: {
+    prefix: "arc-lib-",
+    type: "Library Item",
+    category: "library_items",
+  },
+  confidential_docs: {
+    prefix: "arc-cd-",
+    type: "Classified Document",
+    category: "classified_documents",
+  },
+} as const;
+export type ArchivableTable = keyof typeof ARCHIVE_TABLES;
 
-// archived_docs.type → Drive category string (must match CATEGORY_DISPLAY_NAMES keys)
-const ARCHIVE_TYPE_TO_DRIVE_CATEGORY: Record<string, string> = {
-  "Special Order": "special_orders",
-  "Classified Document": "classified_documents",
-  "Master Document": "master_documents",
-  "Library Item": "library_items",
-  "Daily Journal": "daily_journals",
-};
+async function driveMove(
+  endpoint: "archive" | "restore",
+  params: { gdriveFileId: string; poolAccountId: string; category: string }
+): Promise<void> {
+  const res = await fetch(`/api/gdrive/${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error(
+      json.error ?? `Drive ${endpoint} failed (HTTP ${res.status}).`
+    );
+  }
+}
 
-/**
- * Calls /api/gdrive/restore to move a file from the archive subfolder back to
- * the main category folder in Google Drive.
- *
- * Non-throwing: logs a warning on failure but does NOT block the DB restore
- * that follows.  The file stays in the archive folder on Drive in that case,
- * but the document is still visible again in the UI.
- */
-async function callDriveRestoreApi(params: {
-  gdriveFileId: string;
-  poolAccountId: string;
-  category: string;
+async function getDriveIds(table: ArchivableTable, docId: string) {
+  const { data } = await supabase
+    .from(table)
+    .select("gdrive_file_id, pool_account_id")
+    .eq("id", docId)
+    .maybeSingle();
+  const row = data as any;
+  return row?.gdrive_file_id && row?.pool_account_id
+    ? {
+        gdriveFileId: row.gdrive_file_id as string,
+        poolAccountId: row.pool_account_id as string,
+      }
+    : null;
+}
+
+export async function archiveDocument(opts: {
+  table: ArchivableTable;
+  docId: string;
+  title: string;
+  archivedBy: string;
 }): Promise<void> {
-  try {
-    const res = await fetch("/api/gdrive/restore", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    });
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      console.warn(
-        `[restoreArchivedDoc] Drive restore API returned ${res.status}:`,
-        json.error ?? "(no detail)"
+  const cfg = ARCHIVE_TABLES[opts.table];
+  const archiveId = `${cfg.prefix}${opts.docId}`;
+  const drive = await getDriveIds(opts.table, opts.docId);
+
+  // Step 1: database (all-or-nothing)
+  const { error } = await supabase.rpc("archive_document", {
+    p_table: opts.table,
+    p_doc_id: opts.docId,
+    p_archive_id: archiveId,
+    p_title: opts.title,
+    p_type: cfg.type,
+    p_archived_by: opts.archivedBy,
+  });
+  if (error) throw new Error(`Could not archive: ${error.message}`);
+
+  // Step 2: Drive. If it fails, undo step 1.
+  if (drive) {
+    try {
+      await driveMove("archive", { ...drive, category: cfg.category });
+    } catch (driveErr: any) {
+      const { error: undoErr } = await supabase.rpc("restore_document", {
+        p_table: opts.table,
+        p_doc_id: opts.docId,
+        p_archive_id: archiveId,
+      });
+      if (undoErr) {
+        throw new Error(
+          `Drive move failed (${driveErr.message}) AND the undo failed (${undoErr.message}). Please check "${opts.title}".`
+        );
+      }
+      throw new Error(
+        `Could not move the file to the Drive archive, so nothing was archived. (${driveErr.message})`
       );
     }
-  } catch (err: any) {
-    console.warn(
-      "[restoreArchivedDoc] Drive restore call failed (non-fatal):",
-      err.message
-    );
   }
 }
 
 export async function restoreArchivedDoc(id: string): Promise<void> {
-  // ── 1. Fetch the archived_docs row ────────────────────────────────────────
-  const { data: archived, error: fetchError } = await supabase
-    .from("archived_docs")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (fetchError) {
-    console.warn(
-      "Supabase unavailable (fetch archived_doc):",
-      fetchError.message
+  const entry = Object.entries(ARCHIVE_TABLES).find(([, c]) =>
+    id.startsWith(c.prefix)
+  );
+  if (!entry)
+    throw new Error(
+      `Unrecognised archive id "${id}". It can't be restored automatically.`
     );
-  }
+  const table = entry[0] as ArchivableTable;
+  const cfg = entry[1];
+  const docId = id.slice(cfg.prefix.length);
+  const drive = await getDriveIds(table, docId);
 
-  const archiveType = String(archived?.type ?? "").trim();
+  // Step 1: Drive first. If this fails, nothing has changed yet.
+  if (drive) await driveMove("restore", { ...drive, category: cfg.category });
 
-  // ── 2. Derive the original document ID from the arc-xx- prefix ───────────
-  let sourceId: string | undefined;
-  let sourceTable: string | undefined;
-
-  for (const [prefix, table] of Object.entries(PREFIX_TO_TABLE)) {
-    if (id.startsWith(prefix)) {
-      sourceId = id.slice(prefix.length);
-      sourceTable = table;
-      break;
+  // Step 2: database (all-or-nothing). If it fails, put the file back.
+  const { error } = await supabase.rpc("restore_document", {
+    p_table: table,
+    p_doc_id: docId,
+    p_archive_id: id,
+  });
+  if (error) {
+    if (drive) {
+      await driveMove("archive", { ...drive, category: cfg.category }).catch(
+        (e) =>
+          console.error(
+            "[restore] could not put file back in archive:",
+            e.message
+          )
+      );
     }
+    throw new Error(`Could not restore: ${error.message}`);
   }
-
-  // ── 3. Move file in Drive back to the main folder ────────────────────────
-  //   Fetch the original document row to get its gdrive_file_id and
-  //   pool_account_id, then call /api/gdrive/restore.
-  if (sourceId && sourceTable) {
-    const driveCategory = ARCHIVE_TYPE_TO_DRIVE_CATEGORY[archiveType];
-
-    if (driveCategory) {
-      const { data: sourceRow } = await supabase
-        .from(sourceTable)
-        .select("gdrive_file_id, pool_account_id")
-        .eq("id", sourceId)
-        .maybeSingle();
-
-      const gdriveFileId = (sourceRow as any)?.gdrive_file_id;
-      const poolAccountId = (sourceRow as any)?.pool_account_id;
-
-      if (gdriveFileId && poolAccountId) {
-        await callDriveRestoreApi({
-          gdriveFileId,
-          poolAccountId,
-          category: driveCategory,
-        });
-      } else {
-        console.warn(
-          `[restoreArchivedDoc] Source row ${sourceTable}/${sourceId} has no Drive ` +
-            `metadata (gdrive_file_id=${gdriveFileId}, pool_account_id=${poolAccountId}). ` +
-            `Skipping Drive file move — DB status will still be restored.`
-        );
-      }
-    }
-  }
-
-  // ── 4. Update DB status back to active ────────────────────────────────────
-
-  if (id.startsWith("arc-so-") || archiveType === "Special Order") {
-    if (sourceId) {
-      const { error } = await supabase
-        .from("special_orders")
-        .update({ status: "ACTIVE" })
-        .eq("id", sourceId);
-      if (error)
-        console.warn(
-          "Supabase unavailable (restore special_order):",
-          error.message
-        );
-    }
-  }
-
-  if (id.startsWith("arc-cd-") || archiveType === "Classified Document") {
-    if (sourceId) {
-      const { error } = await supabase
-        .from("confidential_docs")
-        .update({ archived: false })
-        .eq("id", sourceId);
-      if (error)
-        console.warn(
-          "Supabase unavailable (restore confidential_doc):",
-          error.message
-        );
-    }
-  }
-
-  if (id.startsWith("arc-md-") || archiveType === "Master Document") {
-    if (sourceId) {
-      const { error } = await supabase
-        .from("master_documents")
-        .update({ archived: false })
-        .eq("id", sourceId);
-      if (error)
-        console.warn(
-          "Supabase unavailable (restore master_document):",
-          error.message
-        );
-    }
-  }
-
-  if (id.startsWith("arc-lib-") || archiveType === "Library Item") {
-    if (sourceId) {
-      const { error } = await supabase
-        .from("library_items")
-        .update({ archived: false })
-        .eq("id", sourceId);
-      if (error)
-        console.warn(
-          "Supabase unavailable (restore library_item):",
-          error.message
-        );
-    }
-  }
-
-  if (id.startsWith("arc-dj-") || archiveType === "Daily Journal") {
-    if (sourceId) {
-      const { error } = await supabase
-        .from("daily_journals")
-        .update({ archived: false, updated_at: new Date().toISOString() })
-        .eq("id", sourceId);
-      if (error)
-        console.warn(
-          "Supabase unavailable (restore daily_journal):",
-          error.message
-        );
-    }
-  }
-
-  // ── 5. Remove the archived_docs row ───────────────────────────────────────
-  const { error } = await supabase.from("archived_docs").delete().eq("id", id);
-  if (error)
-    console.warn(
-      "Supabase unavailable (delete archived_doc on restore):",
-      error.message
-    );
 }
 
-/**
- * Deletes a file from Google Drive via the pool gateway.
- * Non-throwing — a Drive failure never blocks Supabase metadata cleanup.
- * Safe to call when gdrive_file_id or pool_account_id may be undefined
- * (pre-migration documents simply skip the Drive call).
- */
 export async function deleteDriveFile(
   gdriveFileId: string | undefined | null,
   poolAccountId: string | undefined | null
 ): Promise<void> {
-  if (!gdriveFileId || !poolAccountId) return;
+  if (!gdriveFileId || !poolAccountId) return; // old rows with no Drive file
 
+  let res: Response;
   try {
-    const res = await fetch("/api/gdrive/delete", {
+    res = await fetch("/api/gdrive/delete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ gdriveFileId, poolAccountId }),
     });
+  } catch {
+    throw new Error(
+      "Network problem. Nothing was deleted. Check your connection and try again."
+    );
+  }
 
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      console.warn(
-        "[deleteDriveFile] API returned error:",
-        json.error ?? res.status
-      );
+  if (res.ok) return; // a file already gone from Drive also returns ok (handled server-side)
+  const json = await res.json().catch(() => ({}));
+  throw new Error(
+    json.error ??
+      `Google Drive delete failed (HTTP ${res.status}). Nothing was deleted.`
+  );
+}
+
+const ATTACHMENT_TABLES: Partial<
+  Record<ArchivableTable, { table: string; fk: string }>
+> = {
+  master_documents: {
+    table: "master_document_attachments",
+    fk: "master_document_id",
+  },
+  special_orders: {
+    table: "special_order_attachments",
+    fk: "special_order_id",
+  },
+  daily_journals: {
+    table: "daily_journal_attachments",
+    fk: "daily_journal_id",
+  },
+  library_items: { table: "library_item_attachments", fk: "library_item_id" },
+};
+
+export async function purgeArchivedDoc(archiveId: string): Promise<void> {
+  const entry = Object.entries(ARCHIVE_TABLES).find(([, c]) =>
+    archiveId.startsWith(c.prefix)
+  );
+  if (!entry)
+    throw new Error(
+      `Unrecognised archive id "${archiveId}". It can't be deleted automatically.`
+    );
+  const table = entry[0] as ArchivableTable;
+  const docId = archiveId.slice(entry[1].prefix.length);
+
+  // 1. Collect every Drive file that belongs to this document
+  const files: { id: string; pool: string }[] = [];
+  const main = await getDriveIds(table, docId);
+  if (main) files.push({ id: main.gdriveFileId, pool: main.poolAccountId });
+
+  const att = ATTACHMENT_TABLES[table];
+  if (att) {
+    const { data, error } = await supabase
+      .from(att.table)
+      .select("gdrive_file_id, pool_account_id")
+      .eq(att.fk, docId);
+    if (error)
+      throw new Error(`Could not list the attachments: ${error.message}`);
+    for (const a of (data ?? []) as any[]) {
+      if (a.gdrive_file_id && a.pool_account_id)
+        files.push({ id: a.gdrive_file_id, pool: a.pool_account_id });
     }
-  } catch (err: any) {
-    console.warn("[deleteDriveFile] Non-fatal network error:", err.message);
+  }
+
+  // 2. Drive FIRST. Safe to repeat: a file that is already gone counts as deleted.
+  const failures: string[] = [];
+  for (const f of files) {
+    try {
+      await deleteDriveFile(f.id, f.pool);
+    } catch (e: any) {
+      failures.push(e?.message ?? "unknown error");
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `${failures.length} of ${files.length} file(s) could not be deleted from Google Drive, ` +
+        `so nothing was removed. ${failures[0]} You can safely try again.`
+    );
+  }
+
+  // 3. Database LAST (one all-or-nothing step: document + attachments + archive row)
+  const { error } = await supabase.rpc("purge_archived_document", {
+    p_table: table,
+    p_doc_id: docId,
+    p_archive_id: archiveId,
+  });
+  if (error) {
+    throw new Error(
+      `The Drive files were deleted, but the record could not be removed: ${error.message}. ` +
+        `Press Delete again. It is safe to repeat.`
+    );
   }
 }
 

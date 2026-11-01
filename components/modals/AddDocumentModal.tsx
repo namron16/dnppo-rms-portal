@@ -22,6 +22,7 @@ import { useDriveUpload } from "@/hooks/useGDriveTool";
 import { logUploadDocument } from "@/lib/adminLogger";
 import type { MasterDocument } from "@/types";
 import type { AdminRole } from "@/lib/auth";
+import { deleteDriveFile } from "@/lib/data";
 
 type DocWithUrl = MasterDocument & {
   fileUrl?: string;
@@ -171,7 +172,16 @@ export function AddDocumentModal({
         mime_type: file.type || null,
       };
 
-      if (onAdd) await onAdd(newDoc);
+      try {
+        if (onAdd) await onAdd(newDoc);
+      } catch (saveErr) {
+        // the database save failed, so remove the file we just uploaded
+        await deleteDriveFile(
+          driveResult.gdriveFileId,
+          driveResult.poolAccountId
+        ).catch(() => {});
+        throw saveErr; // the existing catch shows the toast
+      }
       await logUploadDocument(result.data.title);
 
       toast.success(`"${result.data.title}" uploaded successfully.`);

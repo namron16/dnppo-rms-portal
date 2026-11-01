@@ -17,6 +17,7 @@ import type { SpecialOrder } from "@/types";
 import type { AdminRole } from "@/lib/auth";
 import { FileText, Image as ImageIcon, Paperclip } from "lucide-react";
 import { logUploadDocument } from "@/lib/adminLogger";
+import { deleteDriveFile } from "@/lib/data";
 
 type SOWithUrl = SpecialOrder & {
   fileUrl?: string;
@@ -140,7 +141,16 @@ export function AddSpecialOrderModal({ open, onClose, onAdd }: Props) {
         mime_type: file.type || null,
       };
 
-      if (onAdd) await onAdd(newSO);
+      try {
+        if (onAdd) await onAdd(newSO);
+      } catch (saveErr) {
+        // the database save failed, so remove the file we just uploaded
+        await deleteDriveFile(
+          driveResult.gdriveFileId,
+          driveResult.poolAccountId
+        ).catch(() => {});
+        throw saveErr; // the existing catch shows the toast
+      }
       await logUploadDocument(result.data.subject);
       toast.success(`Special Order "${result.data.reference}" created.`);
       resetAndClose();
