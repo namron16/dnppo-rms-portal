@@ -159,6 +159,25 @@ html {
   }
 }
 
+/* Used by LogoutConfirmModal. Opacity only, because that modal is centered
+   with a CSS transform and a transform animation would make it jump. */
+@keyframes softIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes softOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 .animate-overlay-fade {
   animation: overlayFade var(--motion-base) var(--ease-standard);
 }
@@ -172,6 +191,19 @@ html {
 .animate-modal-pop-out {
   animation: modalPopOut var(--motion-fast) ease-in forwards;
   will-change: transform, opacity;
+}
+
+.animate-overlay-soft {
+  animation: softIn var(--motion-base) var(--ease-standard);
+}
+.animate-overlay-soft-out {
+  animation: softOut var(--motion-fast) ease-in forwards;
+}
+.animate-modal-soft {
+  animation: softIn var(--motion-base) var(--ease-standard);
+}
+.animate-modal-soft-out {
+  animation: softOut var(--motion-fast) ease-in forwards;
 }
 
 /* Respect system accessibility settings */
@@ -188,8 +220,14 @@ html {
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
   }
-}
 
+  /* NEW: spinners are "I'm busy" feedback, so they keep spinning */
+  [data-spinner],
+  .animate-spin {
+    animation-duration: 0.8s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
 /* ── Custom scrollbar ── */
 ::-webkit-scrollbar {
   width: 6px;
